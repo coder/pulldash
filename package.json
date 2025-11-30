@@ -1,25 +1,49 @@
 {
   "name": "prdash",
   "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+  "description": "A fast, local PR review dashboard",
+  "type": "module",
+  "bin": {
+    "prdash": "./dist/prdash"
   },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "concurrently \"bun run build:browser --watch\" \"bun run dev:node\"",
+    "dev:node": "bun run src/node/main.ts",
+    "build:browser": "bun run ./scripts/build-browser.ts"
+  },
+  "keywords": [
+    "github",
+    "pull-request",
+    "code-review",
+    "diff",
+    "cli"
+  ],
+  "license": "MIT",
   "dependencies": {
-    "next": "16.0.6",
-    "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-slot": "^1.2.4",
+    "clsx": "^2.1.1",
+    "diff": "^8.0.2",
+    "gitdiff-parser": "^0.3.1",
+    "lucide-react": "^0.555.0",
+    "react-router-dom": "^7.9.6",
+    "refractor": "^5.0.0",
+    "tailwind-merge": "^3.4.0",
+    "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@hono/node-server": "^1.19.6",
+    "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.0.6",
+    "bun-plugin-tailwind": "latest",
+    "concurrently": "^9.2.1",
+    "hono": "^4.10.7",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
