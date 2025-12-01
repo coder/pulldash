@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -18,6 +18,7 @@ interface FileTreeProps {
   selectedFile: string | null;
   viewedFiles: Set<string>;
   commentCounts: Record<string, number>;
+  pendingCommentCounts?: Record<string, number>;
   onSelectFile: (filename: string) => void;
 }
 
@@ -98,6 +99,7 @@ function TreeNodeComponent({
   selectedFile,
   viewedFiles,
   commentCounts,
+  pendingCommentCounts,
   onSelectFile,
   expandedFolders,
   toggleFolder,
@@ -107,6 +109,7 @@ function TreeNodeComponent({
   selectedFile: string | null;
   viewedFiles: Set<string>;
   commentCounts: Record<string, number>;
+  pendingCommentCounts: Record<string, number>;
   onSelectFile: (filename: string) => void;
   expandedFolders: Set<string>;
   toggleFolder: (path: string) => void;
@@ -116,6 +119,17 @@ function TreeNodeComponent({
   const isViewed = node.type === "file" && viewedFiles.has(node.path);
   const commentCount =
     node.type === "file" ? commentCounts[node.path] || 0 : 0;
+  const pendingCount =
+    node.type === "file" ? pendingCommentCounts[node.path] || 0 : 0;
+
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // Scroll selected file into view
+  useEffect(() => {
+    if (isSelected && buttonRef.current) {
+      buttonRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [isSelected]);
 
   if (node.type === "folder") {
     return (
@@ -145,6 +159,7 @@ function TreeNodeComponent({
                 selectedFile={selectedFile}
                 viewedFiles={viewedFiles}
                 commentCounts={commentCounts}
+                pendingCommentCounts={pendingCommentCounts}
                 onSelectFile={onSelectFile}
                 expandedFolders={expandedFolders}
                 toggleFolder={toggleFolder}
@@ -158,6 +173,7 @@ function TreeNodeComponent({
 
   return (
     <button
+      ref={buttonRef}
       onClick={() => onSelectFile(node.path)}
       className={cn(
         "w-full flex items-center gap-2 px-2 py-1.5 text-sm transition-colors",
@@ -170,6 +186,11 @@ function TreeNodeComponent({
       {node.file && getFileIcon(node.file)}
       <span className="truncate flex-1">{node.name}</span>
       <div className="flex items-center gap-1 shrink-0">
+        {pendingCount > 0 && (
+          <span className="flex items-center gap-0.5 text-xs text-yellow-500 bg-yellow-500/20 px-1.5 py-0.5 rounded">
+            {pendingCount}
+          </span>
+        )}
         {commentCount > 0 && (
           <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
             <MessageSquare className="w-3 h-3" />
@@ -187,6 +208,7 @@ export function FileTree({
   selectedFile,
   viewedFiles,
   commentCounts,
+  pendingCommentCounts = {},
   onSelectFile,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
@@ -215,7 +237,7 @@ export function FileTree({
   };
 
   return (
-    <nav className="flex-1 overflow-auto py-2">
+    <nav className="flex-1 overflow-auto py-2 themed-scrollbar">
       {tree.map((node) => (
         <TreeNodeComponent
           key={node.path}
@@ -224,6 +246,7 @@ export function FileTree({
           selectedFile={selectedFile}
           viewedFiles={viewedFiles}
           commentCounts={commentCounts}
+          pendingCommentCounts={pendingCommentCounts}
           onSelectFile={onSelectFile}
           expandedFolders={expandedFolders}
           toggleFolder={toggleFolder}

@@ -1,6 +1,7 @@
-import { Check } from "lucide-react";
+import { Check, FileCode } from "lucide-react";
 import { cn } from "../cn";
 import type { PullRequestFile } from "@/api/github";
+import { memo } from "react";
 
 interface FileHeaderProps {
   file: PullRequestFile;
@@ -8,24 +9,24 @@ interface FileHeaderProps {
   onToggleViewed: () => void;
 }
 
-export function FileHeader({ file, isViewed, onToggleViewed }: FileHeaderProps) {
+export const FileHeader = memo(function FileHeader({ file, isViewed, onToggleViewed }: FileHeaderProps) {
   const fileStatusBadge = (() => {
     switch (file.status) {
       case "added":
         return (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-500">
+          <span className="px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-500 font-medium">
             Added
           </span>
         );
       case "removed":
         return (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-red-500/20 text-red-500">
+          <span className="px-1.5 py-0.5 text-xs rounded bg-red-500/20 text-red-500 font-medium">
             Deleted
           </span>
         );
       case "renamed":
         return (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-blue-500/20 text-blue-500">
+          <span className="px-1.5 py-0.5 text-xs rounded bg-blue-500/20 text-blue-500 font-medium">
             Renamed
           </span>
         );
@@ -35,9 +36,10 @@ export function FileHeader({ file, isViewed, onToggleViewed }: FileHeaderProps) 
   })();
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b border-border sticky top-0 z-10">
+    <div className="flex items-center justify-between">
       <div className="flex items-center gap-3">
-        <span className="font-mono text-sm">{file.filename}</span>
+        <FileCode className="w-4 h-4 text-muted-foreground" />
+        <span className="font-mono text-sm font-medium">{file.filename}</span>
         {fileStatusBadge}
         <span className="text-xs text-muted-foreground">
           <span className="text-green-500">+{file.additions}</span>{" "}
@@ -59,5 +61,5 @@ export function FileHeader({ file, isViewed, onToggleViewed }: FileHeaderProps) 
       </button>
     </div>
   );
-}
+});
 

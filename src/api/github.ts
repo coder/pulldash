@@ -20,6 +20,7 @@ export interface PullRequest {
   title: string;
   body: string | null;
   state: string;
+  html_url: string;
   user: { login: string; avatar_url: string };
   head: { ref: string; sha: string };
   base: { ref: string; sha: string };
@@ -29,7 +30,50 @@ export interface PullRequest {
   deletions: number;
   changed_files: number;
   mergeable: boolean | null;
+  mergeable_state: string;
+  merged: boolean;
+  merge_commit_sha: string | null;
   draft: boolean;
+  labels: Array<{ name: string; color: string }>;
+  requested_reviewers: Array<{ login: string; avatar_url: string }>;
+  assignees: Array<{ login: string; avatar_url: string }>;
+}
+
+export interface CheckRun {
+  id: number;
+  name: string;
+  status: "queued" | "in_progress" | "completed";
+  conclusion: "success" | "failure" | "neutral" | "cancelled" | "skipped" | "timed_out" | "action_required" | null;
+  html_url: string;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface CombinedStatus {
+  state: "success" | "failure" | "pending";
+  statuses: Array<{
+    state: "success" | "failure" | "pending" | "error";
+    context: string;
+    description: string | null;
+    target_url: string | null;
+  }>;
+}
+
+export interface Review {
+  id: number;
+  user: { login: string; avatar_url: string };
+  body: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "PENDING" | "DISMISSED";
+  submitted_at: string;
+}
+
+export interface PendingReviewComment {
+  path: string;
+  line: number;
+  start_line?: number;
+  body: string;
+  side: "LEFT" | "RIGHT";
+  start_side?: "LEFT" | "RIGHT";
 }
 
 export interface PullRequestFile {
@@ -175,6 +219,129 @@ export async function replyToComment(
 ): Promise<ReviewComment> {
   return githubFetch(
     `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/comments/${commentId}/replies`,
+    {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }
+  );
+}
+
+// ============================================================================
+// Review APIs
+// ============================================================================
+
+export async function getReviews(
+  owner: string,
+  repo: string,
+  number: number
+): Promise<Review[]> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/reviews`
+  );
+}
+
+export async function createReview(
+  owner: string,
+  repo: string,
+  number: number,
+  commitId: string,
+  event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  body: string,
+  comments: PendingReviewComment[]
+): Promise<Review> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/reviews`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        commit_id: commitId,
+        event,
+        body,
+        comments,
+      }),
+    }
+  );
+}
+
+// ============================================================================
+// Check Runs & Status
+// ============================================================================
+
+export async function getCheckRuns(
+  owner: string,
+  repo: string,
+  ref: string
+): Promise<{ check_runs: CheckRun[] }> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/commits/${ref}/check-runs`
+  );
+}
+
+export async function getCombinedStatus(
+  owner: string,
+  repo: string,
+  ref: string
+): Promise<CombinedStatus> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/commits/${ref}/status`
+  );
+}
+
+// ============================================================================
+// Merge Operations
+// ============================================================================
+
+export async function mergePullRequest(
+  owner: string,
+  repo: string,
+  number: number,
+  mergeMethod: "merge" | "squash" | "rebase" = "squash",
+  commitTitle?: string,
+  commitMessage?: string
+): Promise<{ sha: string; merged: boolean; message: string }> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/merge`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        merge_method: mergeMethod,
+        commit_title: commitTitle,
+        commit_message: commitMessage,
+      }),
+    }
+  );
+}
+
+// ============================================================================
+// Issue Comments (for PR body/conversation)
+// ============================================================================
+
+export interface IssueComment {
+  id: number;
+  body: string;
+  user: { login: string; avatar_url: string };
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getIssueComments(
+  owner: string,
+  repo: string,
+  number: number
+): Promise<IssueComment[]> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/issues/${number}/comments`
+  );
+}
+
+export async function createIssueComment(
+  owner: string,
+  repo: string,
+  number: number,
+  body: string
+): Promise<IssueComment> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/issues/${number}/comments`,
     {
       method: "POST",
       body: JSON.stringify({ body }),

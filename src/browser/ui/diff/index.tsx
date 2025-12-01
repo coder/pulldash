@@ -164,7 +164,7 @@ const Line: React.FC<{
       <td className="tabular-nums text-center opacity-50 px-2 text-xs select-none">
         {line.type === "delete" ? "–" : lineNumberNew}
       </td>
-      <td className="text-nowrap pr-6">
+      <td className="whitespace-pre-wrap break-words pr-6">
         <Tag>
           {line.content.map((seg, i) => (
             <span
