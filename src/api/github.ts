@@ -263,6 +263,144 @@ export async function createReview(
   );
 }
 
+// Create a pending review (without submitting)
+export async function createPendingReview(
+  owner: string,
+  repo: string,
+  number: number,
+  commitId: string
+): Promise<Review> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/reviews`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        commit_id: commitId,
+      }),
+    }
+  );
+}
+
+// Add a comment to a pending review
+export async function addPendingReviewComment(
+  owner: string,
+  repo: string,
+  number: number,
+  reviewId: number,
+  path: string,
+  line: number,
+  body: string,
+  side: "LEFT" | "RIGHT" = "RIGHT",
+  startLine?: number,
+  startSide?: "LEFT" | "RIGHT"
+): Promise<ReviewComment> {
+  const payload: Record<string, unknown> = {
+    body,
+    path,
+    line,
+    side,
+  };
+  
+  if (startLine) {
+    payload.start_line = startLine;
+    payload.start_side = startSide || side;
+  }
+  
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/comments`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        // Adding to existing pending review - use subject_type
+        subject_type: "line",
+      }),
+      headers: {
+        // Use preview header to support adding to pending review
+        Accept: "application/vnd.github.v3+json",
+      },
+    }
+  );
+}
+
+// Submit a pending review
+export async function submitPendingReview(
+  owner: string,
+  repo: string,
+  number: number,
+  reviewId: number,
+  event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  body?: string
+): Promise<Review> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/reviews/${reviewId}/events`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        event,
+        body: body || "",
+      }),
+    }
+  );
+}
+
+// Delete a pending review
+export async function deletePendingReview(
+  owner: string,
+  repo: string,
+  number: number,
+  reviewId: number
+): Promise<void> {
+  await githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/reviews/${reviewId}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+// Get comments for a specific review
+export async function getReviewComments(
+  owner: string,
+  repo: string,
+  number: number,
+  reviewId: number
+): Promise<ReviewComment[]> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/reviews/${reviewId}/comments`
+  );
+}
+
+// Update a review comment
+export async function updateReviewComment(
+  owner: string,
+  repo: string,
+  commentId: number,
+  body: string
+): Promise<ReviewComment> {
+  return githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/comments/${commentId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+    }
+  );
+}
+
+// Delete a review comment
+export async function deleteReviewComment(
+  owner: string,
+  repo: string,
+  commentId: number
+): Promise<void> {
+  await githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/comments/${commentId}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
 // ============================================================================
 // Check Runs & Status
 // ============================================================================
@@ -347,5 +485,38 @@ export async function createIssueComment(
       body: JSON.stringify({ body }),
     }
   );
+}
+
+// ============================================================================
+// File Content APIs
+// ============================================================================
+
+export async function getFileContent(
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string
+): Promise<string> {
+  const token = getGitHubToken();
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${ref}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github.raw+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return ""; // File doesn't exist at this ref
+    }
+    const error = await response.text();
+    throw new Error(`GitHub API error: ${response.status} - ${error}`);
+  }
+
+  return response.text();
 }
 

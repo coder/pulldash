@@ -7,11 +7,18 @@ import {
   replyToComment,
   getReviews,
   createReview,
+  createPendingReview,
+  submitPendingReview,
+  deletePendingReview,
+  getReviewComments,
+  updateReviewComment,
+  deleteReviewComment,
   getCheckRuns,
   getCombinedStatus,
   mergePullRequest,
   getIssueComments,
   createIssueComment,
+  getFileContent,
 } from "./github";
 import { parseDiffWithHighlighting } from "./diff";
 
@@ -146,7 +153,7 @@ api.get("/pr/:owner/:repo/:number/reviews", async (c) => {
   }
 });
 
-// Submit a review
+// Submit a review (with all comments at once)
 api.post("/pr/:owner/:repo/:number/reviews", async (c) => {
   const { owner, repo, number } = c.req.param();
   const body = await c.req.json();
@@ -165,6 +172,130 @@ api.post("/pr/:owner/:repo/:number/reviews", async (c) => {
   } catch (error) {
     return c.json(
       { error: error instanceof Error ? error.message : "Failed to submit review" },
+      500
+    );
+  }
+});
+
+// Create a pending review
+api.post("/pr/:owner/:repo/:number/reviews/pending", async (c) => {
+  const { owner, repo, number } = c.req.param();
+  const body = await c.req.json();
+
+  try {
+    const review = await createPendingReview(
+      owner,
+      repo,
+      parseInt(number, 10),
+      body.commit_id
+    );
+    return c.json(review);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to create pending review" },
+      500
+    );
+  }
+});
+
+// Submit a pending review
+api.post("/pr/:owner/:repo/:number/reviews/:reviewId/submit", async (c) => {
+  const { owner, repo, number, reviewId } = c.req.param();
+  const body = await c.req.json();
+
+  try {
+    const review = await submitPendingReview(
+      owner,
+      repo,
+      parseInt(number, 10),
+      parseInt(reviewId, 10),
+      body.event,
+      body.body
+    );
+    return c.json(review);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to submit review" },
+      500
+    );
+  }
+});
+
+// Delete a pending review
+api.delete("/pr/:owner/:repo/:number/reviews/:reviewId", async (c) => {
+  const { owner, repo, number, reviewId } = c.req.param();
+
+  try {
+    await deletePendingReview(
+      owner,
+      repo,
+      parseInt(number, 10),
+      parseInt(reviewId, 10)
+    );
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to delete review" },
+      500
+    );
+  }
+});
+
+// Get comments for a specific review
+api.get("/pr/:owner/:repo/:number/reviews/:reviewId/comments", async (c) => {
+  const { owner, repo, number, reviewId } = c.req.param();
+
+  try {
+    const comments = await getReviewComments(
+      owner,
+      repo,
+      parseInt(number, 10),
+      parseInt(reviewId, 10)
+    );
+    return c.json(comments);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to fetch review comments" },
+      500
+    );
+  }
+});
+
+// Update a review comment
+api.patch("/pr/:owner/:repo/comments/:commentId", async (c) => {
+  const { owner, repo, commentId } = c.req.param();
+  const body = await c.req.json();
+
+  try {
+    const comment = await updateReviewComment(
+      owner,
+      repo,
+      parseInt(commentId, 10),
+      body.body
+    );
+    return c.json(comment);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to update comment" },
+      500
+    );
+  }
+});
+
+// Delete a review comment
+api.delete("/pr/:owner/:repo/comments/:commentId", async (c) => {
+  const { owner, repo, commentId } = c.req.param();
+
+  try {
+    await deleteReviewComment(
+      owner,
+      repo,
+      parseInt(commentId, 10)
+    );
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to delete comment" },
       500
     );
   }
@@ -250,6 +381,30 @@ api.post("/pr/:owner/:repo/:number/conversation", async (c) => {
   } catch (error) {
     return c.json(
       { error: error instanceof Error ? error.message : "Failed to add comment" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// File Content
+// ============================================================================
+
+api.get("/file/:owner/:repo", async (c) => {
+  const { owner, repo } = c.req.param();
+  const path = c.req.query("path");
+  const ref = c.req.query("ref");
+
+  if (!path || !ref) {
+    return c.json({ error: "Missing path or ref query parameter" }, 400);
+  }
+
+  try {
+    const content = await getFileContent(owner, repo, path, ref);
+    return c.text(content);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to fetch file content" },
       500
     );
   }

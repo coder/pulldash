@@ -1,138 +1,65 @@
-import { useState, useMemo, useCallback, useEffect, useRef, Fragment, memo } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ChevronLeft, Loader2, MessageSquare, Reply, Send, X, ChevronsUpDown, Check, XCircle, MessageCircle, Eye, Trash2, GitPullRequest, FileCode } from "lucide-react";
+import {
+  Loader2,
+  MessageSquare,
+  Reply,
+  Send,
+  X,
+  ChevronsUpDown,
+  Check,
+  XCircle,
+  MessageCircle,
+  Eye,
+  EyeOff,
+  Trash2,
+  GitPullRequest,
+  FileCode,
+  Pencil,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
 import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
 import { FileTree } from "./file-tree";
 import { FileHeader } from "./file-header";
-import type {
-  PullRequest,
-  PullRequestFile,
-  ReviewComment,
-  PendingReviewComment,
-} from "@/api/github";
+import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/github";
+import {
+  PRReviewProvider,
+  usePRReviewSelector,
+  usePRReviewStore,
+  useKeyboardNavigation,
+  useDiffLoader,
+  usePendingReviewLoader,
+  useCommentActions,
+  useReviewActions,
+  useFileCopyActions,
+  useCurrentFile,
+  useCurrentDiff,
+  useIsCurrentFileLoading,
+  useCurrentFileComments,
+  useCurrentFilePendingComments,
+  useCommentCountsByFile,
+  usePendingCommentCountsByFile,
+  useIsLineFocused,
+  useIsLineInSelection,
+  useIsLineCommenting,
+  useIsLineInCommentingRange,
+  useSelectionRange,
+  getTimeAgo,
+  type LocalPendingComment,
+  type ParsedDiff,
+  type DiffLine,
+  type DiffHunk,
+  type DiffSkipBlock,
+} from "../contexts/pr-review";
 
 // ============================================================================
-// Types for pending review
-// ============================================================================
-
-interface LocalPendingComment extends PendingReviewComment {
-  id: string; // local ID for tracking
-}
-
-// ============================================================================
-// Types for parsed diff
-// ============================================================================
-
-interface LineSegment {
-  value: string;
-  html: string;
-  type: "insert" | "delete" | "normal";
-}
-
-interface DiffLine {
-  type: "insert" | "delete" | "normal";
-  oldLineNumber?: number;
-  newLineNumber?: number;
-  content: LineSegment[];
-}
-
-interface DiffHunk {
-  type: "hunk";
-  oldStart: number;
-  newStart: number;
-  lines: DiffLine[];
-}
-
-interface DiffSkipBlock {
-  type: "skip";
-  count: number;
-  content: string;
-}
-
-interface ParsedDiff {
-  hunks: (DiffHunk | DiffSkipBlock)[];
-}
-
-// ============================================================================
-// Diff Cache
-// ============================================================================
-
-// ============================================================================
-// Diff Cache with LRU-like behavior
-// ============================================================================
-
-const diffCache = new Map<string, ParsedDiff>();
-const MAX_CACHE_SIZE = 100;
-const pendingFetches = new Map<string, Promise<ParsedDiff>>();
-
-async function fetchParsedDiff(file: PullRequestFile): Promise<ParsedDiff> {
-  // If file has no patch (binary, too large, etc.), return empty hunks
-  if (!file.patch) {
-    return { hunks: [] };
-  }
-
-  const cacheKey = file.sha;
-  
-  // Check cache first
-  if (diffCache.has(cacheKey)) {
-    return diffCache.get(cacheKey)!;
-  }
-  
-  // Check if already fetching
-  if (pendingFetches.has(cacheKey)) {
-    return pendingFetches.get(cacheKey)!;
-  }
-
-  // Create fetch promise
-  const fetchPromise = (async () => {
-    const response = await fetch("/api/parse-diff", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patch: file.patch,
-        filename: file.filename,
-        previousFilename: file.previous_filename,
-        sha: file.sha,
-      }),
-    });
-
-    const parsed = await response.json();
-    
-    // Check for error response or missing hunks
-    if (parsed.error || !parsed.hunks) {
-      pendingFetches.delete(cacheKey);
-      return { hunks: [] };
-    }
-    
-    // Manage cache size
-    if (diffCache.size >= MAX_CACHE_SIZE) {
-      const firstKey = diffCache.keys().next().value;
-      if (firstKey) diffCache.delete(firstKey);
-    }
-    
-    diffCache.set(cacheKey, parsed);
-    pendingFetches.delete(cacheKey);
-    
-    return parsed;
-  })();
-  
-  pendingFetches.set(cacheKey, fetchPromise);
-  return fetchPromise;
-}
-
-// Batch prefetch multiple files in parallel
-async function batchPrefetchDiffs(files: PullRequestFile[], maxConcurrent = 3): Promise<void> {
-  const uncached = files.filter(f => !diffCache.has(f.sha) && !pendingFetches.has(f.sha));
-  
-  for (let i = 0; i < uncached.length; i += maxConcurrent) {
-    const batch = uncached.slice(i, i + maxConcurrent);
-    await Promise.all(batch.map(f => fetchParsedDiff(f).catch(() => null)));
-  }
-}
-
-// ============================================================================
-// Page Component
+// Page Component (Data Fetching)
 // ============================================================================
 
 export function PRReviewPage() {
@@ -215,484 +142,87 @@ export function PRReviewPage() {
   }
 
   return (
-    <PRReview
+    <PRReviewProvider
       pr={pr}
       files={files}
       comments={comments}
-      setComments={setComments}
       owner={owner!}
       repo={repo!}
-    />
+    >
+      <PRReviewContent />
+    </PRReviewProvider>
   );
 }
 
 // ============================================================================
-// Main Review Component
+// Main Review Component (Layout)
 // ============================================================================
 
-interface PRReviewProps {
-  pr: PullRequest;
-  files: PullRequestFile[];
-  comments: ReviewComment[];
-  setComments: React.Dispatch<React.SetStateAction<ReviewComment[]>>;
-  owner: string;
-  repo: string;
-}
+function PRReviewContent() {
+  // Initialize hooks that load data
+  useKeyboardNavigation();
+  useDiffLoader();
+  usePendingReviewLoader();
 
-function PRReview({
-  pr,
-  files,
-  comments,
-  setComments,
-  owner,
-  repo,
-}: PRReviewProps) {
-  const navigate = useNavigate();
-
-  const [selectedFile, setSelectedFile] = useState<string | null>(
-    files[0]?.filename || null
-  );
-  const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
-  const [loadedDiffs, setLoadedDiffs] = useState<Record<string, ParsedDiff>>({});
-  const [loadingFiles, setLoadingFiles] = useState<Set<string>>(new Set());
-  const [commentingOnLine, setCommentingOnLine] = useState<{line: number; startLine?: number} | null>(null);
-  
-  // Line navigation state (always active, vim-like)
-  const [focusedLine, setFocusedLine] = useState<number | null>(null);
-  const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
-  const [gotoLineMode, setGotoLineMode] = useState(false);
-  const [gotoLineInput, setGotoLineInput] = useState("");
-  
-  // Pending review state
-  const [pendingComments, setPendingComments] = useState<LocalPendingComment[]>([]);
-  const [showReviewPanel, setShowReviewPanel] = useState(false);
-  const [reviewBody, setReviewBody] = useState("");
-  const [submittingReview, setSubmittingReview] = useState(false);
-
-  const prefetchQueue = useRef<string[]>([]);
-  const isPrefetching = useRef(false);
-
-  // Group comments by file path
-  const commentsByFile = useMemo(() => {
-    const grouped: Record<string, ReviewComment[]> = {};
-    for (const comment of comments) {
-      if (!grouped[comment.path]) {
-        grouped[comment.path] = [];
-      }
-      grouped[comment.path].push(comment);
-    }
-    return grouped;
-  }, [comments]);
-
-  // Load viewed files from localStorage
+  // Listen for delete comment events from keyboard navigation
+  const { deleteComment } = useCommentActions();
   useEffect(() => {
-    const stored = localStorage.getItem(`viewed-${owner}-${repo}-${pr.number}`);
-    if (stored) {
-      setViewedFiles(new Set(JSON.parse(stored)));
-    }
-  }, [owner, repo, pr.number]);
-
-  const loadDiff = useCallback(
-    async (filename: string) => {
-      const file = files.find((f) => f.filename === filename);
-      if (!file || loadedDiffs[filename] || loadingFiles.has(filename)) return;
-
-      setLoadingFiles((prev) => new Set(prev).add(filename));
-
-      try {
-        const parsed = await fetchParsedDiff(file);
-        setLoadedDiffs((prev) => ({ ...prev, [filename]: parsed }));
-      } catch (error) {
-        console.error("Failed to load diff:", error);
-      } finally {
-        setLoadingFiles((prev) => {
-          const next = new Set(prev);
-          next.delete(filename);
-          return next;
-        });
-      }
-    },
-    [files, loadedDiffs, loadingFiles]
-  );
-
-  // Improved prefetch with batching
-  const processPrefetchQueue = useCallback(async () => {
-    if (isPrefetching.current || prefetchQueue.current.length === 0) return;
-
-    isPrefetching.current = true;
-
-    const filesToFetch = prefetchQueue.current
-      .filter(filename => !loadedDiffs[filename] && !loadingFiles.has(filename))
-      .slice(0, 5); // Limit batch size
-    
-    prefetchQueue.current = prefetchQueue.current.filter(f => !filesToFetch.includes(f));
-    
-    const fileObjects = filesToFetch
-      .map(filename => files.find(f => f.filename === filename))
-      .filter((f): f is PullRequestFile => f !== undefined);
-    
-    if (fileObjects.length > 0) {
-      await batchPrefetchDiffs(fileObjects, 3);
-      
-      // Update loaded diffs state
-      for (const file of fileObjects) {
-        if (diffCache.has(file.sha)) {
-          setLoadedDiffs(prev => ({ ...prev, [file.filename]: diffCache.get(file.sha)! }));
-        }
-      }
-    }
-
-    isPrefetching.current = false;
-    
-    // Process remaining queue
-    if (prefetchQueue.current.length > 0) {
-      requestAnimationFrame(() => processPrefetchQueue());
-    }
-  }, [files, loadedDiffs, loadingFiles]);
-
-  useEffect(() => {
-    if (!selectedFile) return;
-
-    loadDiff(selectedFile);
-
-    const currentIndex = files.findIndex((f) => f.filename === selectedFile);
-    
-    // Prefetch next 5 files (increased from 4)
-    const filesToPrefetch = files
-      .slice(currentIndex + 1, currentIndex + 6)
-      .map((f) => f.filename)
-      .filter((f) => !loadedDiffs[f] && !loadingFiles.has(f));
-
-    prefetchQueue.current = [
-      ...new Set([...prefetchQueue.current, ...filesToPrefetch]),
-    ];
-    
-    // Use requestIdleCallback for prefetching to not block main thread
-    if ('requestIdleCallback' in window) {
-      (window as any).requestIdleCallback(() => processPrefetchQueue(), { timeout: 1000 });
-    } else {
-      setTimeout(processPrefetchQueue, 100);
-    }
-  }, [selectedFile, files, loadDiff, loadedDiffs, loadingFiles, processPrefetchQueue]);
-
-  // Reset commenting state when file changes
-  useEffect(() => {
-    setCommentingOnLine(null);
-    setFocusedLine(null);
-    setSelectionAnchor(null);
-    setGotoLineMode(false);
-    setGotoLineInput("");
-  }, [selectedFile]);
-
-  // Get all commentable line numbers from the current diff
-  const commentableLines = useMemo(() => {
-    const parsedDiff = selectedFile ? loadedDiffs[selectedFile] : null;
-    if (!parsedDiff?.hunks) return [];
-    
-    const lines: number[] = [];
-    for (const hunk of parsedDiff.hunks) {
-      if (hunk.type === "hunk") {
-        for (const line of hunk.lines) {
-          const lineNum = line.newLineNumber || line.oldLineNumber;
-          if (lineNum) lines.push(lineNum);
-        }
-      }
-    }
-    return lines;
-  }, [selectedFile, loadedDiffs]);
-
-  const toggleViewed = useCallback(
-    (filename: string) => {
-      setViewedFiles((prev) => {
-        const next = new Set(prev);
-        if (next.has(filename)) {
-          next.delete(filename);
-        } else {
-          next.add(filename);
-        }
-        localStorage.setItem(
-          `viewed-${owner}-${repo}-${pr.number}`,
-          JSON.stringify([...next])
-        );
-        return next;
-      });
-    },
-    [owner, repo, pr.number]
-  );
-
-  // Keyboard navigation for files and lines
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input/textarea
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
-        return;
-      }
-
-      // Handle goto line mode (g + numbers)
-      if (gotoLineMode) {
-        if (/^[0-9]$/.test(e.key)) {
-          e.preventDefault();
-          setGotoLineInput(prev => prev + e.key);
-          return;
-        }
-        if (e.key === "Backspace") {
-          e.preventDefault();
-          setGotoLineInput(prev => prev.slice(0, -1));
-          return;
-        }
-        if (e.key === "Enter" && gotoLineInput) {
-          e.preventDefault();
-          const targetLine = parseInt(gotoLineInput, 10);
-          // Find the closest commentable line to the target
-          if (commentableLines.length > 0) {
-            const closestLine = commentableLines.reduce((closest, line) => {
-              return Math.abs(line - targetLine) < Math.abs(closest - targetLine) ? line : closest;
-            }, commentableLines[0]);
-            setFocusedLine(closestLine);
-            setSelectionAnchor(null);
-          }
-          setGotoLineMode(false);
-          setGotoLineInput("");
-          return;
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          setGotoLineMode(false);
-          setGotoLineInput("");
-          return;
-        }
-        return; // Ignore other keys in goto mode
-      }
-
-      // Arrow keys for line navigation (always active)
-      if (e.key === "ArrowDown" && commentableLines.length > 0) {
-        e.preventDefault();
-        const currentIdx = focusedLine ? commentableLines.indexOf(focusedLine) : -1;
-        const nextIdx = Math.min(currentIdx + 1, commentableLines.length - 1);
-        const nextLine = commentableLines[nextIdx];
-        setFocusedLine(nextLine);
-        if (!e.shiftKey) {
-          setSelectionAnchor(null);
-        } else if (selectionAnchor === null && focusedLine) {
-          setSelectionAnchor(focusedLine);
-        }
-        return;
-      }
-      
-      if (e.key === "ArrowUp" && commentableLines.length > 0) {
-        e.preventDefault();
-        const currentIdx = focusedLine ? commentableLines.indexOf(focusedLine) : commentableLines.length;
-        const prevIdx = Math.max(currentIdx - 1, 0);
-        const prevLine = commentableLines[prevIdx];
-        setFocusedLine(prevLine);
-        if (!e.shiftKey) {
-          setSelectionAnchor(null);
-        } else if (selectionAnchor === null && focusedLine) {
-          setSelectionAnchor(focusedLine);
-        }
-        return;
-      }
-
-      // Find next/previous unviewed file
-      const findNextUnviewed = (direction: 1 | -1): string | null => {
-        const currentIndex = selectedFile
-          ? files.findIndex((f) => f.filename === selectedFile)
-          : -1;
-        
-        const startIndex = direction === 1 ? currentIndex + 1 : currentIndex - 1;
-        const length = files.length;
-        
-        // Search in the given direction, wrapping around
-        for (let i = 0; i < length; i++) {
-          const index = direction === 1
-            ? (startIndex + i) % length
-            : (startIndex - i + length) % length;
-          
-          if (index >= 0 && index < length && !viewedFiles.has(files[index].filename)) {
-            return files[index].filename;
-          }
-        }
-        return null;
-      };
-
-      switch (e.key.toLowerCase()) {
-        case "k": {
-          // Next unviewed file
-          e.preventDefault();
-          const next = findNextUnviewed(1);
-          if (next) setSelectedFile(next);
-          break;
-        }
-        case "j": {
-          // Previous unviewed file
-          e.preventDefault();
-          const prev = findNextUnviewed(-1);
-          if (prev) setSelectedFile(prev);
-          break;
-        }
-        case "v": {
-          // Toggle viewed for current file
-          if (selectedFile) {
-            toggleViewed(selectedFile);
-          }
-          break;
-        }
-        case "g": {
-          // Enter goto line mode
-          e.preventDefault();
-          setGotoLineMode(true);
-          setGotoLineInput("");
-          break;
-        }
-        case "c": {
-          // Leave comment on current selection
-          e.preventDefault();
-          if (focusedLine) {
-            const startLine = selectionAnchor 
-              ? Math.min(focusedLine, selectionAnchor) 
-              : undefined;
-            const endLine = selectionAnchor 
-              ? Math.max(focusedLine, selectionAnchor) 
-              : focusedLine;
-            setCommentingOnLine({ line: endLine, startLine: startLine !== endLine ? startLine : undefined });
-          } else if (commentableLines.length > 0) {
-            // If no line focused, focus first line
-            setFocusedLine(commentableLines[0]);
-          }
-          break;
-        }
-        case "escape": {
-          // Clear selection
-          e.preventDefault();
-          setFocusedLine(null);
-          setSelectionAnchor(null);
-          break;
-        }
-      }
+    const handler = (e: CustomEvent<{ commentId: number }>) => {
+      deleteComment(e.detail.commentId);
     };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [files, selectedFile, viewedFiles, toggleViewed, commentableLines, focusedLine, selectionAnchor, gotoLineMode, gotoLineInput]);
-
-  // Add comment to pending review
-  const handleAddPendingComment = useCallback(
-    async (line: number, body: string, startLine?: number) => {
-      if (!selectedFile) return;
-      
-      const newPendingComment: LocalPendingComment = {
-        id: `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        path: selectedFile,
-        line,
-        start_line: startLine,
-        body,
-        side: "RIGHT",
-      };
-      
-      setPendingComments((prev) => [...prev, newPendingComment]);
-      setCommentingOnLine(null);
-      setFocusedLine(null);
-      setSelectionAnchor(null);
-    },
-    [selectedFile]
-  );
-
-  // Remove a pending comment
-  const handleRemovePendingComment = useCallback((id: string) => {
-    setPendingComments((prev) => prev.filter((c) => c.id !== id));
-  }, []);
-
-  // Submit the review with all pending comments
-  const handleSubmitReview = useCallback(
-    async (event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT") => {
-      setSubmittingReview(true);
-      
-      try {
-        const response = await fetch(
-          `/api/pr/${owner}/${repo}/${pr.number}/reviews`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              commit_id: pr.head.sha,
-              event,
-              body: reviewBody,
-              comments: pendingComments.map(({ path, line, body, side }) => ({
-                path,
-                line,
-                body,
-                side,
-              })),
-            }),
-          }
-        );
-
-        if (response.ok) {
-          // Refresh comments after successful review submission
-          const commentsRes = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/comments`);
-          if (commentsRes.ok) {
-            const newComments = await commentsRes.json();
-            setComments(newComments);
-          }
-          
-          // Clear pending state
-          setPendingComments([]);
-          setReviewBody("");
-          setShowReviewPanel(false);
-        }
-      } finally {
-        setSubmittingReview(false);
-      }
-    },
-    [owner, repo, pr.number, pr.head.sha, reviewBody, pendingComments, setComments]
-  );
-
-  const handleReplyToComment = useCallback(
-    async (commentId: number, body: string) => {
-      const response = await fetch(
-        `/api/pr/${owner}/${repo}/${pr.number}/comments`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reply_to_id: commentId, body }),
-        }
+    window.addEventListener(
+      "pr-review:delete-comment",
+      handler as EventListener
+    );
+    return () =>
+      window.removeEventListener(
+        "pr-review:delete-comment",
+        handler as EventListener
       );
+  }, [deleteComment]);
 
-      if (response.ok) {
-        const newComment = await response.json();
-        setComments((prev) => [...prev, newComment]);
-      }
-    },
-    [owner, repo, pr.number, setComments]
-  );
-
-  const currentFile = files.find((f) => f.filename === selectedFile);
-  const isLoading = selectedFile ? loadingFiles.has(selectedFile) : false;
-  const parsedDiff = selectedFile ? loadedDiffs[selectedFile] : null;
-  const fileComments = selectedFile ? commentsByFile[selectedFile] || [] : [];
-  const filePendingComments = selectedFile 
-    ? pendingComments.filter((c) => c.path === selectedFile)
-    : [];
-
-  // Calculate pending comments count per file
-  const pendingCommentsByFile = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const comment of pendingComments) {
-      counts[comment.path] = (counts[comment.path] || 0) + 1;
-    }
-    return counts;
-  }, [pendingComments]);
+  const pr = usePRReviewSelector((s) => s.pr);
+  const owner = usePRReviewSelector((s) => s.owner);
+  const repo = usePRReviewSelector((s) => s.repo);
+  const showReviewPanel = usePRReviewSelector((s) => s.showReviewPanel);
 
   return (
     <div className="flex flex-col h-screen">
       <PRHeader pr={pr} owner={owner} repo={repo} />
 
       <div className="flex flex-1 overflow-hidden">
+        <FilePanel />
+        <DiffPanel />
+      </div>
+
+      {showReviewPanel && <ReviewPanel />}
+    </div>
+  );
+}
+
+// ============================================================================
+// File Panel (Sidebar)
+// ============================================================================
+
+const FilePanel = memo(function FilePanel() {
+  const store = usePRReviewStore();
+  const pr = usePRReviewSelector((s) => s.pr);
+  const owner = usePRReviewSelector((s) => s.owner);
+  const repo = usePRReviewSelector((s) => s.repo);
+  const files = usePRReviewSelector((s) => s.files);
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
+  const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
+  const hideViewed = usePRReviewSelector((s) => s.hideViewed);
+  const pendingCommentsCount = usePRReviewSelector(
+    (s) => s.pendingComments.length
+  );
+
+  const commentCounts = useCommentCountsByFile();
+  const pendingCommentCounts = usePendingCommentCountsByFile();
+  const { copyDiff, copyFile, copyMainVersion } = useFileCopyActions();
+
+  return (
         <aside className="w-72 border-r border-border flex flex-col overflow-hidden shrink-0">
           {/* Navigation tabs */}
           <div className="flex border-b border-border">
@@ -710,62 +240,110 @@ function PRReview({
           </div>
           
           <div className="p-3 border-b border-border flex items-center gap-2">
-            <span className="text-sm font-medium">
-              {files.length} files changed
-            </span>
+        <span className="text-sm font-medium">{files.length} files changed</span>
             <span className="text-xs text-muted-foreground ml-auto">
               <span className="text-green-500">+{pr.additions}</span>{" "}
               <span className="text-red-500">−{pr.deletions}</span>
             </span>
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                onClick={store.toggleHideViewed}
+                    className={cn(
+                      "p-1.5 rounded transition-colors",
+                      hideViewed
+                        ? "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"
+                        : "text-muted-foreground hover:bg-muted"
+                    )}
+                  >
+                    {hideViewed ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {hideViewed ? "Show viewed files" : "Hide viewed files"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
+
           <FileTree
             files={files}
             selectedFile={selectedFile}
+            selectedFiles={selectedFiles}
             viewedFiles={viewedFiles}
-            commentCounts={Object.fromEntries(
-              Object.entries(commentsByFile).map(([path, c]) => [path, c.length])
-            )}
-            pendingCommentCounts={pendingCommentsByFile}
-            onSelectFile={setSelectedFile}
-          />
-          
-          {/* Review Panel Toggle */}
-          {pendingComments.length > 0 && (
+            hideViewed={hideViewed}
+        commentCounts={commentCounts}
+        pendingCommentCounts={pendingCommentCounts}
+        onSelectFile={store.selectFile}
+        onToggleFileSelection={store.toggleFileSelection}
+        onToggleViewed={store.toggleViewed}
+        onToggleViewedMultiple={store.toggleViewedMultiple}
+        onMarkFolderViewed={store.markFolderViewed}
+        onCopyDiff={copyDiff}
+        onCopyFile={copyFile}
+        onCopyMainVersion={copyMainVersion}
+      />
+
+      {pendingCommentsCount > 0 && (
             <div className="p-3 border-t border-border">
               <button
-                onClick={() => setShowReviewPanel(true)}
+            onClick={store.openReviewPanel}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
               >
                 <Eye className="w-4 h-4" />
-                Review ({pendingComments.length} pending)
+            Review ({pendingCommentsCount} pending)
               </button>
             </div>
           )}
         </aside>
+  );
+});
 
+// ============================================================================
+// Diff Panel (Main Content)
+// ============================================================================
+
+const DiffPanel = memo(function DiffPanel() {
+  const store = usePRReviewStore();
+  const files = usePRReviewSelector((s) => s.files);
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
+  const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
+  const pendingCommentsCount = usePRReviewSelector(
+    (s) => s.pendingComments.length
+  );
+
+  const currentFile = useCurrentFile();
+  const parsedDiff = useCurrentDiff();
+  const isLoading = useIsCurrentFileLoading();
+
+  const currentIndex = selectedFile
+    ? files.findIndex((f) => f.filename === selectedFile)
+    : -1;
+
+  return (
         <main className="flex-1 overflow-hidden flex flex-col">
           {/* File navigation bar */}
           <div className="shrink-0 border-b border-border bg-card px-4 py-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
-                onClick={() => {
-                  const currentIdx = files.findIndex(f => f.filename === selectedFile);
-                  if (currentIdx > 0) setSelectedFile(files[currentIdx - 1].filename);
-                }}
-                disabled={!selectedFile || files.findIndex(f => f.filename === selectedFile) === 0}
+            onClick={() => store.navigateToFile("prev")}
+            disabled={currentIndex <= 0}
                 className="px-2 py-1 text-sm rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 ← Prev
               </button>
               <span className="text-sm text-muted-foreground">
-                File {selectedFile ? files.findIndex(f => f.filename === selectedFile) + 1 : 0} of {files.length}
+            File {currentIndex + 1} of {files.length}
               </span>
               <button
-                onClick={() => {
-                  const currentIdx = files.findIndex(f => f.filename === selectedFile);
-                  if (currentIdx < files.length - 1) setSelectedFile(files[currentIdx + 1].filename);
-                }}
-                disabled={!selectedFile || files.findIndex(f => f.filename === selectedFile) === files.length - 1}
+            onClick={() => store.navigateToFile("next")}
+            disabled={currentIndex >= files.length - 1}
                 className="px-2 py-1 text-sm rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 Next →
@@ -773,26 +351,34 @@ function PRReview({
             </div>
             <div className="flex items-center gap-3 text-sm">
               <span className="text-muted-foreground">
-                <span className="text-green-500 font-medium">{viewedFiles.size}</span>
-                <span className="text-muted-foreground"> / {files.length} reviewed</span>
+            <span className="text-green-500 font-medium">
+              {viewedFiles.size}
+            </span>
+            <span className="text-muted-foreground">
+              {" "}
+              / {files.length} reviewed
+            </span>
               </span>
               {files.length - viewedFiles.size > 0 && (
                 <span className="text-yellow-500">
                   {files.length - viewedFiles.size} remaining
                 </span>
               )}
+              {selectedFiles.size > 0 && (
+            <span className="text-blue-400">{selectedFiles.size} selected</span>
+              )}
             </div>
           </div>
 
           {currentFile ? (
-            <div className="flex flex-col h-full">
+            <div className="flex flex-col flex-1 min-h-0">
               {/* Sticky file header */}
               <div className="shrink-0 border-b border-border bg-muted/50 backdrop-blur-sm z-20">
                 <div className="px-4 py-2">
                   <FileHeader
                     file={currentFile}
                     isViewed={viewedFiles.has(currentFile.filename)}
-                    onToggleViewed={() => toggleViewed(currentFile.filename)}
+                onToggleViewed={() => store.toggleViewed(currentFile.filename)}
                   />
                 </div>
               </div>
@@ -805,20 +391,8 @@ function PRReview({
                       <div className="flex items-center justify-center py-12">
                         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                       </div>
-                    ) : parsedDiff && parsedDiff.hunks && parsedDiff.hunks.length > 0 ? (
-                      <DiffViewer
-                        diff={parsedDiff}
-                        comments={fileComments}
-                        pendingComments={filePendingComments}
-                        commentingOnLine={commentingOnLine}
-                        focusedLine={focusedLine}
-                        selectionAnchor={selectionAnchor}
-                        onLineClick={(line) => setCommentingOnLine({ line })}
-                        onCancelComment={() => setCommentingOnLine(null)}
-                        onSubmitComment={handleAddPendingComment}
-                        onReplyToComment={handleReplyToComment}
-                        onRemovePendingComment={handleRemovePendingComment}
-                      />
+                ) : parsedDiff && parsedDiff.hunks.length > 0 ? (
+                  <DiffViewer diff={parsedDiff} />
                     ) : (
                       <div className="p-4 text-sm text-muted-foreground text-center">
                         {!currentFile.patch 
@@ -830,101 +404,218 @@ function PRReview({
                 </div>
               </div>
               
-              {/* Keybinds bar - always visible */}
-              <div className={cn(
-                "shrink-0 border-t border-border px-4 py-2",
-                gotoLineMode ? "bg-blue-500/10" : "bg-muted/30"
-              )}>
+          <KeybindsBar />
+        </div>
+      ) : (
+        <div className="flex flex-col flex-1 min-h-0">
+          <div className="flex items-center justify-center flex-1 text-muted-foreground">
+            Select a file to view changes
+          </div>
+          <KeybindsBar />
+        </div>
+      )}
+    </main>
+  );
+});
+
+// ============================================================================
+// Keybinds Bar
+// ============================================================================
+
+const KeybindsBar = memo(function KeybindsBar() {
+  const gotoLineMode = usePRReviewSelector((s) => s.gotoLineMode);
+  const gotoLineInput = usePRReviewSelector((s) => s.gotoLineInput);
+  const focusedLine = usePRReviewSelector((s) => s.focusedLine);
+  const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
+  const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
+  const commentingOnLine = usePRReviewSelector((s) => s.commentingOnLine);
+  const pendingCommentsCount = usePRReviewSelector(
+    (s) => s.pendingComments.length
+  );
+
+  const showEscape =
+    gotoLineMode || focusedLine || focusedCommentId || commentingOnLine;
+
+  return (
+    <div
+      className={cn(
+                "shrink-0 border-t border-border px-4 py-2.5",
+                gotoLineMode && "bg-blue-500/10",
+                focusedCommentId && "bg-yellow-500/10",
+                commentingOnLine && "bg-green-500/10",
+        !gotoLineMode &&
+          !focusedCommentId &&
+          !commentingOnLine &&
+          "bg-muted/30"
+      )}
+    >
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-4">
                     {gotoLineMode ? (
                       <>
-                        <span className="font-medium text-blue-400">Go to line</span>
-                        <span className="font-mono bg-muted px-2 py-0.5 rounded min-w-[3ch] inline-block">
-                          {gotoLineInput || "_"}
+                        <span className="flex items-center gap-2">
+                <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+                  GOTO
+                </span>
+                          <span className="font-mono text-blue-400">
+                            {gotoLineInput || "..."}
+                          </span>
                         </span>
-                        <span className="text-muted-foreground">Enter to jump</span>
+                        <span className="text-muted-foreground">
+                Type line number, then{" "}
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  Enter
+                </kbd>{" "}
+                to jump
+                        </span>
+                      </>
+                    ) : commentingOnLine ? (
+                      <>
+              <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
+                COMMENT
+              </span>
+                        <span className="font-mono text-green-400">
+                L
+                {commentingOnLine.startLine
+                  ? `${commentingOnLine.startLine}-`
+                  : ""}
+                {commentingOnLine.line}
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  ⌘Enter
+                </kbd>{" "}
+                submit
+                        </span>
+                      </>
+                    ) : focusedCommentId ? (
+                      <>
+              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs font-medium">
+                COMMENT
+              </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  r
+                </kbd>{" "}
+                reply
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  e
+                </kbd>{" "}
+                edit
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  d
+                </kbd>{" "}
+                delete
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  ↑
+                </kbd>{" "}
+                back to line
+                        </span>
                       </>
                     ) : focusedLine ? (
                       <>
                         <span className="font-mono text-blue-400">
                           {selectionAnchor 
                             ? `L${Math.min(focusedLine, selectionAnchor)}-${Math.max(focusedLine, selectionAnchor)}`
-                            : `L${focusedLine}`
-                          }
+                  : `L${focusedLine}`}
                         </span>
                         <span className="text-muted-foreground">
-                          <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">c</kbd>
-                          {" "}comment
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  c
+                </kbd>{" "}
+                comment
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  ↓
+                </kbd>{" "}
+                view comments
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  Shift+↑↓
+                </kbd>{" "}
+                select range
                         </span>
                       </>
                     ) : (
-                      <span className="text-muted-foreground">
-                        <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">↑↓</kbd>
-                        {" "}select line
+                      <>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  ↑↓
+                </kbd>{" "}
+                select line
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  g
+                </kbd>{" "}
+                goto line
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  j
+                </kbd>
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono ml-0.5">
+                  k
+                </kbd>{" "}
+                next/prev unreviewed
+                        </span>
+                        <span className="text-muted-foreground">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                  v
+                </kbd>{" "}
+                mark viewed
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+          {pendingCommentsCount > 0 && (
+                      <span className="text-yellow-400 text-xs">
+              {pendingCommentsCount} pending comment
+              {pendingCommentsCount !== 1 ? "s" : ""}
                       </span>
                     )}
-                    <span className="text-muted-foreground">
-                      <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">g</kbd>
-                      {" "}goto
-                    </span>
-                    <span className="text-muted-foreground">
-                      <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">j</kbd>
-                      <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono ml-0.5">k</kbd>
-                      {" "}files
-                    </span>
-                    <span className="text-muted-foreground">
-                      <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">v</kbd>
-                      {" "}viewed
-                    </span>
+          {showEscape && (
+                      <span className="text-muted-foreground">
+              <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                Esc
+              </kbd>{" "}
+              {gotoLineMode ? "cancel" : commentingOnLine ? "cancel" : "clear"}
+                      </span>
+                    )}
                   </div>
-                  {(gotoLineMode || focusedLine) && (
-                    <span className="text-muted-foreground">
-                      <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Esc</kbd>
-                      {" "}{gotoLineMode ? "cancel" : "clear"}
-                    </span>
-                  )}
                 </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col h-full">
-              <div className="flex items-center justify-center flex-1 text-muted-foreground">
-                Select a file to view changes
-              </div>
-              {/* Keybinds bar */}
-              <div className="shrink-0 border-t border-border bg-muted/30 px-4 py-2">
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span>
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">j</kbd>
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono ml-0.5">k</kbd>
-                    {" "}navigate files
-                  </span>
-                  <span>
-                    <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">v</kbd>
-                    {" "}mark viewed
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-        </main>
-      </div>
-      
-      {/* Review Panel Modal */}
-      {showReviewPanel && (
-        <ReviewPanel
-          pendingComments={pendingComments}
-          reviewBody={reviewBody}
-          setReviewBody={setReviewBody}
-          submitting={submittingReview}
-          onSubmit={handleSubmitReview}
-          onClose={() => setShowReviewPanel(false)}
-          onRemovePendingComment={handleRemovePendingComment}
-        />
-      )}
     </div>
   );
+});
+
+// ============================================================================
+// Line Number Drag Selection Context
+// ============================================================================
+
+interface LineDragContextValue {
+  isDragging: boolean;
+  dragAnchor: number | null;
+  onDragStart: (lineNum: number) => void;
+  onDragEnter: (lineNum: number) => void;
+  onDragEnd: () => void;
+  onClickFallback: (lineNum: number) => void;
+}
+
+const LineDragContext = React.createContext<LineDragContextValue | null>(null);
+
+function useLineDrag() {
+  const ctx = React.useContext(LineDragContext);
+  if (!ctx) throw new Error("useLineDrag must be used within LineDragProvider");
+  return ctx;
 }
 
 // ============================================================================
@@ -933,56 +624,170 @@ function PRReview({
 
 interface DiffViewerProps {
   diff: ParsedDiff;
-  comments: ReviewComment[];
-  pendingComments: LocalPendingComment[];
-  commentingOnLine: {line: number; startLine?: number} | null;
-  focusedLine: number | null;
-  selectionAnchor: number | null;
-  onLineClick: (line: number) => void;
-  onCancelComment: () => void;
-  onSubmitComment: (line: number, body: string, startLine?: number) => Promise<void>;
-  onReplyToComment: (commentId: number, body: string) => Promise<void>;
-  onRemovePendingComment: (id: string) => void;
 }
 
-const DiffViewer = memo(function DiffViewer({
-  diff,
-  comments,
-  pendingComments,
-  commentingOnLine,
-  focusedLine,
-  selectionAnchor,
-  onLineClick,
-  onCancelComment,
-  onSubmitComment,
-  onReplyToComment,
-  onRemovePendingComment,
-}: DiffViewerProps) {
-  // Safety check for invalid diff
+const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   const hunks = diff?.hunks ?? [];
+  const store = usePRReviewStore();
   
-  // Calculate selection range (always active when there's a focused line)
-  const selectionRange = useMemo(() => {
-    if (!focusedLine) return null;
-    if (!selectionAnchor) return { start: focusedLine, end: focusedLine };
-    return {
-      start: Math.min(focusedLine, selectionAnchor),
-      end: Math.max(focusedLine, selectionAnchor),
-    };
-  }, [focusedLine, selectionAnchor]);
+  // Use refs for drag state to avoid stale closure issues in handlers
+  const isDraggingRef = useRef(false);
+  const dragAnchorRef = useRef<number | null>(null);
+  const handledByMouseEventsRef = useRef(false);
+  // State to track dragging for context consumers (so they can react to drag state changes)
+  const [isDraggingState, setIsDraggingState] = useState(false);
 
-  // Group comments into threads by line
-  const threadsByLine = useMemo(() => {
-    const byLine: Record<number, ReviewComment[][]> = {};
+  const onDragStart = useCallback((lineNum: number) => {
+    isDraggingRef.current = true;
+    dragAnchorRef.current = lineNum;
+    store.setFocusedLine(lineNum);
+    store.setSelectionAnchor(lineNum);
+    setIsDraggingState(true);
+  }, [store]);
+
+  const onDragEnter = useCallback((lineNum: number) => {
+    if (isDraggingRef.current && dragAnchorRef.current !== null) {
+      store.setFocusedLine(lineNum);
+    }
+  }, [store]);
+
+  const onDragEnd = useCallback(() => {
+    if (isDraggingRef.current && dragAnchorRef.current !== null) {
+      handledByMouseEventsRef.current = true;
+      const state = store.getSnapshot();
+      const focusedLine = state.focusedLine;
+      const anchor = state.selectionAnchor;
+
+      if (focusedLine !== null) {
+        if (anchor !== null && anchor !== focusedLine) {
+          // Multi-line selection - start commenting with range
+          const startLine = Math.min(anchor, focusedLine);
+          const endLine = Math.max(anchor, focusedLine);
+          store.startCommenting(endLine, startLine);
+        } else {
+          // Single line click - start commenting
+          store.startCommenting(focusedLine);
+        }
+      }
+    }
+    isDraggingRef.current = false;
+    dragAnchorRef.current = null;
+    setIsDraggingState(false);
+  }, [store]);
+
+  // Fallback for clicks when mousedown/mouseup didn't fire
+  const onClickFallback = useCallback((lineNum: number) => {
+    if (handledByMouseEventsRef.current) {
+      // Reset for next interaction - was already handled by mousedown/mouseup
+      handledByMouseEventsRef.current = false;
+      return;
+    }
+    // Mouse events didn't fire, handle the click directly
+    store.startCommenting(lineNum);
+  }, [store]);
+
+  // Handle mouse up anywhere on the document
+  useEffect(() => {
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        onDragEnd();
+      }
+    };
+
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => document.removeEventListener("mouseup", handleMouseUp);
+  }, [onDragEnd]);
+
+  const dragValue = useMemo(() => ({
+    isDragging: isDraggingState,
+    dragAnchor: dragAnchorRef.current,
+    onDragStart,
+    onDragEnter,
+    onDragEnd,
+    onClickFallback,
+  }), [isDraggingState, onDragStart, onDragEnter, onDragEnd, onClickFallback]);
+
+  return (
+    <LineDragContext.Provider value={dragValue}>
+      <table className="w-full border-collapse font-mono text-[0.8rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)]">
+        <tbody>
+          {hunks.map((hunk, hunkIndex) =>
+            hunk.type === "skip" ? (
+              <SkipBlockRow key={`skip-${hunkIndex}`} hunk={hunk} />
+            ) : (
+              <HunkLines key={`hunk-${hunkIndex}`} hunk={hunk} />
+            )
+          )}
+        </tbody>
+      </table>
+    </LineDragContext.Provider>
+  );
+});
+
+// ============================================================================
+// Hunk Lines (renders all lines in a hunk)
+// ============================================================================
+
+interface HunkLinesProps {
+  hunk: DiffHunk;
+}
+
+const HunkLines = memo(function HunkLines({ hunk }: HunkLinesProps) {
+  return (
+    <>
+      {hunk.lines.map((line, lineIndex) => {
+        const lineNum = line.newLineNumber || line.oldLineNumber;
+        return (
+          <DiffLineWithComments
+            key={`line-${lineIndex}`}
+            line={line}
+            lineNum={lineNum}
+          />
+        );
+      })}
+    </>
+  );
+});
+
+// ============================================================================
+// Diff Line With Comments (handles line + its comments)
+// ============================================================================
+
+interface DiffLineWithCommentsProps {
+  line: DiffLine;
+  lineNum: number | undefined;
+}
+
+const DiffLineWithComments = memo(function DiffLineWithComments({
+  line,
+  lineNum,
+}: DiffLineWithCommentsProps) {
+  const comments = useCurrentFileComments();
+  const pendingComments = useCurrentFilePendingComments();
+  const commentingOnLine = usePRReviewSelector((s) => s.commentingOnLine);
+  const editingCommentId = usePRReviewSelector((s) => s.editingCommentId);
+  const replyingToCommentId = usePRReviewSelector((s) => s.replyingToCommentId);
+  const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
+
+  // Get comments for this line
+  const lineComments = useMemo(() => {
+    if (!lineNum) return [];
+    return comments.filter(
+      (c) => c.line === lineNum || c.original_line === lineNum
+    );
+  }, [comments, lineNum]);
+
+  // Group into threads
+  const threads = useMemo(() => {
     const threadMap: Map<number, ReviewComment[]> = new Map();
 
-    for (const comment of comments) {
+    for (const comment of lineComments) {
       if (!comment.in_reply_to_id) {
         threadMap.set(comment.id, [comment]);
       }
     }
 
-    for (const comment of comments) {
+    for (const comment of lineComments) {
       if (comment.in_reply_to_id) {
         const thread = threadMap.get(comment.in_reply_to_id);
         if (thread) {
@@ -991,160 +796,142 @@ const DiffViewer = memo(function DiffViewer({
       }
     }
 
-    for (const [, thread] of threadMap) {
-      const rootComment = thread[0];
-      const line = rootComment.line || rootComment.original_line;
-      if (line) {
-        if (!byLine[line]) byLine[line] = [];
-        byLine[line].push(thread);
-      }
-    }
+    return [...threadMap.values()];
+  }, [lineComments]);
 
-    return byLine;
-  }, [comments]);
+  // Get pending comments for this line
+  const linePendingComments = useMemo(() => {
+    if (!lineNum) return [];
+    return pendingComments.filter((c) => c.line === lineNum);
+  }, [pendingComments, lineNum]);
 
-  // Group pending comments by line
-  const pendingByLine = useMemo(() => {
-    const byLine: Record<number, LocalPendingComment[]> = {};
-    for (const comment of pendingComments) {
-      if (!byLine[comment.line]) byLine[comment.line] = [];
-      byLine[comment.line].push(comment);
-    }
-    return byLine;
-  }, [pendingComments]);
-
-  // Track which lines are in comment ranges (for highlighting)
-  const linesInCommentRange = useMemo(() => {
-    const lines = new Set<number>();
-    // Add lines from existing comments with start_line
-    for (const comment of comments) {
-      if (comment.start_line && comment.line) {
-        for (let i = comment.start_line; i <= comment.line; i++) {
-          lines.add(i);
-        }
-      }
-    }
-    // Add lines from pending comments with start_line
-    for (const comment of pendingComments) {
-      if (comment.start_line) {
-        for (let i = comment.start_line; i <= comment.line; i++) {
-          lines.add(i);
-        }
-      }
-    }
-    return lines;
-  }, [comments, pendingComments]);
-
-  return (
-    <table className="w-full border-collapse font-mono text-[0.8rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)]">
-      <tbody>
-        {hunks.map((hunk, hunkIndex) =>
-          hunk.type === "skip" ? (
-            <SkipBlockRow key={`skip-${hunkIndex}`} hunk={hunk} />
-          ) : (
-            <Fragment key={`hunk-${hunkIndex}`}>
-              {hunk.lines.map((line, lineIndex) => {
-                // Use newLineNumber for inserts/normal, oldLineNumber for deletes
-                const lineNum = line.newLineNumber || line.oldLineNumber;
-                const lineThreads = lineNum ? threadsByLine[lineNum] : undefined;
-                const linePending = lineNum ? pendingByLine[lineNum] : undefined;
                 const isCommenting = lineNum === commentingOnLine?.line;
-                const isInCommentRange = !!(commentingOnLine && lineNum !== undefined &&
-                  lineNum >= (commentingOnLine.startLine ?? commentingOnLine.line) && 
-                  lineNum <= commentingOnLine.line);
-
-                const isFocused = lineNum === focusedLine;
-                const isInSelection = !!(selectionRange && lineNum !== undefined &&
-                  lineNum >= selectionRange.start && lineNum <= selectionRange.end);
-                const hasCommentRange = lineNum !== undefined && linesInCommentRange.has(lineNum);
 
                 return (
-                  <Fragment key={`line-${hunkIndex}-${lineIndex}`}>
-                    <DiffLineRow
-                      line={line}
-                      isFocused={isFocused}
-                      isInSelection={isInSelection || isInCommentRange}
-                      hasCommentRange={hasCommentRange}
-                      onLineClick={onLineClick}
-                    />
-                    
-                    {/* Inline comment form */}
+    <Fragment>
+      <DiffLineRow line={line} lineNum={lineNum} />
+
                     {isCommenting && lineNum && (
                       <tr>
                         <td colSpan={3} className="p-0">
                           <InlineCommentForm
                             line={lineNum}
                             startLine={commentingOnLine?.startLine}
-                            onSubmit={onSubmitComment}
-                            onCancel={onCancelComment}
                           />
                         </td>
                       </tr>
                     )}
                     
-                    {/* Pending comments */}
-                    {linePending?.map((pending) => (
+      {linePendingComments.map((pending) => (
                       <tr key={pending.id}>
                         <td colSpan={3} className="p-0">
-                          <PendingCommentItem
-                            comment={pending}
-                            onRemove={() => onRemovePendingComment(pending.id)}
-                          />
+            <PendingCommentItem comment={pending} />
                         </td>
                       </tr>
                     ))}
                     
-                    {/* Existing comment threads */}
-                    {lineThreads?.map((thread, threadIdx) => (
+      {threads.map((thread, threadIdx) => (
                       <tr key={`thread-${lineNum}-${threadIdx}`}>
                         <td colSpan={3} className="p-0">
                           <CommentThread
                             comments={thread}
-                            onReply={onReplyToComment}
+                            focusedCommentId={focusedCommentId}
+                            editingCommentId={editingCommentId}
+                            replyingToCommentId={replyingToCommentId}
                           />
                         </td>
                       </tr>
                     ))}
                   </Fragment>
-                );
-              })}
-            </Fragment>
-          )
-        )}
-      </tbody>
-    </table>
   );
 });
 
 // ============================================================================
-// Diff Line Row (Memoized for performance)
+// Diff Line Row
 // ============================================================================
 
 interface DiffLineRowProps {
   line: DiffLine;
-  isFocused?: boolean;
-  isInSelection?: boolean;
-  hasCommentRange?: boolean;
-  onLineClick: (line: number) => void;
+  lineNum: number | undefined;
 }
 
-const DiffLineRow = memo(function DiffLineRow({ line, isFocused, isInSelection, hasCommentRange, onLineClick }: DiffLineRowProps) {
-  const Tag = line.type === "insert" ? "ins" : line.type === "delete" ? "del" : "span";
-  // Use the appropriate line number based on type
-  const displayLineNum = line.type === "delete" ? line.oldLineNumber : line.newLineNumber;
-  const commentLineNum = line.newLineNumber || line.oldLineNumber;
+const DiffLineRow = memo(function DiffLineRow({
+  line,
+  lineNum,
+}: DiffLineRowProps) {
   const rowRef = useRef<HTMLTableRowElement>(null);
+  const { isDragging, onDragStart, onDragEnter, onDragEnd, onClickFallback } = useLineDrag();
 
-  const handleClick = useCallback(() => {
-    if (commentLineNum) onLineClick(commentLineNum);
-  }, [commentLineNum, onLineClick]);
+  // Fine-grained subscriptions - only re-render when THIS line's state changes
+  const isFocused = useIsLineFocused(lineNum ?? -1);
+  const isInSelection = useIsLineInSelection(lineNum ?? -1);
+  const isInCommentingRange = useIsLineInCommentingRange(lineNum ?? -1);
 
-  // Scroll focused line into view
-  useEffect(() => {
-    if (isFocused && rowRef.current) {
-      rowRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  // Check if this line has comment range highlighting
+  const comments = useCurrentFileComments();
+  const pendingComments = useCurrentFilePendingComments();
+
+  const hasCommentRange = useMemo(() => {
+    if (!lineNum) return false;
+    for (const comment of comments) {
+      if (
+        comment.start_line &&
+        comment.line &&
+        lineNum >= comment.start_line &&
+        lineNum <= comment.line
+      ) {
+        return true;
+      }
     }
-  }, [isFocused]);
+    for (const comment of pendingComments) {
+      if (
+        comment.start_line &&
+        lineNum >= comment.start_line &&
+        lineNum <= comment.line
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }, [lineNum, comments, pendingComments]);
+
+  const Tag =
+    line.type === "insert" ? "ins" : line.type === "delete" ? "del" : "span";
+  const displayLineNum =
+    line.type === "delete" ? line.oldLineNumber : line.newLineNumber;
+
+  // Scroll focused line into view (but not while dragging to avoid janky scrolling)
+  useEffect(() => {
+    if (isFocused && rowRef.current && !isDragging) {
+      rowRef.current.scrollIntoView({ block: "center", behavior: "instant" });
+    }
+  }, [isFocused, isDragging]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (lineNum) {
+      e.preventDefault(); // Prevent text selection
+      onDragStart(lineNum);
+    }
+  }, [lineNum, onDragStart]);
+
+  const handleMouseUp = useCallback(() => {
+    // onDragEnd checks the ref internally
+    onDragEnd();
+  }, [onDragEnd]);
+
+  const handleMouseEnter = useCallback(() => {
+    if (lineNum) {
+      // onDragEnter checks the ref internally
+      onDragEnter(lineNum);
+    }
+  }, [lineNum, onDragEnter]);
+
+  // Fallback for clicks that don't trigger mousedown/mouseup (e.g., keyboard, touch, automation)
+  const handleClick = useCallback(() => {
+    if (lineNum) {
+      onClickFallback(lineNum);
+    }
+  }, [lineNum, onClickFallback]);
 
   return (
     <tr
@@ -1154,11 +941,10 @@ const DiffLineRow = memo(function DiffLineRow({ line, isFocused, isInSelection, 
         line.type === "insert" && "bg-[var(--code-added)]/10",
         line.type === "delete" && "bg-[var(--code-removed)]/10",
         hasCommentRange && "bg-yellow-500/5",
-        isInSelection && "!bg-blue-500/20",
+        (isInSelection || isInCommentingRange) && "!bg-blue-500/20",
         isFocused && "ring-2 ring-blue-500 ring-inset"
       )}
     >
-      {/* Marker column */}
       <td
         className={cn(
           "border-transparent w-1 border-l-[3px]",
@@ -1166,16 +952,15 @@ const DiffLineRow = memo(function DiffLineRow({ line, isFocused, isInSelection, 
           line.type === "delete" && "!border-[var(--code-removed)]/80"
         )}
       />
-      
-      {/* Line number column */}
       <td
-        className="tabular-nums text-center opacity-50 px-2 text-xs select-none w-12 cursor-pointer hover:bg-blue-500/20"
+        className="tabular-nums text-center opacity-50 px-2 text-xs select-none w-12 cursor-pointer hover:bg-blue-500/20 align-top pt-0.5"
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseEnter={handleMouseEnter}
         onClick={handleClick}
       >
         {line.type === "delete" ? "–" : displayLineNum}
       </td>
-      
-      {/* Code column */}
       <td className="whitespace-pre-wrap break-words pr-6">
         <Tag className="no-underline">
           {line.content.map((seg, i) => (
@@ -1195,10 +980,14 @@ const DiffLineRow = memo(function DiffLineRow({ line, isFocused, isInSelection, 
 });
 
 // ============================================================================
-// Skip Block Row (Memoized)
+// Skip Block Row
 // ============================================================================
 
-const SkipBlockRow = memo(function SkipBlockRow({ hunk }: { hunk: DiffSkipBlock }) {
+interface SkipBlockRowProps {
+  hunk: DiffSkipBlock;
+}
+
+const SkipBlockRow = memo(function SkipBlockRow({ hunk }: SkipBlockRowProps) {
   return (
     <>
       <tr className="h-2" />
@@ -1219,22 +1008,24 @@ const SkipBlockRow = memo(function SkipBlockRow({ hunk }: { hunk: DiffSkipBlock 
 });
 
 // ============================================================================
-// Inline Comment Form (Memoized)
+// Inline Comment Form
 // ============================================================================
 
 interface InlineCommentFormProps {
   line: number;
   startLine?: number;
-  onSubmit: (line: number, body: string, startLine?: number) => Promise<void>;
-  onCancel: () => void;
 }
 
-const InlineCommentForm = memo(function InlineCommentForm({ line, startLine, onSubmit, onCancel }: InlineCommentFormProps) {
+const InlineCommentForm = memo(function InlineCommentForm({
+  line,
+  startLine,
+}: InlineCommentFormProps) {
+  const store = usePRReviewStore();
+  const { addPendingComment } = useCommentActions();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Focus textarea on mount
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
@@ -1244,24 +1035,26 @@ const InlineCommentForm = memo(function InlineCommentForm({ line, startLine, onS
 
     setSubmitting(true);
     try {
-      await onSubmit(line, text.trim(), startLine);
+      await addPendingComment(line, text.trim(), startLine);
       setText("");
     } finally {
       setSubmitting(false);
     }
-  }, [text, line, startLine, onSubmit]);
+  }, [text, line, startLine, addPendingComment]);
 
-  // Handle Cmd/Ctrl+Enter to submit
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       handleSubmit();
     }
     if (e.key === "Escape") {
       e.preventDefault();
-      onCancel();
+        store.cancelCommenting();
     }
-  }, [handleSubmit, onCancel]);
+    },
+    [handleSubmit, store]
+  );
 
   const lineLabel = startLine ? `lines ${startLine}-${line}` : `line ${line}`;
 
@@ -1274,7 +1067,7 @@ const InlineCommentForm = memo(function InlineCommentForm({ line, startLine, onS
           <span className="text-xs opacity-60">(⌘+Enter to submit)</span>
         </span>
         <button
-          onClick={onCancel}
+          onClick={store.cancelCommenting}
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <X className="w-4 h-4" />
@@ -1290,7 +1083,7 @@ const InlineCommentForm = memo(function InlineCommentForm({ line, startLine, onS
       />
       <div className="flex justify-end gap-2 mt-2">
         <button
-          onClick={onCancel}
+          onClick={store.cancelCommenting}
           className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
         >
           Cancel
@@ -1309,36 +1102,60 @@ const InlineCommentForm = memo(function InlineCommentForm({ line, startLine, onS
 });
 
 // ============================================================================
-// Comment Thread (Memoized)
+// Comment Thread
 // ============================================================================
 
 interface CommentThreadProps {
   comments: ReviewComment[];
-  onReply: (commentId: number, body: string) => Promise<void>;
+  focusedCommentId: number | null;
+  editingCommentId: number | null;
+  replyingToCommentId: number | null;
 }
 
-const CommentThread = memo(function CommentThread({ comments, onReply }: CommentThreadProps) {
-  const [replyingTo, setReplyingTo] = useState<number | null>(null);
+const CommentThread = memo(function CommentThread({ 
+  comments, 
+  focusedCommentId,
+  editingCommentId,
+  replyingToCommentId,
+}: CommentThreadProps) {
+  const store = usePRReviewStore();
+  const { replyToComment, updateComment, deleteComment } = useCommentActions();
   const [replyText, setReplyText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  
+  const replyingTo = comments.find((c) => c.id === replyingToCommentId)?.id ?? null;
 
   const handleSubmitReply = useCallback(async () => {
     if (!replyText.trim() || !replyingTo) return;
 
     setSubmitting(true);
     try {
-      await onReply(replyingTo, replyText.trim());
+      await replyToComment(replyingTo, replyText.trim());
       setReplyText("");
-      setReplyingTo(null);
     } finally {
       setSubmitting(false);
     }
-  }, [replyText, replyingTo, onReply]);
+  }, [replyText, replyingTo, replyToComment]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      handleSubmitReply();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+        store.cancelReplying();
+      setReplyText("");
+    }
+    },
+    [handleSubmitReply, store]
+  );
 
   const handleCancel = useCallback(() => {
-    setReplyingTo(null);
+    store.cancelReplying();
     setReplyText("");
-  }, []);
+  }, [store]);
 
   return (
     <div className="border-l-2 border-blue-500/50 bg-card/80 mx-4 my-2 rounded-r-lg">
@@ -1347,7 +1164,10 @@ const CommentThread = memo(function CommentThread({ comments, onReply }: Comment
           key={comment.id}
           comment={comment}
           isReply={idx > 0}
-          onReplyClick={() => setReplyingTo(comment.id)}
+          isFocused={focusedCommentId === comment.id}
+          isEditing={editingCommentId === comment.id}
+          onUpdate={updateComment}
+          onDelete={deleteComment}
         />
       ))}
 
@@ -1356,7 +1176,8 @@ const CommentThread = memo(function CommentThread({ comments, onReply }: Comment
           <textarea
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
-            placeholder="Write a reply..."
+            onKeyDown={handleKeyDown}
+            placeholder="Write a reply... (⌘+Enter to submit)"
             className="w-full min-h-[80px] px-3 py-2 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring font-sans"
             autoFocus
           />
@@ -1383,20 +1204,83 @@ const CommentThread = memo(function CommentThread({ comments, onReply }: Comment
 });
 
 // ============================================================================
-// Comment Item (Memoized)
+// Comment Item
 // ============================================================================
 
 interface CommentItemProps {
   comment: ReviewComment;
   isReply?: boolean;
-  onReplyClick: () => void;
+  isFocused?: boolean;
+  isEditing?: boolean;
+  onUpdate: (commentId: number, body: string) => Promise<void>;
+  onDelete: (commentId: number) => Promise<void>;
 }
 
-const CommentItem = memo(function CommentItem({ comment, isReply, onReplyClick }: CommentItemProps) {
-  const timeAgo = useMemo(() => getTimeAgo(new Date(comment.created_at)), [comment.created_at]);
+const CommentItem = memo(function CommentItem({ 
+  comment, 
+  isReply, 
+  isFocused,
+  isEditing,
+  onUpdate,
+  onDelete,
+}: CommentItemProps) {
+  const store = usePRReviewStore();
+  const timeAgo = useMemo(
+    () => getTimeAgo(new Date(comment.created_at)),
+    [comment.created_at]
+  );
+  const [editText, setEditText] = useState(comment.body);
+  const [saving, setSaving] = useState(false);
+  const commentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isEditing) {
+      setEditText(comment.body);
+    }
+  }, [isEditing, comment.body]);
+
+  useEffect(() => {
+    if (isFocused && commentRef.current) {
+      commentRef.current.scrollIntoView({ block: "center", behavior: "instant" });
+    }
+  }, [isFocused]);
+
+  const handleSave = useCallback(async () => {
+    if (!editText.trim() || editText === comment.body) {
+      store.cancelEditing();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onUpdate(comment.id, editText.trim());
+    } finally {
+      setSaving(false);
+    }
+  }, [editText, comment.id, comment.body, onUpdate, store]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      handleSave();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+        store.cancelEditing();
+    }
+    },
+    [handleSave, store]
+  );
 
   return (
-    <div className={cn("px-4 py-3 font-sans", isReply && "pl-12 border-t border-border/30")}>
+    <div 
+      ref={commentRef}
+      className={cn(
+        "px-4 py-3 font-sans", 
+        isReply && "pl-12 border-t border-border/30",
+        isFocused && "ring-2 ring-blue-500 ring-inset bg-blue-500/5"
+      )}
+    >
       <div className="flex items-start gap-3">
         <img
           src={comment.user.avatar_url}
@@ -1409,16 +1293,63 @@ const CommentItem = memo(function CommentItem({ comment, isReply, onReplyClick }
             <span className="font-medium">{comment.user.login}</span>
             <span className="text-muted-foreground text-xs">{timeAgo}</span>
           </div>
-          <div className="mt-1 text-sm text-foreground/90 whitespace-pre-wrap">
-            {comment.body}
-          </div>
-          <button
-            onClick={onReplyClick}
-            className="flex items-center gap-1 mt-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Reply className="w-3 h-3" />
-            Reply
-          </button>
+          
+          {isEditing ? (
+            <div className="mt-2">
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="w-full min-h-[80px] px-3 py-2 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2 mt-2">
+                <button
+                  onClick={store.cancelEditing}
+                  className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={!editText.trim() || saving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  Save
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="mt-1 text-sm text-foreground/90 whitespace-pre-wrap">
+                {comment.body}
+              </div>
+              <div className="flex items-center gap-3 mt-2">
+                <button
+                  onClick={() => store.startReplying(comment.id)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Reply className="w-3 h-3" />
+                  Reply
+                </button>
+                <button
+                  onClick={() => store.startEditing(comment.id)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Pencil className="w-3 h-3" />
+                  Edit
+                </button>
+                <button
+                  onClick={() => onDelete(comment.id)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1431,10 +1362,13 @@ const CommentItem = memo(function CommentItem({ comment, isReply, onReplyClick }
 
 interface PendingCommentItemProps {
   comment: LocalPendingComment;
-  onRemove: () => void;
 }
 
-function PendingCommentItem({ comment, onRemove }: PendingCommentItemProps) {
+const PendingCommentItem = memo(function PendingCommentItem({
+  comment,
+}: PendingCommentItemProps) {
+  const { removePendingComment } = useCommentActions();
+
   const lineLabel = comment.start_line 
     ? `Lines ${comment.start_line}-${comment.line}` 
     : `Line ${comment.line}`;
@@ -1447,11 +1381,15 @@ function PendingCommentItem({ comment, onRemove }: PendingCommentItemProps) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2 text-sm">
               <div className="flex items-center gap-2">
-                <span className="text-yellow-500 font-medium text-xs">Pending comment</span>
-                <span className="text-muted-foreground text-xs font-mono">{lineLabel}</span>
+                <span className="text-yellow-500 font-medium text-xs">
+                  Pending comment
+                </span>
+                <span className="text-muted-foreground text-xs font-mono">
+                  {lineLabel}
+                </span>
               </div>
               <button
-                onClick={onRemove}
+                onClick={() => removePendingComment(comment.id)}
                 className="text-muted-foreground hover:text-destructive transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -1465,31 +1403,21 @@ function PendingCommentItem({ comment, onRemove }: PendingCommentItemProps) {
       </div>
     </div>
   );
-}
+});
 
 // ============================================================================
 // Review Panel Modal
 // ============================================================================
 
-interface ReviewPanelProps {
-  pendingComments: LocalPendingComment[];
-  reviewBody: string;
-  setReviewBody: (body: string) => void;
-  submitting: boolean;
-  onSubmit: (event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT") => Promise<void>;
-  onClose: () => void;
-  onRemovePendingComment: (id: string) => void;
-}
+const ReviewPanel = memo(function ReviewPanel() {
+  const store = usePRReviewStore();
+  const { submitReview } = useReviewActions();
+  const { removePendingComment } = useCommentActions();
 
-function ReviewPanel({
-  pendingComments,
-  reviewBody,
-  setReviewBody,
-  submitting,
-  onSubmit,
-  onClose,
-  onRemovePendingComment,
-}: ReviewPanelProps) {
+  const pendingComments = usePRReviewSelector((s) => s.pendingComments);
+  const reviewBody = usePRReviewSelector((s) => s.reviewBody);
+  const submitting = usePRReviewSelector((s) => s.submittingReview);
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
@@ -1497,7 +1425,7 @@ function ReviewPanel({
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-lg font-semibold">Finish your review</h2>
           <button
-            onClick={onClose}
+            onClick={store.closeReviewPanel}
             className="text-muted-foreground hover:text-foreground transition-colors"
           >
             <X className="w-5 h-5" />
@@ -1506,11 +1434,11 @@ function ReviewPanel({
         
         {/* Content */}
         <div className="flex-1 overflow-auto p-6 space-y-4">
-          {/* Pending comments summary */}
           {pendingComments.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-medium text-muted-foreground">
-                {pendingComments.length} pending comment{pendingComments.length !== 1 ? "s" : ""}
+                {pendingComments.length} pending comment
+                {pendingComments.length !== 1 ? "s" : ""}
               </h3>
               <div className="space-y-2 max-h-40 overflow-auto">
                 {pendingComments.map((comment) => (
@@ -1527,7 +1455,7 @@ function ReviewPanel({
                       </div>
                     </div>
                     <button
-                      onClick={() => onRemovePendingComment(comment.id)}
+                      onClick={() => removePendingComment(comment.id)}
                       className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -1538,14 +1466,13 @@ function ReviewPanel({
             </div>
           )}
           
-          {/* Review body */}
           <div>
             <label className="block text-sm font-medium mb-2">
               Leave a comment (optional)
             </label>
             <textarea
               value={reviewBody}
-              onChange={(e) => setReviewBody(e.target.value)}
+              onChange={(e) => store.setReviewBody(e.target.value)}
               placeholder="Write your review summary..."
               className="w-full min-h-[120px] px-4 py-3 text-sm rounded-lg border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
             />
@@ -1555,14 +1482,14 @@ function ReviewPanel({
         {/* Actions */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-muted/30">
           <button
-            onClick={onClose}
+            onClick={store.closeReviewPanel}
             disabled={submitting}
             className="px-4 py-2 text-sm rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
-            onClick={() => onSubmit("COMMENT")}
+            onClick={() => submitReview("COMMENT")}
             disabled={submitting || pendingComments.length === 0}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-muted hover:bg-muted/80 transition-colors disabled:opacity-50"
           >
@@ -1570,7 +1497,7 @@ function ReviewPanel({
             Comment
           </button>
           <button
-            onClick={() => onSubmit("REQUEST_CHANGES")}
+            onClick={() => submitReview("REQUEST_CHANGES")}
             disabled={submitting}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
           >
@@ -1578,7 +1505,7 @@ function ReviewPanel({
             Request changes
           </button>
           <button
-            onClick={() => onSubmit("APPROVE")}
+            onClick={() => submitReview("APPROVE")}
             disabled={submitting}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
           >
@@ -1589,18 +1516,4 @@ function ReviewPanel({
       </div>
     </div>
   );
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function getTimeAgo(date: Date): string {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-
-  if (seconds < 60) return "just now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
-  return date.toLocaleDateString();
-}
+});
