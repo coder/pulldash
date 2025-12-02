@@ -14,4 +14,4 @@ There is a live hosted demo where you can read-only tinker with the UX.
 
 ## Install
 
-Download the 
+Download the

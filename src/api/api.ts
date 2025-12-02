@@ -72,7 +72,9 @@ const api = new Hono()
 
     // Paginate to get all files
     const files: Awaited<
-      ReturnType<typeof octokit.request<"GET /repos/{owner}/{repo}/pulls/{pull_number}/files">>
+      ReturnType<
+        typeof octokit.request<"GET /repos/{owner}/{repo}/pulls/{pull_number}/files">
+      >
     >["data"] = [];
     let page = 1;
 
@@ -101,7 +103,9 @@ const api = new Hono()
 
     // Paginate to get all comments
     const comments: Awaited<
-      ReturnType<typeof octokit.request<"GET /repos/{owner}/{repo}/pulls/{pull_number}/comments">>
+      ReturnType<
+        typeof octokit.request<"GET /repos/{owner}/{repo}/pulls/{pull_number}/comments">
+      >
     >["data"] = [];
     let page = 1;
 
@@ -139,28 +143,28 @@ const api = new Hono()
       };
     }>(
       `
-      query($owner: String!, $repo: String!, $number: Int!) {
-        repository(owner: $owner, name: $repo) {
-          pullRequest(number: $number) {
-            reviewThreads(first: 100) {
-              nodes {
-                id
-                isResolved
-                resolvedBy {
-                  login
-                  avatarUrl
-                }
-                comments(first: 100) {
-                  nodes {
-                    databaseId
+        query ($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviewThreads(first: 100) {
+                nodes {
+                  id
+                  isResolved
+                  resolvedBy {
+                    login
+                    avatarUrl
+                  }
+                  comments(first: 100) {
+                    nodes {
+                      databaseId
+                    }
                   }
                 }
               }
             }
           }
         }
-      }
-    `,
+      `,
       { owner, repo, number: pullNumber }
     );
 
@@ -174,7 +178,8 @@ const api = new Hono()
       }
     >();
 
-    for (const thread of threadsData.repository.pullRequest.reviewThreads.nodes) {
+    for (const thread of threadsData.repository.pullRequest.reviewThreads
+      .nodes) {
       for (const comment of thread.comments.nodes) {
         commentToThread.set(comment.databaseId, {
           threadId: thread.id,
@@ -281,34 +286,35 @@ const api = new Hono()
       };
     }>(
       `
-      query($owner: String!, $repo: String!, $number: Int!) {
-        repository(owner: $owner, name: $repo) {
-          pullRequest(number: $number) {
-            reviewThreads(first: 100) {
-              nodes {
-                id
-                isResolved
-                resolvedBy {
-                  login
-                  avatarUrl
-                }
-                comments(first: 100) {
-                  nodes {
-                    id
-                    databaseId
-                    body
-                    path
-                    line
-                    originalLine
-                    startLine
-                    author {
-                      login
-                      avatarUrl
-                    }
-                    createdAt
-                    updatedAt
-                    replyTo {
+        query ($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviewThreads(first: 100) {
+                nodes {
+                  id
+                  isResolved
+                  resolvedBy {
+                    login
+                    avatarUrl
+                  }
+                  comments(first: 100) {
+                    nodes {
+                      id
                       databaseId
+                      body
+                      path
+                      line
+                      originalLine
+                      startLine
+                      author {
+                        login
+                        avatarUrl
+                      }
+                      createdAt
+                      updatedAt
+                      replyTo {
+                        databaseId
+                      }
                     }
                   }
                 }
@@ -316,8 +322,7 @@ const api = new Hono()
             }
           }
         }
-      }
-    `,
+      `,
       { owner, repo, number: pullNumber }
     );
 
@@ -338,12 +343,15 @@ const api = new Hono()
 
     await graphql(
       `
-      mutation($input: ResolveReviewThreadInput!) {
-        resolveReviewThread(input: $input) {
-          thread { id isResolved }
+        mutation ($input: ResolveReviewThreadInput!) {
+          resolveReviewThread(input: $input) {
+            thread {
+              id
+              isResolved
+            }
+          }
         }
-      }
-    `,
+      `,
       { input: { threadId } }
     );
 
@@ -355,12 +363,15 @@ const api = new Hono()
 
     await graphql(
       `
-      mutation($input: UnresolveReviewThreadInput!) {
-        unresolveReviewThread(input: $input) {
-          thread { id isResolved }
+        mutation ($input: UnresolveReviewThreadInput!) {
+          unresolveReviewThread(input: $input) {
+            thread {
+              id
+              isResolved
+            }
+          }
         }
-      }
-    `,
+      `,
       { input: { threadId } }
     );
 
@@ -491,14 +502,14 @@ const api = new Hono()
       repository: { pullRequest: { id: string } };
     }>(
       `
-      query($owner: String!, $repo: String!, $number: Int!) {
-        repository(owner: $owner, name: $repo) {
-          pullRequest(number: $number) {
-            id
+        query ($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              id
+            }
           }
         }
-      }
-    `,
+      `,
       { owner, repo, number: parseInt(number, 10) }
     );
 
@@ -532,30 +543,30 @@ const api = new Hono()
       };
     }>(
       `
-      query($owner: String!, $repo: String!, $number: Int!) {
-        repository(owner: $owner, name: $repo) {
-          pullRequest(number: $number) {
-            reviews(first: 10, states: [PENDING]) {
-              nodes {
-                id
-                databaseId
-                viewerDidAuthor
-                comments(first: 100) {
-                  nodes {
-                    id
-                    databaseId
-                    body
-                    path
-                    line
-                    startLine
+        query ($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviews(first: 10, states: [PENDING]) {
+                nodes {
+                  id
+                  databaseId
+                  viewerDidAuthor
+                  comments(first: 100) {
+                    nodes {
+                      id
+                      databaseId
+                      body
+                      path
+                      line
+                      startLine
+                    }
                   }
                 }
               }
             }
           }
         }
-      }
-    `,
+      `,
       { owner, repo, number: parseInt(number, 10) }
     );
 
@@ -597,14 +608,14 @@ const api = new Hono()
         repository: { pullRequest: { id: string } };
       }>(
         `
-        query($owner: String!, $repo: String!, $number: Int!) {
-          repository(owner: $owner, name: $repo) {
-            pullRequest(number: $number) {
-              id
+          query ($owner: String!, $repo: String!, $number: Int!) {
+            repository(owner: $owner, name: $repo) {
+              pullRequest(number: $number) {
+                id
+              }
             }
           }
-        }
-      `,
+        `,
         { owner, repo, number: parseInt(number, 10) }
       );
       pullRequestId = prData.repository.pullRequest.id;
@@ -631,18 +642,18 @@ const api = new Hono()
       };
     }>(
       `
-      mutation($input: AddPullRequestReviewCommentInput!) {
-        addPullRequestReviewComment(input: $input) {
-          comment {
-            id
-            databaseId
-            pullRequestReview {
+        mutation ($input: AddPullRequestReviewCommentInput!) {
+          addPullRequestReviewComment(input: $input) {
+            comment {
               id
+              databaseId
+              pullRequestReview {
+                id
+              }
             }
           }
         }
-      }
-    `,
+      `,
       { input }
     );
 
@@ -658,12 +669,14 @@ const api = new Hono()
 
     await graphql(
       `
-      mutation($input: DeletePullRequestReviewCommentInput!) {
-        deletePullRequestReviewComment(input: $input) {
-          pullRequestReview { id }
+        mutation ($input: DeletePullRequestReviewCommentInput!) {
+          deletePullRequestReviewComment(input: $input) {
+            pullRequestReview {
+              id
+            }
+          }
         }
-      }
-    `,
+      `,
       { input: { id: commentId } }
     );
 
@@ -676,12 +689,15 @@ const api = new Hono()
 
     await graphql(
       `
-      mutation($input: UpdatePullRequestReviewCommentInput!) {
-        updatePullRequestReviewComment(input: $input) {
-          pullRequestReviewComment { id body }
+        mutation ($input: UpdatePullRequestReviewCommentInput!) {
+          updatePullRequestReviewComment(input: $input) {
+            pullRequestReviewComment {
+              id
+              body
+            }
+          }
         }
-      }
-    `,
+      `,
       { input: { pullRequestReviewCommentId: commentId, body: body.body } }
     );
 
@@ -697,12 +713,15 @@ const api = new Hono()
 
     await graphql(
       `
-      mutation($input: SubmitPullRequestReviewInput!) {
-        submitPullRequestReview(input: $input) {
-          pullRequestReview { id state }
+        mutation ($input: SubmitPullRequestReviewInput!) {
+          submitPullRequestReview(input: $input) {
+            pullRequestReview {
+              id
+              state
+            }
+          }
         }
-      }
-    `,
+      `,
       {
         input: {
           pullRequestReviewId: body.review_id,
@@ -764,22 +783,16 @@ const api = new Hono()
     );
 
     const [checkRunsResponse, statusResponse] = await Promise.all([
-      octokit.request(
-        "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
-        {
-          owner,
-          repo,
-          ref: pr.head.sha,
-        }
-      ),
-      octokit.request(
-        "GET /repos/{owner}/{repo}/commits/{ref}/status",
-        {
-          owner,
-          repo,
-          ref: pr.head.sha,
-        }
-      ),
+      octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
+        owner,
+        repo,
+        ref: pr.head.sha,
+      }),
+      octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/status", {
+        owner,
+        repo,
+        ref: pr.head.sha,
+      }),
     ]);
 
     return c.json({

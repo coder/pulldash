@@ -33,9 +33,14 @@ import type {
 // Markdown Content Component
 // ============================================================================
 
-const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+const MarkdownContent = memo(function MarkdownContent({
+  content,
+}: {
+  content: string;
+}) {
   return (
-    <div className="prose prose-sm prose-invert max-w-none
+    <div
+      className="prose prose-sm prose-invert max-w-none
       prose-p:my-2 prose-p:leading-relaxed
       prose-pre:bg-muted prose-pre:rounded-md prose-pre:p-3
       prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none
@@ -47,9 +52,7 @@ const MarkdownContent = memo(function MarkdownContent({ content }: { content: st
       prose-img:rounded-md prose-img:my-2
       prose-table:text-sm prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {content}
-      </ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
 });
@@ -68,7 +71,10 @@ export function PROverviewPage() {
 
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [checks, setChecks] = useState<{ checkRuns: CheckRun[]; status: CombinedStatus } | null>(null);
+  const [checks, setChecks] = useState<{
+    checkRuns: CheckRun[];
+    status: CombinedStatus;
+  } | null>(null);
   const [conversation, setConversation] = useState<IssueComment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,18 +87,19 @@ export function PROverviewPage() {
       setError(null);
 
       try {
-        const [prRes, reviewsRes, checksRes, conversationRes] = await Promise.all([
-          fetch(`/api/pr/${owner}/${repo}/${number}`),
-          fetch(`/api/pr/${owner}/${repo}/${number}/reviews`),
-          fetch(`/api/pr/${owner}/${repo}/${number}/checks`),
-          fetch(`/api/pr/${owner}/${repo}/${number}/conversation`),
-        ]);
+        const [prRes, reviewsRes, checksRes, conversationRes] =
+          await Promise.all([
+            fetch(`/api/pr/${owner}/${repo}/${number}`),
+            fetch(`/api/pr/${owner}/${repo}/${number}/reviews`),
+            fetch(`/api/pr/${owner}/${repo}/${number}/checks`),
+            fetch(`/api/pr/${owner}/${repo}/${number}/conversation`),
+          ]);
 
         if (!prRes.ok) throw new Error("Failed to fetch PR data");
 
         const prData = await prRes.json();
         setPr(prData);
-        
+
         if (reviewsRes.ok) setReviews(await reviewsRes.json());
         if (checksRes.ok) setChecks(await checksRes.json());
         if (conversationRes.ok) setConversation(await conversationRes.json());
@@ -172,7 +179,9 @@ function PROverview({
 }: PROverviewProps) {
   const navigate = useNavigate();
   const [merging, setMerging] = useState(false);
-  const [mergeMethod, setMergeMethod] = useState<"merge" | "squash" | "rebase">("squash");
+  const [mergeMethod, setMergeMethod] = useState<"merge" | "squash" | "rebase">(
+    "squash"
+  );
   const [showMergeOptions, setShowMergeOptions] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
@@ -181,19 +190,22 @@ function PROverview({
   const handleMerge = useCallback(async () => {
     setMerging(true);
     setMergeError(null);
-    
+
     try {
-      const response = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/merge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ merge_method: mergeMethod }),
-      });
-      
+      const response = await fetch(
+        `/api/pr/${owner}/${repo}/${pr.number}/merge`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ merge_method: mergeMethod }),
+        }
+      );
+
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || "Failed to merge");
       }
-      
+
       // Refresh the page to show updated state
       window.location.reload();
     } catch (e) {
@@ -205,15 +217,18 @@ function PROverview({
 
   const handleAddComment = useCallback(async () => {
     if (!commentText.trim()) return;
-    
+
     setSubmittingComment(true);
     try {
-      const response = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/conversation`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: commentText }),
-      });
-      
+      const response = await fetch(
+        `/api/pr/${owner}/${repo}/${pr.number}/conversation`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: commentText }),
+        }
+      );
+
       if (response.ok) {
         const newComment = await response.json();
         setConversation((prev) => [...prev, newComment]);
@@ -226,7 +241,7 @@ function PROverview({
 
   // Calculate overall check status
   const checkStatus = calculateCheckStatus(checks);
-  
+
   // Get latest reviews by user
   const latestReviews = getLatestReviewsByUser(reviews);
 
@@ -262,10 +277,17 @@ function PROverview({
                 <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground">
                   <StatusBadge pr={pr} />
                   <span>
-                    <span className="font-medium text-foreground">{pr.user.login}</span> wants to merge{" "}
-                    <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{pr.head.ref}</span>
-                    {" "}into{" "}
-                    <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{pr.base.ref}</span>
+                    <span className="font-medium text-foreground">
+                      {pr.user.login}
+                    </span>{" "}
+                    wants to merge{" "}
+                    <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
+                      {pr.head.ref}
+                    </span>{" "}
+                    into{" "}
+                    <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
+                      {pr.base.ref}
+                    </span>
                   </span>
                 </div>
               </div>
@@ -295,22 +317,24 @@ function PROverview({
           )}
 
           {/* Checks Section */}
-          {checks && (checks.checkRuns.length > 0 || checks.status.statuses.length > 0) && (
-            <div className="space-y-3">
-              <h2 className="text-sm font-semibold flex items-center gap-2">
-                <CheckStatusIcon status={checkStatus} />
-                Checks
-              </h2>
-              <div className="border border-border rounded-lg divide-y divide-border">
-                {checks.checkRuns.map((check) => (
-                  <CheckRunItem key={check.id} check={check} />
-                ))}
-                {checks.status.statuses.map((status, idx) => (
-                  <StatusItem key={idx} status={status} />
-                ))}
+          {checks &&
+            (checks.checkRuns.length > 0 ||
+              checks.status.statuses.length > 0) && (
+              <div className="space-y-3">
+                <h2 className="text-sm font-semibold flex items-center gap-2">
+                  <CheckStatusIcon status={checkStatus} />
+                  Checks
+                </h2>
+                <div className="border border-border rounded-lg divide-y divide-border">
+                  {checks.checkRuns.map((check) => (
+                    <CheckRunItem key={check.id} check={check} />
+                  ))}
+                  {checks.status.statuses.map((status, idx) => (
+                    <StatusItem key={idx} status={status} />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {/* Merge Section */}
           {pr.state === "open" && !pr.merged && (
@@ -323,11 +347,13 @@ function PROverview({
                       {getMergeStatusText(pr, checkStatus)}
                     </p>
                     {mergeError && (
-                      <p className="text-sm text-destructive mt-1">{mergeError}</p>
+                      <p className="text-sm text-destructive mt-1">
+                        {mergeError}
+                      </p>
                     )}
                   </div>
                 </div>
-                
+
                 <div className="flex items-center gap-2">
                   <div className="relative">
                     <button
@@ -345,11 +371,14 @@ function PROverview({
                     >
                       <ChevronDown className="w-4 h-4" />
                     </button>
-                    
+
                     {showMergeOptions && (
                       <div className="absolute right-0 mt-2 w-48 bg-card border border-border rounded-lg shadow-xl z-10">
                         <button
-                          onClick={() => { setMergeMethod("merge"); setShowMergeOptions(false); }}
+                          onClick={() => {
+                            setMergeMethod("merge");
+                            setShowMergeOptions(false);
+                          }}
                           className={cn(
                             "w-full px-4 py-2 text-left text-sm hover:bg-muted transition-colors rounded-t-lg",
                             mergeMethod === "merge" && "bg-muted"
@@ -358,7 +387,10 @@ function PROverview({
                           Create merge commit
                         </button>
                         <button
-                          onClick={() => { setMergeMethod("squash"); setShowMergeOptions(false); }}
+                          onClick={() => {
+                            setMergeMethod("squash");
+                            setShowMergeOptions(false);
+                          }}
                           className={cn(
                             "w-full px-4 py-2 text-left text-sm hover:bg-muted transition-colors",
                             mergeMethod === "squash" && "bg-muted"
@@ -367,7 +399,10 @@ function PROverview({
                           Squash and merge
                         </button>
                         <button
-                          onClick={() => { setMergeMethod("rebase"); setShowMergeOptions(false); }}
+                          onClick={() => {
+                            setMergeMethod("rebase");
+                            setShowMergeOptions(false);
+                          }}
                           className={cn(
                             "w-full px-4 py-2 text-left text-sm hover:bg-muted transition-colors rounded-b-lg",
                             mergeMethod === "rebase" && "bg-muted"
@@ -378,13 +413,17 @@ function PROverview({
                       </div>
                     )}
                   </div>
-                  
+
                   <button
                     onClick={handleMerge}
                     disabled={merging || !canMerge(pr, checkStatus)}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
                   >
-                    {merging ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirm"}
+                    {merging ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      "Confirm"
+                    )}
                   </button>
                 </div>
               </div>
@@ -407,7 +446,7 @@ function PROverview({
               <MessageSquare className="w-4 h-4" />
               Conversation ({conversation.length})
             </h2>
-            
+
             {conversation.length > 0 && (
               <div className="space-y-3">
                 {conversation.map((comment) => (
@@ -415,7 +454,7 @@ function PROverview({
                 ))}
               </div>
             )}
-            
+
             {/* Add Comment */}
             <div className="mt-4">
               <textarea
@@ -569,7 +608,16 @@ function CheckRunItem({ check }: { check: CheckRun }) {
   );
 }
 
-function StatusItem({ status }: { status: { state: string; context: string; description: string | null; target_url: string | null } }) {
+function StatusItem({
+  status,
+}: {
+  status: {
+    state: string;
+    context: string;
+    description: string | null;
+    target_url: string | null;
+  };
+}) {
   const getIcon = () => {
     switch (status.state) {
       case "success":
@@ -588,7 +636,9 @@ function StatusItem({ status }: { status: { state: string; context: string; desc
       <div className="flex-1 min-w-0">
         <span className="text-sm">{status.context}</span>
         {status.description && (
-          <p className="text-xs text-muted-foreground truncate">{status.description}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {status.description}
+          </p>
         )}
       </div>
       {status.target_url && (
@@ -605,7 +655,11 @@ function StatusItem({ status }: { status: { state: string; context: string; desc
   );
 }
 
-function CheckStatusIcon({ status }: { status: "success" | "failure" | "pending" }) {
+function CheckStatusIcon({
+  status,
+}: {
+  status: "success" | "failure" | "pending";
+}) {
   switch (status) {
     case "success":
       return <Check className="w-4 h-4 text-green-500" />;
@@ -616,7 +670,13 @@ function CheckStatusIcon({ status }: { status: "success" | "failure" | "pending"
   }
 }
 
-function MergeStatusIcon({ pr, checkStatus }: { pr: PullRequest; checkStatus: "success" | "failure" | "pending" }) {
+function MergeStatusIcon({
+  pr,
+  checkStatus,
+}: {
+  pr: PullRequest;
+  checkStatus: "success" | "failure" | "pending";
+}) {
   if (!canMerge(pr, checkStatus)) {
     return <AlertCircle className="w-5 h-5 text-yellow-500" />;
   }
@@ -654,14 +714,18 @@ function ConversationComment({ comment }: { comment: IssueComment }) {
 // Helpers
 // ============================================================================
 
-function calculateCheckStatus(checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null): "success" | "failure" | "pending" {
+function calculateCheckStatus(
+  checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null
+): "success" | "failure" | "pending" {
   if (!checks) return "success";
-  
+
   const allChecks = [
-    ...checks.checkRuns.map((c) => c.status === "completed" ? c.conclusion : "pending"),
+    ...checks.checkRuns.map((c) =>
+      c.status === "completed" ? c.conclusion : "pending"
+    ),
     ...checks.status.statuses.map((s) => s.state),
   ];
-  
+
   if (allChecks.length === 0) return "success";
   if (allChecks.some((c) => c === "failure" || c === "error")) return "failure";
   if (allChecks.some((c) => c === "pending" || c === null)) return "pending";
@@ -670,27 +734,36 @@ function calculateCheckStatus(checks: { checkRuns: CheckRun[]; status: CombinedS
 
 function getLatestReviewsByUser(reviews: Review[]): Review[] {
   const byUser = new Map<string, Review>();
-  
+
   // Sort by date ascending so latest overwrites earlier
   const sorted = [...reviews]
     .filter((r) => r.submitted_at && r.user)
     .sort(
-      (a, b) => new Date(a.submitted_at!).getTime() - new Date(b.submitted_at!).getTime()
+      (a, b) =>
+        new Date(a.submitted_at!).getTime() -
+        new Date(b.submitted_at!).getTime()
     );
-  
+
   for (const review of sorted) {
-    if (review.state !== "COMMENTED" && review.state !== "PENDING" && review.user) {
+    if (
+      review.state !== "COMMENTED" &&
+      review.state !== "PENDING" &&
+      review.user
+    ) {
       byUser.set(review.user.login, review);
     }
   }
-  
+
   // Include all COMMENTED reviews
   const commented = sorted.filter((r) => r.state === "COMMENTED");
-  
+
   return [...byUser.values(), ...commented];
 }
 
-function canMerge(pr: PullRequest, checkStatus: "success" | "failure" | "pending"): boolean {
+function canMerge(
+  pr: PullRequest,
+  checkStatus: "success" | "failure" | "pending"
+): boolean {
   if (pr.draft) return false;
   if (pr.state !== "open") return false;
   if (pr.mergeable === false) return false;
@@ -698,9 +771,13 @@ function canMerge(pr: PullRequest, checkStatus: "success" | "failure" | "pending
   return true;
 }
 
-function getMergeStatusText(pr: PullRequest, checkStatus: "success" | "failure" | "pending"): string {
+function getMergeStatusText(
+  pr: PullRequest,
+  checkStatus: "success" | "failure" | "pending"
+): string {
   if (pr.draft) return "This pull request is still a draft";
-  if (pr.mergeable === false) return "This branch has conflicts that must be resolved";
+  if (pr.mergeable === false)
+    return "This branch has conflicts that must be resolved";
   if (checkStatus === "failure") return "Some checks have failed";
   if (checkStatus === "pending") return "Some checks are still running";
   return "This pull request is ready to merge";
@@ -716,4 +793,3 @@ function getMergeButtonText(method: "merge" | "squash" | "rebase"): string {
       return "Rebase";
   }
 }
-

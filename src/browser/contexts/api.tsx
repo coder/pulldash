@@ -18,12 +18,8 @@ interface APIProviderProps {
 
 export function APIProvider({ children, baseUrl }: APIProviderProps) {
   const client = createApiClient(baseUrl);
-  
-  return (
-    <APIContext.Provider value={client}>
-      {children}
-    </APIContext.Provider>
-  );
+
+  return <APIContext.Provider value={client}>{children}</APIContext.Provider>;
 }
 
 // ============================================================================
@@ -37,5 +33,3 @@ export function useAPI(): ApiClient {
   }
   return client;
 }
-
-

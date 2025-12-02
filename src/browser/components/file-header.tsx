@@ -10,7 +10,11 @@ interface FileHeaderProps {
   onToggleViewed: () => void;
 }
 
-export const FileHeader = memo(function FileHeader({ file, isViewed, onToggleViewed }: FileHeaderProps) {
+export const FileHeader = memo(function FileHeader({
+  file,
+  isViewed,
+  onToggleViewed,
+}: FileHeaderProps) {
   const fileStatusBadge = (() => {
     switch (file.status) {
       case "added":
@@ -64,4 +68,3 @@ export const FileHeader = memo(function FileHeader({ file, isViewed, onToggleVie
     </div>
   );
 });
-

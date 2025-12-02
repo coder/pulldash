@@ -9,7 +9,11 @@ interface PRHeaderProps {
   showTabs?: boolean;
 }
 
-export const PRHeader = memo(function PRHeader({ pr, owner, repo }: PRHeaderProps) {
+export const PRHeader = memo(function PRHeader({
+  pr,
+  owner,
+  repo,
+}: PRHeaderProps) {
   const stateIcon =
     pr.state === "open" && !pr.draft ? (
       <GitPullRequest className="w-4 h-4 text-green-500" />
@@ -25,7 +29,7 @@ export const PRHeader = memo(function PRHeader({ pr, owner, repo }: PRHeaderProp
     <header className="border-b border-border px-4 py-3 flex items-center gap-4 shrink-0 bg-background">
       <div className="flex items-center gap-2">
         {stateIcon}
-        <a 
+        <a
           href={`https://github.com/${owner}/${repo}`}
           target="_blank"
           rel="noopener noreferrer"
@@ -73,4 +77,3 @@ export const PRHeader = memo(function PRHeader({ pr, owner, repo }: PRHeaderProp
     </header>
   );
 });
-

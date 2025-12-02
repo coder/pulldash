@@ -92,9 +92,9 @@ interface PRReviewState {
 
   // Line selection
   focusedLine: number | null;
-  focusedLineSide: 'old' | 'new' | null; // 'old' for delete lines, 'new' for insert/context
+  focusedLineSide: "old" | "new" | null; // 'old' for delete lines, 'new' for insert/context
   selectionAnchor: number | null;
-  selectionAnchorSide: 'old' | 'new' | null;
+  selectionAnchorSide: "old" | "new" | null;
   focusedSkipBlockIndex: number | null; // Index of focused skip block for keyboard navigation
   commentingOnLine: CommentingOnLine | null;
   gotoLineMode: boolean;
@@ -106,7 +106,7 @@ interface PRReviewState {
   focusedCommentId: number | null;
   editingCommentId: number | null;
   replyingToCommentId: number | null;
-  
+
   // Pending comment focus/edit (separate from regular comments since IDs are strings)
   focusedPendingCommentId: string | null;
   editingPendingCommentId: string | null;
@@ -130,21 +130,52 @@ class PRReviewStore {
   private listeners = new Set<Listener>();
   private storageKey: string;
 
-  constructor(initialState: Omit<PRReviewState, "viewedFiles" | "hideViewed" | "loadedDiffs" | "loadingFiles" | "expandedSkipBlocks" | "expandingSkipBlocks" | "selectedFile" | "selectedFiles" | "focusedLine" | "focusedLineSide" | "selectionAnchor" | "selectionAnchorSide" | "focusedSkipBlockIndex" | "commentingOnLine" | "gotoLineMode" | "gotoLineInput" | "focusedCommentId" | "editingCommentId" | "replyingToCommentId" | "focusedPendingCommentId" | "editingPendingCommentId" | "pendingReviewId" | "pendingComments" | "reviewBody" | "showReviewPanel" | "submittingReview" | "currentUser">) {
+  constructor(
+    initialState: Omit<
+      PRReviewState,
+      | "viewedFiles"
+      | "hideViewed"
+      | "loadedDiffs"
+      | "loadingFiles"
+      | "expandedSkipBlocks"
+      | "expandingSkipBlocks"
+      | "selectedFile"
+      | "selectedFiles"
+      | "focusedLine"
+      | "focusedLineSide"
+      | "selectionAnchor"
+      | "selectionAnchorSide"
+      | "focusedSkipBlockIndex"
+      | "commentingOnLine"
+      | "gotoLineMode"
+      | "gotoLineInput"
+      | "focusedCommentId"
+      | "editingCommentId"
+      | "replyingToCommentId"
+      | "focusedPendingCommentId"
+      | "editingPendingCommentId"
+      | "pendingReviewId"
+      | "pendingComments"
+      | "reviewBody"
+      | "showReviewPanel"
+      | "submittingReview"
+      | "currentUser"
+    >
+  ) {
     this.storageKey = `pr-${initialState.owner}-${initialState.repo}-${initialState.pr.number}`;
-    
+
     // Load viewed files from localStorage
     let viewedFiles = new Set<string>();
     let pendingComments: LocalPendingComment[] = [];
     let reviewBody = "";
-    
+
     try {
       const stored = localStorage.getItem(`${this.storageKey}-viewed`);
       if (stored) {
         viewedFiles = new Set(JSON.parse(stored));
       }
     } catch {}
-    
+
     // Load pending comments from localStorage
     try {
       const stored = localStorage.getItem(`${this.storageKey}-pending`);
@@ -152,7 +183,7 @@ class PRReviewStore {
         pendingComments = JSON.parse(stored);
       }
     } catch {}
-    
+
     // Load review body from localStorage
     try {
       const stored = localStorage.getItem(`${this.storageKey}-body`);
@@ -246,7 +277,7 @@ class PRReviewStore {
 
   toggleFileSelection = (filename: string, isShiftClick: boolean) => {
     const { files, selectedFiles } = this.state;
-    
+
     if (isShiftClick && this.lastSelectedFile) {
       const allFilenames = files.map((f) => f.filename);
       const lastIdx = allFilenames.indexOf(this.lastSelectedFile);
@@ -279,11 +310,12 @@ class PRReviewStore {
     const currentIdx = selectedFile
       ? files.findIndex((f) => f.filename === selectedFile)
       : -1;
-    
-    const newIdx = direction === "next"
-      ? Math.min(currentIdx + 1, files.length - 1)
-      : Math.max(currentIdx - 1, 0);
-    
+
+    const newIdx =
+      direction === "next"
+        ? Math.min(currentIdx + 1, files.length - 1)
+        : Math.max(currentIdx - 1, 0);
+
     if (newIdx !== currentIdx && files[newIdx]) {
       this.selectFile(files[newIdx].filename);
     }
@@ -331,13 +363,19 @@ class PRReviewStore {
 
   private persistViewedFiles(viewedFiles: Set<string>) {
     try {
-      localStorage.setItem(`${this.storageKey}-viewed`, JSON.stringify([...viewedFiles]));
+      localStorage.setItem(
+        `${this.storageKey}-viewed`,
+        JSON.stringify([...viewedFiles])
+      );
     } catch {}
   }
 
   private persistPendingComments(pendingComments: LocalPendingComment[]) {
     try {
-      localStorage.setItem(`${this.storageKey}-pending`, JSON.stringify(pendingComments));
+      localStorage.setItem(
+        `${this.storageKey}-pending`,
+        JSON.stringify(pendingComments)
+      );
     } catch {}
   }
 
@@ -384,7 +422,11 @@ class PRReviewStore {
     this.set({ viewedFiles: next, selectedFiles: new Set() });
   };
 
-  markFolderViewed = (_folderPath: string, filenames: string[], markAsViewed: boolean) => {
+  markFolderViewed = (
+    _folderPath: string,
+    filenames: string[],
+    markAsViewed: boolean
+  ) => {
     const next = new Set(this.state.viewedFiles);
     for (const filename of filenames) {
       if (markAsViewed) {
@@ -455,7 +497,10 @@ class PRReviewStore {
     return this.state.expandingSkipBlocks.has(key);
   };
 
-  getExpandedSkipBlockLines = (filename: string, skipIndex: number): DiffLine[] | null => {
+  getExpandedSkipBlockLines = (
+    filename: string,
+    skipIndex: number
+  ): DiffLine[] | null => {
     const key = this.getSkipBlockKey(filename, skipIndex);
     return this.state.expandedSkipBlocks[key] ?? null;
   };
@@ -464,20 +509,29 @@ class PRReviewStore {
   // Line Selection Actions
   // ---------------------------------------------------------------------------
 
-  setFocusedLine = (line: number | null, side: 'old' | 'new' | null = 'new') => {
-    this.set({ 
-      focusedLine: line, 
+  setFocusedLine = (
+    line: number | null,
+    side: "old" | "new" | null = "new"
+  ) => {
+    this.set({
+      focusedLine: line,
       focusedLineSide: line !== null ? side : null,
       focusedSkipBlockIndex: null, // Clear skip block focus when focusing a line
     });
   };
 
-  setSelectionAnchor = (anchor: number | null, side: 'old' | 'new' | null = null) => {
-    this.set({ selectionAnchor: anchor, selectionAnchorSide: anchor !== null ? side : null });
+  setSelectionAnchor = (
+    anchor: number | null,
+    side: "old" | "new" | null = null
+  ) => {
+    this.set({
+      selectionAnchor: anchor,
+      selectionAnchorSide: anchor !== null ? side : null,
+    });
   };
 
   setFocusedSkipBlock = (index: number | null) => {
-    this.set({ 
+    this.set({
       focusedSkipBlockIndex: index,
       focusedLine: null, // Clear line focus when focusing a skip block
       focusedLineSide: null,
@@ -486,60 +540,97 @@ class PRReviewStore {
     });
   };
 
-  navigateLine = (direction: "up" | "down", withShift: boolean, jumpCount: number = 1) => {
-    const { focusedLine, focusedLineSide, selectionAnchor, selectionAnchorSide, selectedFile, loadedDiffs, expandedSkipBlocks, comments, pendingComments, focusedCommentId, focusedPendingCommentId, focusedSkipBlockIndex } = this.state;
-    
+  navigateLine = (
+    direction: "up" | "down",
+    withShift: boolean,
+    jumpCount: number = 1
+  ) => {
+    const {
+      focusedLine,
+      focusedLineSide,
+      selectionAnchor,
+      selectionAnchorSide,
+      selectedFile,
+      loadedDiffs,
+      expandedSkipBlocks,
+      comments,
+      pendingComments,
+      focusedCommentId,
+      focusedPendingCommentId,
+      focusedSkipBlockIndex,
+    } = this.state;
+
     const diff = selectedFile ? loadedDiffs[selectedFile] : null;
     if (!diff?.hunks) return;
 
     // Build list of navigable items, including both lines and skip blocks
     // Each entry is either a line or a skip block
-    type NavLine = { type: 'line'; lineNum: number; side: 'old' | 'new' };
-    type NavSkip = { type: 'skip'; skipIndex: number };
+    type NavLine = { type: "line"; lineNum: number; side: "old" | "new" };
+    type NavSkip = { type: "skip"; skipIndex: number };
     type NavItem = NavLine | NavSkip;
     const navigableItems: NavItem[] = [];
     let skipIndex = 0;
-    
+
     for (const hunk of diff.hunks) {
       if (hunk.type === "skip") {
         const currentSkipIndex = skipIndex++;
         // Check if this skip block is expanded
         const key = `${selectedFile}:${currentSkipIndex}`;
         const expandedLines = expandedSkipBlocks[key];
-        
+
         if (expandedLines && expandedLines.length > 0) {
           // Skip block is expanded - add its lines
           for (const line of expandedLines) {
-            if (line.type === 'delete' && line.oldLineNumber) {
-              navigableItems.push({ type: 'line', lineNum: line.oldLineNumber, side: 'old' });
+            if (line.type === "delete" && line.oldLineNumber) {
+              navigableItems.push({
+                type: "line",
+                lineNum: line.oldLineNumber,
+                side: "old",
+              });
             } else if (line.newLineNumber) {
-              navigableItems.push({ type: 'line', lineNum: line.newLineNumber, side: 'new' });
+              navigableItems.push({
+                type: "line",
+                lineNum: line.newLineNumber,
+                side: "new",
+              });
             }
           }
         } else {
           // Skip block is collapsed - add it as navigable
-          navigableItems.push({ type: 'skip', skipIndex: currentSkipIndex });
+          navigableItems.push({ type: "skip", skipIndex: currentSkipIndex });
         }
       } else if (hunk.type === "hunk") {
         for (const line of hunk.lines) {
-          if (line.type === 'delete' && line.oldLineNumber) {
-            navigableItems.push({ type: 'line', lineNum: line.oldLineNumber, side: 'old' });
+          if (line.type === "delete" && line.oldLineNumber) {
+            navigableItems.push({
+              type: "line",
+              lineNum: line.oldLineNumber,
+              side: "old",
+            });
           } else if (line.newLineNumber) {
-            navigableItems.push({ type: 'line', lineNum: line.newLineNumber, side: 'new' });
+            navigableItems.push({
+              type: "line",
+              lineNum: line.newLineNumber,
+              side: "new",
+            });
           }
         }
       }
     }
     if (navigableItems.length === 0) return;
-    
+
     // Build line-only list for backwards compatibility with comment lookups
-    const navigableLines = navigableItems.filter((n): n is NavLine => n.type === 'line');
-    const commentableLines = navigableLines.map(n => n.lineNum);
+    const navigableLines = navigableItems.filter(
+      (n): n is NavLine => n.type === "line"
+    );
+    const commentableLines = navigableLines.map((n) => n.lineNum);
 
     // Helper to get all comments for a line (sorted for thread navigation)
     const getLineComments = (line: number) => {
       const lineComments = comments.filter(
-        (c) => c.path === selectedFile && (c.line === line || c.original_line === line)
+        (c) =>
+          c.path === selectedFile &&
+          (c.line === line || c.original_line === line)
       );
       // Sort: root comments first, then replies by ID
       return lineComments.sort((a, b) => {
@@ -559,9 +650,9 @@ class PRReviewStore {
     // Handle navigation when focused on a skip block
     if (focusedSkipBlockIndex !== null) {
       const currentIdx = navigableItems.findIndex(
-        (n) => n.type === 'skip' && n.skipIndex === focusedSkipBlockIndex
+        (n) => n.type === "skip" && n.skipIndex === focusedSkipBlockIndex
       );
-      
+
       if (currentIdx !== -1) {
         let nextIdx: number;
         if (direction === "down") {
@@ -569,9 +660,9 @@ class PRReviewStore {
         } else {
           nextIdx = Math.max(currentIdx - 1, 0);
         }
-        
+
         const nextItem = navigableItems[nextIdx];
-        if (nextItem.type === 'skip') {
+        if (nextItem.type === "skip") {
           this.set({ focusedSkipBlockIndex: nextItem.skipIndex });
         } else {
           this.set({
@@ -588,7 +679,9 @@ class PRReviewStore {
 
     // Handle navigation when focused on a pending comment
     if (focusedPendingCommentId) {
-      const focusedPending = pendingComments.find((c) => c.id === focusedPendingCommentId);
+      const focusedPending = pendingComments.find(
+        (c) => c.id === focusedPendingCommentId
+      );
       if (!focusedPending) {
         this.set({ focusedPendingCommentId: null });
         return;
@@ -596,7 +689,9 @@ class PRReviewStore {
 
       const pendingLine = focusedPending.line;
       const linePending = getLinePendingComments(pendingLine);
-      const pendingIdx = linePending.findIndex((c) => c.id === focusedPendingCommentId);
+      const pendingIdx = linePending.findIndex(
+        (c) => c.id === focusedPendingCommentId
+      );
 
       if (direction === "down") {
         // Try to go to next pending comment on this line
@@ -636,7 +731,7 @@ class PRReviewStore {
         // No more pending comments above, go back to line (default to 'new' side)
         this.set({
           focusedLine: pendingLine,
-          focusedLineSide: 'new',
+          focusedLineSide: "new",
           focusedPendingCommentId: null,
           selectionAnchor: null,
           selectionAnchorSide: null,
@@ -655,7 +750,9 @@ class PRReviewStore {
 
       const commentLine = focusedComment.line ?? focusedComment.original_line;
       const lineComments = commentLine ? getLineComments(commentLine) : [];
-      const commentIdx = lineComments.findIndex((c) => c.id === focusedCommentId);
+      const commentIdx = lineComments.findIndex(
+        (c) => c.id === focusedCommentId
+      );
 
       if (direction === "down") {
         // Try to go to next comment in thread
@@ -697,7 +794,7 @@ class PRReviewStore {
           // No pending comments, go back to line (default to 'new' side)
           this.set({
             focusedLine: commentLine,
-            focusedLineSide: 'new',
+            focusedLineSide: "new",
             focusedCommentId: null,
             selectionAnchor: null,
             selectionAnchorSide: null,
@@ -733,21 +830,33 @@ class PRReviewStore {
     }
 
     // Normal line/skip navigation - find current position in navigableItems
-    const currentIdx = focusedLine !== null 
-      ? navigableItems.findIndex(n => n.type === 'line' && n.lineNum === focusedLine && n.side === (focusedLineSide ?? 'new'))
-      : -1;
-    
+    const currentIdx =
+      focusedLine !== null
+        ? navigableItems.findIndex(
+            (n) =>
+              n.type === "line" &&
+              n.lineNum === focusedLine &&
+              n.side === (focusedLineSide ?? "new")
+          )
+        : -1;
+
     let nextIdx: number;
     if (direction === "down") {
-      nextIdx = currentIdx === -1 ? 0 : Math.min(currentIdx + jumpCount, navigableItems.length - 1);
+      nextIdx =
+        currentIdx === -1
+          ? 0
+          : Math.min(currentIdx + jumpCount, navigableItems.length - 1);
     } else {
-      nextIdx = currentIdx === -1 ? navigableItems.length - 1 : Math.max(currentIdx - jumpCount, 0);
+      nextIdx =
+        currentIdx === -1
+          ? navigableItems.length - 1
+          : Math.max(currentIdx - jumpCount, 0);
     }
 
     const nextItem = navigableItems[nextIdx];
-    
+
     // If next item is a skip block, focus it
-    if (nextItem.type === 'skip') {
+    if (nextItem.type === "skip") {
       this.set({
         focusedSkipBlockIndex: nextItem.skipIndex,
         focusedLine: null,
@@ -764,12 +873,17 @@ class PRReviewStore {
     const nextSide = nextItem.side;
 
     // Handle up navigation - check if the target line has comments to enter (from the bottom)
-    if (direction === "up" && focusedLine && (nextLine !== focusedLine || nextSide !== focusedLineSide)) {
+    if (
+      direction === "up" &&
+      focusedLine &&
+      (nextLine !== focusedLine || nextSide !== focusedLineSide)
+    ) {
       // First check regular comments on target line (enter from the bottom/last comment)
       const targetLineComments = getLineComments(nextLine);
       if (targetLineComments.length > 0) {
         this.set({
-          focusedCommentId: targetLineComments[targetLineComments.length - 1].id,
+          focusedCommentId:
+            targetLineComments[targetLineComments.length - 1].id,
           focusedLine: null,
           focusedLineSide: null,
           focusedSkipBlockIndex: null,
@@ -783,7 +897,8 @@ class PRReviewStore {
       const targetLinePending = getLinePendingComments(nextLine);
       if (targetLinePending.length > 0) {
         this.set({
-          focusedPendingCommentId: targetLinePending[targetLinePending.length - 1].id,
+          focusedPendingCommentId:
+            targetLinePending[targetLinePending.length - 1].id,
           focusedLine: null,
           focusedLineSide: null,
           focusedSkipBlockIndex: null,
@@ -793,7 +908,7 @@ class PRReviewStore {
         return;
       }
     }
-    
+
     if (withShift) {
       this.set({
         focusedLine: nextLine,
@@ -875,15 +990,15 @@ class PRReviewStore {
     }
 
     // Build navigable lines with side info and find closest
-    type NavLine = { lineNum: number; side: 'old' | 'new' };
+    type NavLine = { lineNum: number; side: "old" | "new" };
     const navigableLines: NavLine[] = [];
     for (const hunk of diff.hunks) {
       if (hunk.type === "hunk") {
         for (const line of hunk.lines) {
-          if (line.type === 'delete' && line.oldLineNumber) {
-            navigableLines.push({ lineNum: line.oldLineNumber, side: 'old' });
+          if (line.type === "delete" && line.oldLineNumber) {
+            navigableLines.push({ lineNum: line.oldLineNumber, side: "old" });
           } else if (line.newLineNumber) {
-            navigableLines.push({ lineNum: line.newLineNumber, side: 'new' });
+            navigableLines.push({ lineNum: line.newLineNumber, side: "new" });
           }
         }
       }
@@ -891,7 +1006,8 @@ class PRReviewStore {
 
     if (navigableLines.length > 0) {
       const closest = navigableLines.reduce((best, current) =>
-        Math.abs(current.lineNum - targetLine) < Math.abs(best.lineNum - targetLine)
+        Math.abs(current.lineNum - targetLine) <
+        Math.abs(best.lineNum - targetLine)
           ? current
           : best
       );
@@ -992,15 +1108,17 @@ class PRReviewStore {
     // Find the comment to get its line before deleting
     const comment = this.state.pendingComments.find((c) => c.id === id);
     const commentLine = comment?.line;
-    
-    const pendingComments = this.state.pendingComments.filter((c) => c.id !== id);
+
+    const pendingComments = this.state.pendingComments.filter(
+      (c) => c.id !== id
+    );
     this.persistPendingComments(pendingComments);
-    this.set({ 
+    this.set({
       pendingComments,
       focusedPendingCommentId: null,
       // Focus the line the comment was on so user can continue with keyboard
       focusedLine: commentLine ?? null,
-      focusedLineSide: commentLine ? 'new' : null,
+      focusedLineSide: commentLine ? "new" : null,
     });
   };
 
@@ -1042,13 +1160,13 @@ class PRReviewStore {
     // Find the comment to get its line before deleting
     const comment = this.state.comments.find((c) => c.id === commentId);
     const commentLine = comment?.line ?? comment?.original_line;
-    
+
     this.set({
       comments: this.state.comments.filter((c) => c.id !== commentId),
       focusedCommentId: null,
       // Focus the line the comment was on so user can continue with keyboard
       focusedLine: commentLine ?? null,
-      focusedLineSide: commentLine ? 'new' : null,
+      focusedLineSide: commentLine ? "new" : null,
     });
   };
 
@@ -1129,13 +1247,19 @@ class PRReviewStore {
    * Format: #file=<path>&L<line> or #file=<path>&L<start>-<end> or #file=<path>&C<commentId>
    */
   getHashFromState = (): string => {
-    const { selectedFile, focusedLine, selectionAnchor, focusedCommentId, focusedPendingCommentId } = this.state;
-    
+    const {
+      selectedFile,
+      focusedLine,
+      selectionAnchor,
+      focusedCommentId,
+      focusedPendingCommentId,
+    } = this.state;
+
     if (!selectedFile) return "";
-    
+
     const params = new URLSearchParams();
     params.set("file", selectedFile);
-    
+
     // Comment takes priority over line selection
     if (focusedCommentId) {
       params.set("comment", String(focusedCommentId));
@@ -1150,7 +1274,7 @@ class PRReviewStore {
         params.set("L", String(focusedLine));
       }
     }
-    
+
     return params.toString();
   };
 
@@ -1160,28 +1284,28 @@ class PRReviewStore {
    */
   navigateFromHash = (hash: string): boolean => {
     if (!hash) return false;
-    
+
     // Remove leading # if present
     const hashStr = hash.startsWith("#") ? hash.slice(1) : hash;
     if (!hashStr) return false;
-    
+
     const params = new URLSearchParams(hashStr);
     const file = params.get("file");
     const lineParam = params.get("L");
     const commentParam = params.get("comment");
     const pendingParam = params.get("pending");
-    
+
     if (!file) return false;
-    
+
     // Check if file exists
     const fileExists = this.state.files.some((f) => f.filename === file);
     if (!fileExists) return false;
-    
+
     // Select the file
     if (this.state.selectedFile !== file) {
       this.selectFile(file);
     }
-    
+
     // Handle comment focus
     if (commentParam) {
       const commentId = parseInt(commentParam, 10);
@@ -1192,13 +1316,13 @@ class PRReviewStore {
         return true;
       }
     }
-    
+
     // Handle pending comment focus
     if (pendingParam) {
       this.set({ focusedPendingCommentId: pendingParam });
       return true;
     }
-    
+
     // Handle line focus (default to 'new' side since we don't know the diff structure yet)
     if (lineParam) {
       const rangeMatch = lineParam.match(/^(\d+)-(\d+)$/);
@@ -1207,9 +1331,9 @@ class PRReviewStore {
         const end = parseInt(rangeMatch[2], 10);
         this.set({
           focusedLine: end,
-          focusedLineSide: 'new',
+          focusedLineSide: "new",
           selectionAnchor: start,
-          selectionAnchorSide: 'new',
+          selectionAnchorSide: "new",
           focusedSkipBlockIndex: null,
           focusedCommentId: null,
           focusedPendingCommentId: null,
@@ -1219,7 +1343,7 @@ class PRReviewStore {
         if (!isNaN(line)) {
           this.set({
             focusedLine: line,
-            focusedLineSide: 'new',
+            focusedLineSide: "new",
             selectionAnchor: null,
             selectionAnchorSide: null,
             focusedSkipBlockIndex: null,
@@ -1230,7 +1354,7 @@ class PRReviewStore {
       }
       return true;
     }
-    
+
     return true;
   };
 }
@@ -1427,54 +1551,69 @@ export function useSelectionRange(): { start: number; end: number } | null {
 // ============================================================================
 
 /** Check if a specific line is focused (for DiffLine component) */
-export function useIsLineFocused(lineNumber: number, side: 'old' | 'new'): boolean {
-  return usePRReviewSelector((s) => s.focusedLine === lineNumber && s.focusedLineSide === side);
+export function useIsLineFocused(
+  lineNumber: number,
+  side: "old" | "new"
+): boolean {
+  return usePRReviewSelector(
+    (s) => s.focusedLine === lineNumber && s.focusedLineSide === side
+  );
 }
 
 /** Check if a specific line is in the selection range */
-export function useIsLineInSelection(lineNumber: number, side: 'old' | 'new'): boolean {
+export function useIsLineInSelection(
+  lineNumber: number,
+  side: "old" | "new"
+): boolean {
   return usePRReviewSelector((s) => {
     if (!s.focusedLine || !s.focusedLineSide) return false;
     // Must match side
     if (s.focusedLineSide !== side) return false;
     if (!s.selectionAnchor) return s.focusedLine === lineNumber;
     // For selection ranges, we currently only support same-side selection
-    if (s.selectionAnchorSide !== side) return s.focusedLine === lineNumber && s.focusedLineSide === side;
+    if (s.selectionAnchorSide !== side)
+      return s.focusedLine === lineNumber && s.focusedLineSide === side;
     const start = Math.min(s.focusedLine, s.selectionAnchor);
     const end = Math.max(s.focusedLine, s.selectionAnchor);
     return lineNumber >= start && lineNumber <= end;
   });
 }
 
-/** 
+/**
  * Get selection boundary info for a specific line (for drawing selection outline).
  * Uses a single selector that returns primitives to avoid re-renders of unaffected lines.
  */
-export function useSelectionBoundary(lineNumber: number, side: 'old' | 'new'): { isFirst: boolean; isLast: boolean; isInSelection: boolean } {
+export function useSelectionBoundary(
+  lineNumber: number,
+  side: "old" | "new"
+): { isFirst: boolean; isLast: boolean; isInSelection: boolean } {
   // Use separate selectors that return booleans - only re-renders when THIS line's state changes
   const isInSelection = usePRReviewSelector((s) => {
     if (!s.focusedLine || !s.focusedLineSide) return false;
     if (s.focusedLineSide !== side) return false;
-    if (!s.selectionAnchor || s.selectionAnchorSide !== side) return s.focusedLine === lineNumber;
+    if (!s.selectionAnchor || s.selectionAnchorSide !== side)
+      return s.focusedLine === lineNumber;
     const start = Math.min(s.focusedLine, s.selectionAnchor);
     const end = Math.max(s.focusedLine, s.selectionAnchor);
     return lineNumber >= start && lineNumber <= end;
   });
-  
+
   const isFirst = usePRReviewSelector((s) => {
     if (!s.focusedLine || !s.focusedLineSide) return false;
     if (s.focusedLineSide !== side) return false;
-    if (!s.selectionAnchor || s.selectionAnchorSide !== side) return s.focusedLine === lineNumber;
+    if (!s.selectionAnchor || s.selectionAnchorSide !== side)
+      return s.focusedLine === lineNumber;
     return lineNumber === Math.min(s.focusedLine, s.selectionAnchor);
   });
-  
+
   const isLast = usePRReviewSelector((s) => {
     if (!s.focusedLine || !s.focusedLineSide) return false;
     if (s.focusedLineSide !== side) return false;
-    if (!s.selectionAnchor || s.selectionAnchorSide !== side) return s.focusedLine === lineNumber;
+    if (!s.selectionAnchor || s.selectionAnchorSide !== side)
+      return s.focusedLine === lineNumber;
     return lineNumber === Math.max(s.focusedLine, s.selectionAnchor);
   });
-  
+
   return { isFirst, isLast, isInSelection };
 }
 
@@ -1498,7 +1637,7 @@ export function useIsLineInCommentRange(lineNumber: number): boolean {
   // Compute inside selector so we return a boolean primitive - only re-renders when result changes
   return usePRReviewSelector((s) => {
     if (!s.selectedFile) return false;
-    
+
     for (const comment of s.comments) {
       if (comment.path !== s.selectedFile) continue;
       if (
@@ -1510,7 +1649,7 @@ export function useIsLineInCommentRange(lineNumber: number): boolean {
         return true;
       }
     }
-    
+
     for (const comment of s.pendingComments) {
       if (comment.path !== s.selectedFile) continue;
       if (
@@ -1521,7 +1660,7 @@ export function useIsLineInCommentRange(lineNumber: number): boolean {
         return true;
       }
     }
-    
+
     return false;
   });
 }
@@ -1545,10 +1684,17 @@ export function useKeyboardNavigation() {
       }
 
       // Handle Ctrl/Cmd+Arrow for jumping by 10 lines
-      if ((e.ctrlKey || e.metaKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === "ArrowDown" || e.key === "ArrowUp")
+      ) {
         e.preventDefault();
         const jumpCount = 10;
-        store.navigateLine(e.key === "ArrowDown" ? "down" : "up", e.shiftKey, jumpCount);
+        store.navigateLine(
+          e.key === "ArrowDown" ? "down" : "up",
+          e.shiftKey,
+          jumpCount
+        );
         return;
       }
 
@@ -1642,8 +1788,13 @@ export function useKeyboardNavigation() {
         case "e":
           if (state.focusedCommentId) {
             // Check if user owns this comment
-            const commentToEdit = state.comments.find((c) => c.id === state.focusedCommentId);
-            if (commentToEdit && state.currentUser === commentToEdit.user.login) {
+            const commentToEdit = state.comments.find(
+              (c) => c.id === state.focusedCommentId
+            );
+            if (
+              commentToEdit &&
+              state.currentUser === commentToEdit.user.login
+            ) {
               e.preventDefault();
               store.startEditing(state.focusedCommentId);
             }
@@ -1662,10 +1813,17 @@ export function useKeyboardNavigation() {
         case "d":
           if (state.focusedCommentId) {
             // Check if user owns this comment
-            const commentToDelete = state.comments.find((c) => c.id === state.focusedCommentId);
-            if (commentToDelete && state.currentUser === commentToDelete.user.login) {
+            const commentToDelete = state.comments.find(
+              (c) => c.id === state.focusedCommentId
+            );
+            if (
+              commentToDelete &&
+              state.currentUser === commentToDelete.user.login
+            ) {
               e.preventDefault();
-              if (window.confirm("Are you sure you want to delete this comment?")) {
+              if (
+                window.confirm("Are you sure you want to delete this comment?")
+              ) {
                 // Trigger delete via API - component handles this
                 const event = new CustomEvent("pr-review:delete-comment", {
                   detail: { commentId: state.focusedCommentId },
@@ -1676,10 +1834,17 @@ export function useKeyboardNavigation() {
           } else if (state.focusedPendingCommentId) {
             // Pending comments are always owned by current user
             e.preventDefault();
-            if (window.confirm("Are you sure you want to delete this pending comment?")) {
-              const event = new CustomEvent("pr-review:delete-pending-comment", {
-                detail: { commentId: state.focusedPendingCommentId },
-              });
+            if (
+              window.confirm(
+                "Are you sure you want to delete this pending comment?"
+              )
+            ) {
+              const event = new CustomEvent(
+                "pr-review:delete-pending-comment",
+                {
+                  detail: { commentId: state.focusedPendingCommentId },
+                }
+              );
               window.dispatchEvent(event);
             }
           }
@@ -1710,8 +1875,10 @@ export function useHashNavigation() {
   const focusedLine = usePRReviewSelector((s) => s.focusedLine);
   const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
   const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
-  const focusedPendingCommentId = usePRReviewSelector((s) => s.focusedPendingCommentId);
-  
+  const focusedPendingCommentId = usePRReviewSelector(
+    (s) => s.focusedPendingCommentId
+  );
+
   // Track if we're currently updating the hash to avoid circular updates
   const isUpdatingHash = useRef(false);
   // Track if we've done initial navigation from hash
@@ -1721,7 +1888,7 @@ export function useHashNavigation() {
   useEffect(() => {
     if (hasInitialized.current) return;
     hasInitialized.current = true;
-    
+
     const hash = window.location.hash;
     if (hash) {
       isUpdatingHash.current = true;
@@ -1736,25 +1903,40 @@ export function useHashNavigation() {
   // Update hash when state changes
   useEffect(() => {
     if (isUpdatingHash.current) return;
-    
+
     const newHash = store.getHashFromState();
     const currentHash = window.location.hash.slice(1); // Remove leading #
-    
+
     if (newHash !== currentHash) {
       // Use replaceState to avoid creating history entries for every line navigation
       // but use pushState for file changes to allow back/forward navigation
       const currentParams = new URLSearchParams(currentHash);
       const newParams = new URLSearchParams(newHash);
-      
+
       if (currentParams.get("file") !== newParams.get("file")) {
         // File changed - create history entry
-        window.history.pushState(null, "", newHash ? `#${newHash}` : window.location.pathname);
+        window.history.pushState(
+          null,
+          "",
+          newHash ? `#${newHash}` : window.location.pathname
+        );
       } else {
         // Same file, just line/comment change - replace
-        window.history.replaceState(null, "", newHash ? `#${newHash}` : window.location.pathname);
+        window.history.replaceState(
+          null,
+          "",
+          newHash ? `#${newHash}` : window.location.pathname
+        );
       }
     }
-  }, [store, selectedFile, focusedLine, selectionAnchor, focusedCommentId, focusedPendingCommentId]);
+  }, [
+    store,
+    selectedFile,
+    focusedLine,
+    selectionAnchor,
+    focusedCommentId,
+    focusedPendingCommentId,
+  ]);
 
   // Handle browser back/forward navigation
   useEffect(() => {
@@ -1776,7 +1958,10 @@ export function useHashNavigation() {
 // ============================================================================
 
 const diffCache = new Map<string, ParsedDiff>();
-const pendingFetches = new Map<string, { promise: Promise<ParsedDiff>; controller: AbortController }>();
+const pendingFetches = new Map<
+  string,
+  { promise: Promise<ParsedDiff>; controller: AbortController }
+>();
 const MAX_CACHE_SIZE = 100;
 
 // Check if a diff is already cached (sync check)
@@ -1804,7 +1989,10 @@ function abortPendingFetch(cacheKey: string) {
   }
 }
 
-async function fetchParsedDiff(file: PullRequestFile, signal?: AbortSignal): Promise<ParsedDiff> {
+async function fetchParsedDiff(
+  file: PullRequestFile,
+  signal?: AbortSignal
+): Promise<ParsedDiff> {
   if (!file.patch || !file.sha) {
     return { hunks: [] };
   }
@@ -1840,7 +2028,7 @@ async function fetchParsedDiff(file: PullRequestFile, signal?: AbortSignal): Pro
 
   // Create new fetch with its own controller
   const controller = new AbortController();
-  
+
   // Link to caller's signal
   if (signal) {
     signal.addEventListener("abort", () => controller.abort());
@@ -1860,7 +2048,7 @@ async function fetchParsedDiff(file: PullRequestFile, signal?: AbortSignal): Pro
     });
 
     const parsed = await response.json();
-    
+
     // Clean up pending entry
     pendingFetches.delete(cacheKey);
 
@@ -1879,7 +2067,7 @@ async function fetchParsedDiff(file: PullRequestFile, signal?: AbortSignal): Pro
   })();
 
   pendingFetches.set(cacheKey, { promise: fetchPromise, controller });
-  
+
   // Clean up on error
   fetchPromise.catch(() => {
     pendingFetches.delete(cacheKey);
@@ -1899,7 +2087,7 @@ export function useDiffLoader() {
 
     const file = files.find((f) => f.filename === selectedFile);
     if (!file) return;
-    
+
     const currentFile = selectedFile;
 
     // Check cache synchronously - instant if cached
@@ -1919,7 +2107,10 @@ export function useDiffLoader() {
 
     // Delay showing loading spinner to avoid flash for fast loads
     const loadingTimeoutId = setTimeout(() => {
-      if (store.getSnapshot().selectedFile === currentFile && !store.getSnapshot().loadedDiffs[currentFile]) {
+      if (
+        store.getSnapshot().selectedFile === currentFile &&
+        !store.getSnapshot().loadedDiffs[currentFile]
+      ) {
         store.setDiffLoading(currentFile, true);
       }
     }, 100);
@@ -1935,12 +2126,18 @@ export function useDiffLoader() {
           if (store.getSnapshot().selectedFile === currentFile) {
             store.setLoadedDiff(currentFile, diff);
             store.setDiffLoading(currentFile, false);
-            
+
             // Now prefetch next files
-            const currentIndex = files.findIndex((f) => f.filename === currentFile);
+            const currentIndex = files.findIndex(
+              (f) => f.filename === currentFile
+            );
             const filesToPrefetch = files
               .slice(currentIndex + 1, currentIndex + 4)
-              .filter((f) => !store.getSnapshot().loadedDiffs[f.filename] && !getDiffFromCache(f));
+              .filter(
+                (f) =>
+                  !store.getSnapshot().loadedDiffs[f.filename] &&
+                  !getDiffFromCache(f)
+              );
 
             for (const pfile of filesToPrefetch) {
               fetchParsedDiff(pfile)
@@ -1950,7 +2147,10 @@ export function useDiffLoader() {
           }
         })
         .catch((err) => {
-          if (err?.name !== "AbortError" && store.getSnapshot().selectedFile === currentFile) {
+          if (
+            err?.name !== "AbortError" &&
+            store.getSnapshot().selectedFile === currentFile
+          ) {
             console.error(err);
             store.setDiffLoading(currentFile, false);
           }
@@ -2018,7 +2218,14 @@ export function usePendingReviewLoader() {
 
         // Convert to local comments
         const localComments: LocalPendingComment[] = comments.map(
-          (c: { id: string; databaseId: number; body: string; path: string; line: number; startLine: number | null }) => ({
+          (c: {
+            id: string;
+            databaseId: number;
+            body: string;
+            path: string;
+            line: number;
+            startLine: number | null;
+          }) => ({
             id: `github-${c.databaseId}`,
             nodeId: c.id,
             databaseId: c.databaseId,
@@ -2141,9 +2348,15 @@ export function useCommentActions() {
       );
 
       if (response.ok) {
-        const { reviewId, commentId, commentDatabaseId } = await response.json();
+        const { reviewId, commentId, commentDatabaseId } =
+          await response.json();
         // Update the local comment with GitHub IDs
-        store.updatePendingCommentWithGitHubIds(localId, reviewId, commentId, commentDatabaseId);
+        store.updatePendingCommentWithGitHubIds(
+          localId,
+          reviewId,
+          commentId,
+          commentDatabaseId
+        );
       } else {
         const error = await response.json();
         console.error("Failed to create pending comment on GitHub:", error);
@@ -2300,38 +2513,46 @@ export function useReviewActions() {
         }
       } else if (state.pendingComments.length > 0) {
         // Fallback: create a new review with all comments via REST
-        const response = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/reviews`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            commit_id: pr.head.sha,
-            event,
-            body: state.reviewBody,
-            comments: state.pendingComments.map(({ path, line, body, side, start_line }) => ({
-              path,
-              line,
-              body,
-              side,
-              start_line,
-            })),
-          }),
-        });
+        const response = await fetch(
+          `/api/pr/${owner}/${repo}/${pr.number}/reviews`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              commit_id: pr.head.sha,
+              event,
+              body: state.reviewBody,
+              comments: state.pendingComments.map(
+                ({ path, line, body, side, start_line }) => ({
+                  path,
+                  line,
+                  body,
+                  side,
+                  start_line,
+                })
+              ),
+            }),
+          }
+        );
 
         if (!response.ok) {
           throw new Error("Failed to submit review");
         }
       } else {
         // Just submitting a review with no comments (APPROVE, etc)
-        const response = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/reviews`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            commit_id: pr.head.sha,
-            event,
-            body: state.reviewBody,
-            comments: [],
-          }),
-        });
+        const response = await fetch(
+          `/api/pr/${owner}/${repo}/${pr.number}/reviews`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              commit_id: pr.head.sha,
+              event,
+              body: state.reviewBody,
+              comments: [],
+            }),
+          }
+        );
 
         if (!response.ok) {
           throw new Error("Failed to submit review");
@@ -2369,76 +2590,94 @@ export function useSkipBlockExpansion() {
   const expandedSkipBlocks = usePRReviewSelector((s) => s.expandedSkipBlocks);
   const expandingSkipBlocks = usePRReviewSelector((s) => s.expandingSkipBlocks);
 
-  const expandSkipBlock = useCallback(async (skipIndex: number, startLine: number, count: number) => {
-    if (!selectedFile) return;
-    
-    const key = store.getSkipBlockKey(selectedFile, skipIndex);
-    
-    // Already expanded or expanding
-    if (expandedSkipBlocks[key] || expandingSkipBlocks.has(key)) return;
-    
-    store.setSkipBlockExpanding(key, true);
-    
-    try {
-      // Fetch the file content from the head commit
-      const fileResponse = await fetch(
-        `/api/file/${owner}/${repo}?path=${encodeURIComponent(selectedFile)}&ref=${pr.head.sha}`
-      );
-      
-      if (!fileResponse.ok) {
-        console.error("Failed to fetch file for skip block expansion");
-        return;
-      }
-      
-      const content = await fileResponse.text();
-      
-      // Get highlighted lines from the API
-      const highlightResponse = await fetch("/api/highlight-lines", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content,
-          filename: selectedFile,
-          startLine,
-          count,
-        }),
-      });
-      
-      if (!highlightResponse.ok) {
-        console.error("Failed to highlight lines");
-        return;
-      }
-      
-      const expandedLines: DiffLine[] = await highlightResponse.json();
-      store.setExpandedSkipBlock(key, expandedLines);
-      
-      // Focus the first expanded line so user can continue with keyboard
-      if (expandedLines.length > 0) {
-        const firstLine = expandedLines[0];
-        const firstLineNum = firstLine.newLineNumber || firstLine.oldLineNumber;
-        if (firstLineNum) {
-          store.setFocusedLine(firstLineNum, 'new');
+  const expandSkipBlock = useCallback(
+    async (skipIndex: number, startLine: number, count: number) => {
+      if (!selectedFile) return;
+
+      const key = store.getSkipBlockKey(selectedFile, skipIndex);
+
+      // Already expanded or expanding
+      if (expandedSkipBlocks[key] || expandingSkipBlocks.has(key)) return;
+
+      store.setSkipBlockExpanding(key, true);
+
+      try {
+        // Fetch the file content from the head commit
+        const fileResponse = await fetch(
+          `/api/file/${owner}/${repo}?path=${encodeURIComponent(selectedFile)}&ref=${pr.head.sha}`
+        );
+
+        if (!fileResponse.ok) {
+          console.error("Failed to fetch file for skip block expansion");
+          return;
         }
+
+        const content = await fileResponse.text();
+
+        // Get highlighted lines from the API
+        const highlightResponse = await fetch("/api/highlight-lines", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content,
+            filename: selectedFile,
+            startLine,
+            count,
+          }),
+        });
+
+        if (!highlightResponse.ok) {
+          console.error("Failed to highlight lines");
+          return;
+        }
+
+        const expandedLines: DiffLine[] = await highlightResponse.json();
+        store.setExpandedSkipBlock(key, expandedLines);
+
+        // Focus the first expanded line so user can continue with keyboard
+        if (expandedLines.length > 0) {
+          const firstLine = expandedLines[0];
+          const firstLineNum =
+            firstLine.newLineNumber || firstLine.oldLineNumber;
+          if (firstLineNum) {
+            store.setFocusedLine(firstLineNum, "new");
+          }
+        }
+      } catch (error) {
+        console.error("Failed to expand skip block:", error);
+      } finally {
+        store.setSkipBlockExpanding(key, false);
       }
-    } catch (error) {
-      console.error("Failed to expand skip block:", error);
-    } finally {
-      store.setSkipBlockExpanding(key, false);
-    }
-  }, [store, owner, repo, pr.head.sha, selectedFile, expandedSkipBlocks, expandingSkipBlocks]);
+    },
+    [
+      store,
+      owner,
+      repo,
+      pr.head.sha,
+      selectedFile,
+      expandedSkipBlocks,
+      expandingSkipBlocks,
+    ]
+  );
 
   // Create a getExpandedLines function that uses the subscribed state directly
-  const getExpandedLines = useCallback((skipIndex: number): DiffLine[] | null => {
-    if (!selectedFile) return null;
-    const key = `${selectedFile}:${skipIndex}`;
-    return expandedSkipBlocks[key] ?? null;
-  }, [selectedFile, expandedSkipBlocks]);
+  const getExpandedLines = useCallback(
+    (skipIndex: number): DiffLine[] | null => {
+      if (!selectedFile) return null;
+      const key = `${selectedFile}:${skipIndex}`;
+      return expandedSkipBlocks[key] ?? null;
+    },
+    [selectedFile, expandedSkipBlocks]
+  );
 
-  const isExpanding = useCallback((skipIndex: number): boolean => {
-    if (!selectedFile) return false;
-    const key = `${selectedFile}:${skipIndex}`;
-    return expandingSkipBlocks.has(key);
-  }, [selectedFile, expandingSkipBlocks]);
+  const isExpanding = useCallback(
+    (skipIndex: number): boolean => {
+      if (!selectedFile) return false;
+      const key = `${selectedFile}:${skipIndex}`;
+      return expandingSkipBlocks.has(key);
+    },
+    [selectedFile, expandingSkipBlocks]
+  );
 
   return { expandSkipBlock, isExpanding, getExpandedLines };
 }
@@ -2507,5 +2746,3 @@ export function getTimeAgo(date: Date): string {
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
   return date.toLocaleDateString();
 }
-
-

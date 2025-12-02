@@ -76,23 +76,76 @@ interface SkipBlock {
 // ============================================================================
 
 const extToLang: Record<string, string> = {
-  js: "javascript", jsx: "jsx", ts: "typescript", tsx: "tsx", mjs: "javascript", cjs: "javascript",
-  html: "markup", htm: "markup", xml: "markup", svg: "markup",
-  css: "css", scss: "scss", sass: "sass", less: "less",
-  py: "python", pyw: "python", pyi: "python",
-  java: "java", kt: "kotlin", scala: "scala", groovy: "groovy",
-  c: "c", cpp: "cpp", cc: "cpp", cxx: "cpp", h: "cpp", hpp: "cpp",
-  cs: "csharp", vb: "vbnet", fs: "fsharp",
-  rs: "rust", go: "go", rb: "ruby", rake: "ruby",
-  php: "php", phtml: "php",
-  sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
-  json: "json", yml: "yaml", yaml: "yaml", toml: "toml", ini: "ini",
-  md: "markdown", markdown: "markdown", tex: "latex",
-  swift: "swift", m: "objectivec", mm: "objectivec",
-  sql: "sql", r: "r", lua: "lua", perl: "perl", pl: "perl", dart: "dart",
-  elm: "elm", ex: "elixir", exs: "elixir", erl: "erlang",
-  clj: "clojure", cljs: "clojure", lisp: "lisp", hs: "haskell", ml: "ocaml",
-  graphql: "graphql", proto: "protobuf", vim: "vim", zig: "zig",
+  js: "javascript",
+  jsx: "jsx",
+  ts: "typescript",
+  tsx: "tsx",
+  mjs: "javascript",
+  cjs: "javascript",
+  html: "markup",
+  htm: "markup",
+  xml: "markup",
+  svg: "markup",
+  css: "css",
+  scss: "scss",
+  sass: "sass",
+  less: "less",
+  py: "python",
+  pyw: "python",
+  pyi: "python",
+  java: "java",
+  kt: "kotlin",
+  scala: "scala",
+  groovy: "groovy",
+  c: "c",
+  cpp: "cpp",
+  cc: "cpp",
+  cxx: "cpp",
+  h: "cpp",
+  hpp: "cpp",
+  cs: "csharp",
+  vb: "vbnet",
+  fs: "fsharp",
+  rs: "rust",
+  go: "go",
+  rb: "ruby",
+  rake: "ruby",
+  php: "php",
+  phtml: "php",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "bash",
+  json: "json",
+  yml: "yaml",
+  yaml: "yaml",
+  toml: "toml",
+  ini: "ini",
+  md: "markdown",
+  markdown: "markdown",
+  tex: "latex",
+  swift: "swift",
+  m: "objectivec",
+  mm: "objectivec",
+  sql: "sql",
+  r: "r",
+  lua: "lua",
+  perl: "perl",
+  pl: "perl",
+  dart: "dart",
+  elm: "elm",
+  ex: "elixir",
+  exs: "elixir",
+  erl: "erlang",
+  clj: "clojure",
+  cljs: "clojure",
+  lisp: "lisp",
+  hs: "haskell",
+  ml: "ocaml",
+  graphql: "graphql",
+  proto: "protobuf",
+  vim: "vim",
+  zig: "zig",
 };
 
 function guessLang(filename?: string): string {
@@ -149,12 +202,12 @@ export function highlightFileLines(
   const language = guessLang(filename);
   const allLines = content.split("\n");
   const result: DiffLine[] = [];
-  
+
   for (let i = 0; i < count; i++) {
     const lineNum = startLine + i;
     const lineContent = allLines[lineNum - 1] ?? "";
     const highlighted = highlight(lineContent, language);
-    
+
     result.push({
       type: "normal",
       oldLineNumber: lineNum,
@@ -162,7 +215,7 @@ export function highlightFileLines(
       content: [{ value: lineContent, html: highlighted, type: "normal" }],
     });
   }
-  
+
   return result;
 }
 
@@ -180,7 +233,11 @@ const calculateChangeRatio = (a: string, b: string): number => {
   return changedChars / totalChars;
 };
 
-const isSimilarEnough = (a: string, b: string, maxChangeRatio: number): boolean => {
+const isSimilarEnough = (
+  a: string,
+  b: string,
+  maxChangeRatio: number
+): boolean => {
   if (maxChangeRatio <= 0) return a === b;
   if (maxChangeRatio >= 1) return true;
   return calculateChangeRatio(a, b) <= maxChangeRatio;
@@ -209,8 +266,15 @@ function diffCharsIfWithinEditLimit(a: string, b: string, maxEdits = 4) {
   };
 }
 
-const buildInlineDiffSegments = (current: _Change, next: _Change, options: ParseOptions): RawLineSegment[] => {
-  const segments: RawLineSegment[] = diffWords(current.content, next.content).map((token) => ({
+const buildInlineDiffSegments = (
+  current: _Change,
+  next: _Change,
+  options: ParseOptions
+): RawLineSegment[] => {
+  const segments: RawLineSegment[] = diffWords(
+    current.content,
+    next.content
+  ).map((token) => ({
     value: token.value,
     type: token.added ? "insert" : token.removed ? "delete" : "normal",
   }));
@@ -229,7 +293,11 @@ const buildInlineDiffSegments = (current: _Change, next: _Change, options: Parse
     const current = segments[i];
     const next = segments[i + 1];
     if (current.type === "delete" && next?.type === "insert") {
-      const charDiff = diffCharsIfWithinEditLimit(current.value, next.value, options.inlineMaxCharEdits);
+      const charDiff = diffCharsIfWithinEditLimit(
+        current.value,
+        next.value,
+        options.inlineMaxCharEdits
+      );
       if (!charDiff.exceededLimit) {
         charDiff.diffs!.forEach(mergeIntoResult);
         i++;
@@ -288,13 +356,24 @@ function findBestInsertForDelete(
   return bestAddIdx;
 }
 
-function buildInitialPairs(changes: _Change[], insertIdxs: number[], deleteIdxs: number[], options: ParseOptions) {
+function buildInitialPairs(
+  changes: _Change[],
+  insertIdxs: number[],
+  deleteIdxs: number[],
+  options: ParseOptions
+) {
   const n = changes.length;
   const pairOfDel = new Int32Array(n).fill(UNPAIRED);
   const pairOfAdd = new Int32Array(n).fill(UNPAIRED);
 
   for (const di of deleteIdxs) {
-    const bestAddIdx = findBestInsertForDelete(changes, di, insertIdxs, pairOfAdd, options);
+    const bestAddIdx = findBestInsertForDelete(
+      changes,
+      di,
+      insertIdxs,
+      pairOfAdd,
+      options
+    );
     if (bestAddIdx !== UNPAIRED) {
       pairOfDel[di] = bestAddIdx;
       pairOfAdd[bestAddIdx] = di;
@@ -309,13 +388,18 @@ function buildUnpairedDeletePrefix(changes: _Change[], pairOfDel: Int32Array) {
   const prefix = new Int32Array(n + 1);
   for (let i = 0; i < n; i++) {
     const c = changes[i];
-    const isInitiallyUnpairedDelete = c.type === "delete" && pairOfDel[i] === UNPAIRED;
+    const isInitiallyUnpairedDelete =
+      c.type === "delete" && pairOfDel[i] === UNPAIRED;
     prefix[i + 1] = prefix[i] + (isInitiallyUnpairedDelete ? 1 : 0);
   }
   return prefix;
 }
 
-function hasUnpairedDeleteBetween(unpairedDelPrefix: Int32Array, deleteIdx: number, insertIdx: number) {
+function hasUnpairedDeleteBetween(
+  unpairedDelPrefix: Int32Array,
+  deleteIdx: number,
+  insertIdx: number
+) {
   const lower = Math.max(0, deleteIdx);
   const upper = Math.max(lower, insertIdx);
   return unpairedDelPrefix[upper] - unpairedDelPrefix[lower] > 0;
@@ -325,7 +409,12 @@ function emitNormal(out: Line[], c: _Change) {
   out.push(changeToLine(c));
 }
 
-function emitModified(out: Line[], del: DeleteChange, add: InsertChange, options: ParseOptions) {
+function emitModified(
+  out: Line[],
+  del: DeleteChange,
+  add: InsertChange,
+  options: ParseOptions
+) {
   out.push({
     oldLineNumber: del.lineNumber,
     newLineNumber: add.lineNumber,
@@ -358,7 +447,11 @@ function emitLines(
         processed[i] = 1;
         emitNormal(out, c);
       } else if (pairedAddIdx > i) {
-        const shouldUnpair = hasUnpairedDeleteBetween(unpairedDelPrefix, i + 1, pairedAddIdx);
+        const shouldUnpair = hasUnpairedDeleteBetween(
+          unpairedDelPrefix,
+          i + 1,
+          pairedAddIdx
+        );
         if (shouldUnpair) {
           pairOfAdd[pairedAddIdx] = UNPAIRED;
           processed[i] = 1;
@@ -391,7 +484,12 @@ function emitLines(
 
 function mergeModifiedLines(changes: _Change[], options: ParseOptions): Line[] {
   const { insertIdxs, deleteIdxs } = buildChangeIndices(changes);
-  const { pairOfDel, pairOfAdd } = buildInitialPairs(changes, insertIdxs, deleteIdxs, options);
+  const { pairOfDel, pairOfAdd } = buildInitialPairs(
+    changes,
+    insertIdxs,
+    deleteIdxs,
+    options
+  );
   const unpairedDelPrefix = buildUnpairedDeletePrefix(changes, pairOfDel);
   return emitLines(changes, pairOfDel, pairOfAdd, unpairedDelPrefix, options);
 }
@@ -419,7 +517,11 @@ const insertSkipBlocks = (hunks: Hunk[]): (Hunk | SkipBlock)[] => {
     const distanceToLastHunk = hunk.oldStart - lastHunkLine;
     const context = extractHunkContext(hunk.content);
     if (distanceToLastHunk > 0) {
-      result.push({ count: distanceToLastHunk, type: "skip", content: context ?? hunk.content });
+      result.push({
+        count: distanceToLastHunk,
+        type: "skip",
+        content: context ?? hunk.content,
+      });
     }
     lastHunkLine = Math.max(hunk.oldStart + hunk.oldLines, lastHunkLine);
     result.push(hunk);
@@ -462,13 +564,15 @@ ${patch}`;
   const opts = defaultOptions;
   const files = gitDiffParser.parse(diffHeader);
   const file = files[0];
-  
+
   if (!file) {
     return { hunks: [] };
   }
 
   const language = guessLang(filename);
-  const rawHunks = insertSkipBlocks(file.hunks.map((hunk) => parseHunk(hunk, opts)));
+  const rawHunks = insertSkipBlocks(
+    file.hunks.map((hunk) => parseHunk(hunk, opts))
+  );
 
   // Convert to output format with highlighting
   const hunks: (DiffHunk | DiffSkipBlock)[] = rawHunks.map((hunk) => {
@@ -483,8 +587,16 @@ ${patch}`;
       lines: hunk.lines.map((line): DiffLine => {
         // Normal changes have oldLineNumber/newLineNumber, insert/delete have lineNumber
         const isNormal = line.type === "normal";
-        const oldNum = isNormal ? (line as any).oldLineNumber : line.type === "delete" ? (line as any).lineNumber : undefined;
-        const newNum = isNormal ? (line as any).newLineNumber : line.type === "insert" ? (line as any).lineNumber : undefined;
+        const oldNum = isNormal
+          ? (line as any).oldLineNumber
+          : line.type === "delete"
+            ? (line as any).lineNumber
+            : undefined;
+        const newNum = isNormal
+          ? (line as any).newLineNumber
+          : line.type === "insert"
+            ? (line as any).lineNumber
+            : undefined;
 
         return {
           type: line.type,

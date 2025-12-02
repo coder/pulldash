@@ -78,15 +78,16 @@ function scoreMatch(data: FileSearchData, lowerQuery: string): number {
   const basenameIdx = lowerBasename.indexOf(lowerQuery);
   if (basenameIdx !== -1) {
     // Bonus for matching at word boundary (after . - _ or start)
-    const charBefore =
-      basenameIdx === 0 ? "" : lowerBasename[basenameIdx - 1];
+    const charBefore = basenameIdx === 0 ? "" : lowerBasename[basenameIdx - 1];
     const isWordBoundary =
       basenameIdx === 0 ||
       charBefore === "." ||
       charBefore === "-" ||
       charBefore === "_";
     return (
-      800 + (isWordBoundary ? 50 : 0) + (lowerQuery.length / lowerBasename.length) * 30
+      800 +
+      (isWordBoundary ? 50 : 0) +
+      (lowerQuery.length / lowerBasename.length) * 30
     );
   }
 
@@ -100,7 +101,11 @@ function scoreMatch(data: FileSearchData, lowerQuery: string): number {
   let consecutiveBonus = 0;
   let lastMatchIdx = -2;
 
-  for (let i = 0; i < lowerFilename.length && queryIdx < lowerQuery.length; i++) {
+  for (
+    let i = 0;
+    i < lowerFilename.length && queryIdx < lowerQuery.length;
+    i++
+  ) {
     if (lowerFilename[i] === lowerQuery[queryIdx]) {
       if (i === lastMatchIdx + 1) consecutiveBonus += 10;
       lastMatchIdx = i;
@@ -109,7 +114,9 @@ function scoreMatch(data: FileSearchData, lowerQuery: string): number {
   }
 
   if (queryIdx === lowerQuery.length) {
-    return 100 + consecutiveBonus + (lowerQuery.length / lowerFilename.length) * 50;
+    return (
+      100 + consecutiveBonus + (lowerQuery.length / lowerFilename.length) * 50
+    );
   }
 
   return -1; // No match
@@ -141,10 +148,7 @@ export const CommandPalette = memo(function CommandPalette({
   const lowerQuery = deferredSearch.trim().toLowerCase();
 
   // Pre-compute search data for all files (only when files change)
-  const searchData = useMemo(
-    () => files.map(createSearchData),
-    [files]
-  );
+  const searchData = useMemo(() => files.map(createSearchData), [files]);
 
   // Reset search and focus input when opening
   useEffect(() => {
@@ -485,8 +489,28 @@ interface FileIconProps {
 }
 
 const CODE_EXTENSIONS = new Set([
-  "ts", "tsx", "js", "jsx", "py", "go", "rs", "rb", "java", "c", "cpp", "h", "hpp",
-  "cs", "php", "swift", "kt", "scala", "vue", "svelte", "astro", "sql",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "py",
+  "go",
+  "rs",
+  "rb",
+  "java",
+  "c",
+  "cpp",
+  "h",
+  "hpp",
+  "cs",
+  "php",
+  "swift",
+  "kt",
+  "scala",
+  "vue",
+  "svelte",
+  "astro",
+  "sql",
 ]);
 
 const FileIcon = memo(function FileIcon({ extension }: FileIconProps) {

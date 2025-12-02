@@ -24,4 +24,3 @@ await $`chmod +x ./dist/pullpal.js`;
 await $`mv ./dist/pullpal.js ./dist/pullpal`;
 
 console.log("✅ Build complete: ./dist/pullpal");
-

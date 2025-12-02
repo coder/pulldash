@@ -12,7 +12,10 @@ createRoot(document.getElementById("app")!).render(
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/:owner/:repo/pull/:number" element={<PROverviewPage />} />
-        <Route path="/:owner/:repo/pull/:number/files" element={<PRReviewPage />} />
+        <Route
+          path="/:owner/:repo/pull/:number/files"
+          element={<PRReviewPage />}
+        />
       </Routes>
     </BrowserRouter>
   </APIProvider>

@@ -1,0 +1,112 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.coder.pullpal",
+  "productName": "Pullpal",
+  "copyright": "Copyright © 2025 Coder",
+
+  "directories": {
+    "output": "release",
+    "buildResources": "build",
+    "app": "dist"
+  },
+
+  "files": ["electron/**/*", "browser/**/*", "!browser/**/*.map"],
+
+  "extraResources": [
+    {
+      "from": "dist/browser",
+      "to": "browser",
+      "filter": ["**/*", "!**/*.map"]
+    }
+  ],
+
+  "mac": {
+    "category": "public.app-category.developer-tools",
+    "icon": "build/icon.icns",
+    "darkModeSupport": true,
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64", "arm64"]
+      }
+    ]
+  },
+
+  "dmg": {
+    "icon": "build/icon.icns",
+    "iconSize": 128,
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
+    }
+  },
+
+  "win": {
+    "icon": "build/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ]
+  },
+
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": true,
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico",
+    "installerHeaderIcon": "build/icon.ico",
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Pullpal"
+  },
+
+  "linux": {
+    "icon": "build/icon.png",
+    "category": "Development",
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "tar.gz",
+        "arch": ["x64", "arm64"]
+      }
+    ],
+    "synopsis": "Fast GitHub PR Reviews",
+    "description": "A lightning-fast, local PR review dashboard with syntax highlighting."
+  },
+
+  "publish": {
+    "provider": "github",
+    "owner": "coder",
+    "repo": "pullpal",
+    "releaseType": "release"
+  }
+}

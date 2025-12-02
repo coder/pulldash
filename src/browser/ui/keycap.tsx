@@ -13,16 +13,17 @@ import { cn } from "../cn";
 // OS Detection
 // ============================================================================
 
-const isMac = typeof navigator !== "undefined" 
-  ? /Mac|iPod|iPhone|iPad/.test(navigator.platform)
-  : false;
+const isMac =
+  typeof navigator !== "undefined"
+    ? /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+    : false;
 
 // ============================================================================
 // Keycap Component
 // ============================================================================
 
 interface KeycapProps {
-  /** 
+  /**
    * The key to display. Special values:
    * - "cmd" or "meta" - Shows ⌘ on Mac, Ctrl on other systems
    * - "ctrl" - Always shows Ctrl
@@ -41,19 +42,19 @@ interface KeycapProps {
   size?: "xs" | "sm" | "md";
 }
 
-export const Keycap = memo(function Keycap({ 
-  keyName, 
+export const Keycap = memo(function Keycap({
+  keyName,
   className,
-  size = "sm" 
+  size = "sm",
 }: KeycapProps) {
   const content = getKeyContent(keyName);
-  
+
   const sizeClasses = {
     xs: "px-1 py-0.5 text-[9px] min-w-[18px]",
     sm: "px-1.5 py-0.5 text-[10px] min-w-[22px]",
     md: "px-2 py-1 text-xs min-w-[26px]",
   };
-  
+
   const iconSizes = {
     xs: "w-2.5 h-2.5",
     sm: "w-3 h-3",
@@ -88,7 +89,7 @@ export const Keycap = memo(function Keycap({
 
 function getKeyContent(keyName: string): string | { icon: typeof ArrowUp } {
   const key = keyName.toLowerCase();
-  
+
   switch (key) {
     // Modifier keys
     case "cmd":
@@ -103,7 +104,7 @@ function getKeyContent(keyName: string): string | { icon: typeof ArrowUp } {
     case "alt":
     case "option":
       return isMac ? "⌥" : "Alt";
-      
+
     // Special keys
     case "enter":
     case "return":
@@ -119,7 +120,7 @@ function getKeyContent(keyName: string): string | { icon: typeof ArrowUp } {
       return "⌫";
     case "delete":
       return "Del";
-      
+
     // Arrow keys - use Lucide icons
     case "up":
     case "arrowup":
@@ -137,7 +138,7 @@ function getKeyContent(keyName: string): string | { icon: typeof ArrowUp } {
     case "arrowright":
     case "→":
       return { icon: ArrowRight };
-      
+
     // Default: return as-is but uppercase single chars
     default:
       return keyName.length === 1 ? keyName.toUpperCase() : keyName;
@@ -170,7 +171,9 @@ export const KeycapGroup = memo(function KeycapGroup({
       {keys.map((key, index) => (
         <span key={index} className="inline-flex items-center">
           {index > 0 && separator === "+" && (
-            <span className="text-muted-foreground/50 text-[9px] mx-0.5">+</span>
+            <span className="text-muted-foreground/50 text-[9px] mx-0.5">
+              +
+            </span>
           )}
           <Keycap keyName={key} size={size} />
         </span>
@@ -184,4 +187,3 @@ export const KeycapGroup = memo(function KeycapGroup({
 // ============================================================================
 
 export { isMac };
-

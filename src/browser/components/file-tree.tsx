@@ -37,7 +37,11 @@ interface FileTreeProps {
   onToggleFileSelection: (filename: string, isShiftClick: boolean) => void;
   onToggleViewed: (filename: string) => void;
   onToggleViewedMultiple: (filenames: string[]) => void;
-  onMarkFolderViewed: (folderPath: string, filenames: string[], markAsViewed: boolean) => void;
+  onMarkFolderViewed: (
+    folderPath: string,
+    filenames: string[],
+    markAsViewed: boolean
+  ) => void;
   onCopyDiff: (filename: string) => void;
   onCopyFile: (filename: string) => void;
   onCopyMainVersion: (filename: string) => void;
@@ -175,7 +179,11 @@ function TreeNodeComponent({
   onToggleFileSelection: (filename: string, isShiftClick: boolean) => void;
   onToggleViewed: (filename: string) => void;
   onToggleViewedMultiple: (filenames: string[]) => void;
-  onMarkFolderViewed: (folderPath: string, filenames: string[], markAsViewed: boolean) => void;
+  onMarkFolderViewed: (
+    folderPath: string,
+    filenames: string[],
+    markAsViewed: boolean
+  ) => void;
   onCopyDiff: (filename: string) => void;
   onCopyFile: (filename: string) => void;
   onCopyMainVersion: (filename: string) => void;
@@ -186,8 +194,7 @@ function TreeNodeComponent({
   const isSelected = node.type === "file" && selectedFile === node.path;
   const isMultiSelected = node.type === "file" && selectedFiles.has(node.path);
   const isViewed = node.type === "file" && viewedFiles.has(node.path);
-  const commentCount =
-    node.type === "file" ? commentCounts[node.path] || 0 : 0;
+  const commentCount = node.type === "file" ? commentCounts[node.path] || 0 : 0;
   const pendingCount =
     node.type === "file" ? pendingCommentCounts[node.path] || 0 : 0;
 
@@ -229,7 +236,7 @@ function TreeNodeComponent({
   if (node.type === "folder") {
     // Calculate folder stats
     const filesInFolder = collectFilesInFolder(node);
-    const viewedCount = filesInFolder.filter(f => viewedFiles.has(f)).length;
+    const viewedCount = filesInFolder.filter((f) => viewedFiles.has(f)).length;
     const allViewed = viewedCount === filesInFolder.length;
 
     const handleFolderViewedToggle = () => {
@@ -306,7 +313,8 @@ function TreeNodeComponent({
   }
 
   // Check if this file is part of a multi-selection for context menu
-  const showMultiSelectMenu = selectedFiles.size > 1 && selectedFiles.has(node.path);
+  const showMultiSelectMenu =
+    selectedFiles.size > 1 && selectedFiles.has(node.path);
 
   return (
     <ContextMenu>

@@ -3,12 +3,13 @@ import { components } from "@octokit/openapi-types";
 // REST API types - re-exported from Octokit schemas
 export type PullRequest = components["schemas"]["pull-request"];
 export type PullRequestFile = components["schemas"]["diff-entry"];
-export type ReviewComment = components["schemas"]["pull-request-review-comment"] & {
-  // Thread resolution info (enriched from GraphQL)
-  pull_request_review_thread_id?: string;
-  is_resolved?: boolean;
-  resolved_by?: { login: string; avatar_url: string } | null;
-};
+export type ReviewComment =
+  components["schemas"]["pull-request-review-comment"] & {
+    // Thread resolution info (enriched from GraphQL)
+    pull_request_review_thread_id?: string;
+    is_resolved?: boolean;
+    resolved_by?: { login: string; avatar_url: string } | null;
+  };
 export type Review = components["schemas"]["pull-request-review"];
 export type CheckRun = components["schemas"]["check-run"];
 export type CombinedStatus = components["schemas"]["combined-commit-status"];
