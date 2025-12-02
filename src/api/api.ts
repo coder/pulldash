@@ -12,12 +12,30 @@ let cachedToken: string | null = null;
 function getGitHubToken(): string {
   if (cachedToken) return cachedToken;
   try {
-    cachedToken = execSync("gh auth token", { encoding: "utf-8" }).trim();
+    let token: string;
+
+    if (process.platform === "win32") {
+      // Windows: gh should be in PATH from installer
+      token = execSync("gh auth token", { encoding: "utf-8" }).trim();
+    } else {
+      // macOS/Linux: Use login shell to source user's profile for proper PATH
+      // This ensures gh is found even when app is launched from Finder/desktop
+      const shell = process.env.SHELL || "/bin/sh";
+      token = execSync(`${shell} -l -c "gh auth token"`, {
+        encoding: "utf-8",
+      }).trim();
+    }
+
+    cachedToken = token;
     return cachedToken;
   } catch (err) {
-    throw new Error("Failed to get GitHub token. Make sure gh CLI is authenticated: "+ (err as Error).message, {
-      cause: err,
-    });
+    throw new Error(
+      "Failed to get GitHub token. Make sure gh CLI is authenticated: " +
+        (err as Error).message,
+      {
+        cause: err,
+      }
+    );
   }
 }
 
@@ -186,9 +204,9 @@ const api = new Hono()
           isResolved: thread.isResolved,
           resolvedBy: thread.resolvedBy
             ? {
-              login: thread.resolvedBy.login,
-              avatar_url: thread.resolvedBy.avatarUrl,
-            }
+                login: thread.resolvedBy.login,
+                avatar_url: thread.resolvedBy.avatarUrl,
+              }
             : null,
         });
       }
