@@ -14,8 +14,7 @@ import type {
   PullRequestFile,
   ReviewComment,
   PendingReviewComment,
-  Review,
-} from "@/api/github";
+} from "@/api/types";
 
 // ============================================================================
 // Types
@@ -93,7 +92,10 @@ interface PRReviewState {
 
   // Line selection
   focusedLine: number | null;
+  focusedLineSide: 'old' | 'new' | null; // 'old' for delete lines, 'new' for insert/context
   selectionAnchor: number | null;
+  selectionAnchorSide: 'old' | 'new' | null;
+  focusedSkipBlockIndex: number | null; // Index of focused skip block for keyboard navigation
   commentingOnLine: CommentingOnLine | null;
   gotoLineMode: boolean;
   gotoLineInput: string;
@@ -128,7 +130,7 @@ class PRReviewStore {
   private listeners = new Set<Listener>();
   private storageKey: string;
 
-  constructor(initialState: Omit<PRReviewState, "viewedFiles" | "hideViewed" | "loadedDiffs" | "loadingFiles" | "expandedSkipBlocks" | "expandingSkipBlocks" | "selectedFile" | "selectedFiles" | "focusedLine" | "selectionAnchor" | "commentingOnLine" | "gotoLineMode" | "gotoLineInput" | "focusedCommentId" | "editingCommentId" | "replyingToCommentId" | "focusedPendingCommentId" | "editingPendingCommentId" | "pendingReviewId" | "pendingComments" | "reviewBody" | "showReviewPanel" | "submittingReview" | "currentUser">) {
+  constructor(initialState: Omit<PRReviewState, "viewedFiles" | "hideViewed" | "loadedDiffs" | "loadingFiles" | "expandedSkipBlocks" | "expandingSkipBlocks" | "selectedFile" | "selectedFiles" | "focusedLine" | "focusedLineSide" | "selectionAnchor" | "selectionAnchorSide" | "focusedSkipBlockIndex" | "commentingOnLine" | "gotoLineMode" | "gotoLineInput" | "focusedCommentId" | "editingCommentId" | "replyingToCommentId" | "focusedPendingCommentId" | "editingPendingCommentId" | "pendingReviewId" | "pendingComments" | "reviewBody" | "showReviewPanel" | "submittingReview" | "currentUser">) {
     this.storageKey = `pr-${initialState.owner}-${initialState.repo}-${initialState.pr.number}`;
     
     // Load viewed files from localStorage
@@ -170,7 +172,10 @@ class PRReviewStore {
       expandedSkipBlocks: {},
       expandingSkipBlocks: new Set(),
       focusedLine: null,
+      focusedLineSide: null,
       selectionAnchor: null,
+      selectionAnchorSide: null,
+      focusedSkipBlockIndex: null,
       commentingOnLine: null,
       gotoLineMode: false,
       gotoLineInput: "",
@@ -225,7 +230,9 @@ class PRReviewStore {
       selectedFiles: new Set(),
       // Reset line selection when changing files
       focusedLine: null,
+      focusedLineSide: null,
       selectionAnchor: null,
+      selectionAnchorSide: null,
       commentingOnLine: null,
       gotoLineMode: false,
       gotoLineInput: "",
@@ -457,31 +464,77 @@ class PRReviewStore {
   // Line Selection Actions
   // ---------------------------------------------------------------------------
 
-  setFocusedLine = (line: number | null) => {
-    this.set({ focusedLine: line });
+  setFocusedLine = (line: number | null, side: 'old' | 'new' | null = 'new') => {
+    this.set({ 
+      focusedLine: line, 
+      focusedLineSide: line !== null ? side : null,
+      focusedSkipBlockIndex: null, // Clear skip block focus when focusing a line
+    });
   };
 
-  setSelectionAnchor = (anchor: number | null) => {
-    this.set({ selectionAnchor: anchor });
+  setSelectionAnchor = (anchor: number | null, side: 'old' | 'new' | null = null) => {
+    this.set({ selectionAnchor: anchor, selectionAnchorSide: anchor !== null ? side : null });
   };
 
-  navigateLine = (direction: "up" | "down", withShift: boolean) => {
-    const { focusedLine, selectionAnchor, selectedFile, loadedDiffs, comments, pendingComments, focusedCommentId, focusedPendingCommentId } = this.state;
+  setFocusedSkipBlock = (index: number | null) => {
+    this.set({ 
+      focusedSkipBlockIndex: index,
+      focusedLine: null, // Clear line focus when focusing a skip block
+      focusedLineSide: null,
+      selectionAnchor: null,
+      selectionAnchorSide: null,
+    });
+  };
+
+  navigateLine = (direction: "up" | "down", withShift: boolean, jumpCount: number = 1) => {
+    const { focusedLine, focusedLineSide, selectionAnchor, selectionAnchorSide, selectedFile, loadedDiffs, expandedSkipBlocks, comments, pendingComments, focusedCommentId, focusedPendingCommentId, focusedSkipBlockIndex } = this.state;
     
     const diff = selectedFile ? loadedDiffs[selectedFile] : null;
     if (!diff?.hunks) return;
 
-    // Get commentable lines
-    const commentableLines: number[] = [];
+    // Build list of navigable items, including both lines and skip blocks
+    // Each entry is either a line or a skip block
+    type NavLine = { type: 'line'; lineNum: number; side: 'old' | 'new' };
+    type NavSkip = { type: 'skip'; skipIndex: number };
+    type NavItem = NavLine | NavSkip;
+    const navigableItems: NavItem[] = [];
+    let skipIndex = 0;
+    
     for (const hunk of diff.hunks) {
-      if (hunk.type === "hunk") {
+      if (hunk.type === "skip") {
+        const currentSkipIndex = skipIndex++;
+        // Check if this skip block is expanded
+        const key = `${selectedFile}:${currentSkipIndex}`;
+        const expandedLines = expandedSkipBlocks[key];
+        
+        if (expandedLines && expandedLines.length > 0) {
+          // Skip block is expanded - add its lines
+          for (const line of expandedLines) {
+            if (line.type === 'delete' && line.oldLineNumber) {
+              navigableItems.push({ type: 'line', lineNum: line.oldLineNumber, side: 'old' });
+            } else if (line.newLineNumber) {
+              navigableItems.push({ type: 'line', lineNum: line.newLineNumber, side: 'new' });
+            }
+          }
+        } else {
+          // Skip block is collapsed - add it as navigable
+          navigableItems.push({ type: 'skip', skipIndex: currentSkipIndex });
+        }
+      } else if (hunk.type === "hunk") {
         for (const line of hunk.lines) {
-          const lineNum = line.newLineNumber || line.oldLineNumber;
-          if (lineNum) commentableLines.push(lineNum);
+          if (line.type === 'delete' && line.oldLineNumber) {
+            navigableItems.push({ type: 'line', lineNum: line.oldLineNumber, side: 'old' });
+          } else if (line.newLineNumber) {
+            navigableItems.push({ type: 'line', lineNum: line.newLineNumber, side: 'new' });
+          }
         }
       }
     }
-    if (commentableLines.length === 0) return;
+    if (navigableItems.length === 0) return;
+    
+    // Build line-only list for backwards compatibility with comment lookups
+    const navigableLines = navigableItems.filter((n): n is NavLine => n.type === 'line');
+    const commentableLines = navigableLines.map(n => n.lineNum);
 
     // Helper to get all comments for a line (sorted for thread navigation)
     const getLineComments = (line: number) => {
@@ -502,6 +555,36 @@ class PRReviewStore {
         (c) => c.path === selectedFile && c.line === line
       );
     };
+
+    // Handle navigation when focused on a skip block
+    if (focusedSkipBlockIndex !== null) {
+      const currentIdx = navigableItems.findIndex(
+        (n) => n.type === 'skip' && n.skipIndex === focusedSkipBlockIndex
+      );
+      
+      if (currentIdx !== -1) {
+        let nextIdx: number;
+        if (direction === "down") {
+          nextIdx = Math.min(currentIdx + 1, navigableItems.length - 1);
+        } else {
+          nextIdx = Math.max(currentIdx - 1, 0);
+        }
+        
+        const nextItem = navigableItems[nextIdx];
+        if (nextItem.type === 'skip') {
+          this.set({ focusedSkipBlockIndex: nextItem.skipIndex });
+        } else {
+          this.set({
+            focusedLine: nextItem.lineNum,
+            focusedLineSide: nextItem.side,
+            focusedSkipBlockIndex: null,
+            selectionAnchor: null,
+            selectionAnchorSide: null,
+          });
+        }
+      }
+      return;
+    }
 
     // Handle navigation when focused on a pending comment
     if (focusedPendingCommentId) {
@@ -533,12 +616,14 @@ class PRReviewStore {
         // No regular comments, move to next line
         const lineIdx = commentableLines.indexOf(pendingLine);
         if (lineIdx < commentableLines.length - 1) {
-          const nextLine = commentableLines[lineIdx + 1];
+          const nextNav = navigableLines[lineIdx + 1];
           this.set({
-            focusedLine: nextLine,
+            focusedLine: nextNav.lineNum,
+            focusedLineSide: nextNav.side,
             focusedPendingCommentId: null,
             focusedCommentId: null,
             selectionAnchor: null,
+            selectionAnchorSide: null,
           });
         }
         return;
@@ -548,11 +633,13 @@ class PRReviewStore {
           this.set({ focusedPendingCommentId: linePending[pendingIdx - 1].id });
           return;
         }
-        // No more pending comments above, go back to line
+        // No more pending comments above, go back to line (default to 'new' side)
         this.set({
           focusedLine: pendingLine,
+          focusedLineSide: 'new',
           focusedPendingCommentId: null,
           selectionAnchor: null,
+          selectionAnchorSide: null,
         });
         return;
       }
@@ -580,11 +667,13 @@ class PRReviewStore {
         if (commentLine) {
           const lineIdx = commentableLines.indexOf(commentLine);
           if (lineIdx < commentableLines.length - 1) {
-            const nextLine = commentableLines[lineIdx + 1];
+            const nextNav = navigableLines[lineIdx + 1];
             this.set({
-              focusedLine: nextLine,
+              focusedLine: nextNav.lineNum,
+              focusedLineSide: nextNav.side,
               focusedCommentId: null,
               selectionAnchor: null,
+              selectionAnchorSide: null,
             });
           }
         }
@@ -605,11 +694,13 @@ class PRReviewStore {
             });
             return;
           }
-          // No pending comments, go back to line
+          // No pending comments, go back to line (default to 'new' side)
           this.set({
             focusedLine: commentLine,
+            focusedLineSide: 'new',
             focusedCommentId: null,
             selectionAnchor: null,
+            selectionAnchorSide: null,
           });
         }
         return;
@@ -641,27 +732,49 @@ class PRReviewStore {
       }
     }
 
-    // Normal line navigation
-    const currentIdx = focusedLine ? commentableLines.indexOf(focusedLine) : -1;
+    // Normal line/skip navigation - find current position in navigableItems
+    const currentIdx = focusedLine !== null 
+      ? navigableItems.findIndex(n => n.type === 'line' && n.lineNum === focusedLine && n.side === (focusedLineSide ?? 'new'))
+      : -1;
     
     let nextIdx: number;
     if (direction === "down") {
-      nextIdx = currentIdx === -1 ? 0 : Math.min(currentIdx + 1, commentableLines.length - 1);
+      nextIdx = currentIdx === -1 ? 0 : Math.min(currentIdx + jumpCount, navigableItems.length - 1);
     } else {
-      nextIdx = currentIdx === -1 ? commentableLines.length - 1 : Math.max(currentIdx - 1, 0);
+      nextIdx = currentIdx === -1 ? navigableItems.length - 1 : Math.max(currentIdx - jumpCount, 0);
     }
 
-    const nextLine = commentableLines[nextIdx];
+    const nextItem = navigableItems[nextIdx];
+    
+    // If next item is a skip block, focus it
+    if (nextItem.type === 'skip') {
+      this.set({
+        focusedSkipBlockIndex: nextItem.skipIndex,
+        focusedLine: null,
+        focusedLineSide: null,
+        selectionAnchor: null,
+        selectionAnchorSide: null,
+        focusedCommentId: null,
+        focusedPendingCommentId: null,
+      });
+      return;
+    }
+
+    const nextLine = nextItem.lineNum;
+    const nextSide = nextItem.side;
 
     // Handle up navigation - check if the target line has comments to enter (from the bottom)
-    if (direction === "up" && focusedLine && nextLine !== focusedLine) {
+    if (direction === "up" && focusedLine && (nextLine !== focusedLine || nextSide !== focusedLineSide)) {
       // First check regular comments on target line (enter from the bottom/last comment)
       const targetLineComments = getLineComments(nextLine);
       if (targetLineComments.length > 0) {
         this.set({
           focusedCommentId: targetLineComments[targetLineComments.length - 1].id,
           focusedLine: null,
+          focusedLineSide: null,
+          focusedSkipBlockIndex: null,
           selectionAnchor: null,
+          selectionAnchorSide: null,
         });
         return;
       }
@@ -672,7 +785,10 @@ class PRReviewStore {
         this.set({
           focusedPendingCommentId: targetLinePending[targetLinePending.length - 1].id,
           focusedLine: null,
+          focusedLineSide: null,
+          focusedSkipBlockIndex: null,
           selectionAnchor: null,
+          selectionAnchorSide: null,
         });
         return;
       }
@@ -681,14 +797,20 @@ class PRReviewStore {
     if (withShift) {
       this.set({
         focusedLine: nextLine,
+        focusedLineSide: nextSide,
         selectionAnchor: selectionAnchor ?? focusedLine ?? nextLine,
+        selectionAnchorSide: selectionAnchorSide ?? focusedLineSide ?? nextSide,
+        focusedSkipBlockIndex: null,
         focusedCommentId: null,
         focusedPendingCommentId: null,
       });
     } else {
       this.set({
         focusedLine: nextLine,
+        focusedLineSide: nextSide,
         selectionAnchor: null,
+        selectionAnchorSide: null,
+        focusedSkipBlockIndex: null,
         focusedCommentId: null,
         focusedPendingCommentId: null,
       });
@@ -752,26 +874,32 @@ class PRReviewStore {
       return;
     }
 
-    // Get commentable lines and find closest
-    const commentableLines: number[] = [];
+    // Build navigable lines with side info and find closest
+    type NavLine = { lineNum: number; side: 'old' | 'new' };
+    const navigableLines: NavLine[] = [];
     for (const hunk of diff.hunks) {
       if (hunk.type === "hunk") {
         for (const line of hunk.lines) {
-          const lineNum = line.newLineNumber || line.oldLineNumber;
-          if (lineNum) commentableLines.push(lineNum);
+          if (line.type === 'delete' && line.oldLineNumber) {
+            navigableLines.push({ lineNum: line.oldLineNumber, side: 'old' });
+          } else if (line.newLineNumber) {
+            navigableLines.push({ lineNum: line.newLineNumber, side: 'new' });
+          }
         }
       }
     }
 
-    if (commentableLines.length > 0) {
-      const closestLine = commentableLines.reduce((closest, line) =>
-        Math.abs(line - targetLine) < Math.abs(closest - targetLine)
-          ? line
-          : closest
+    if (navigableLines.length > 0) {
+      const closest = navigableLines.reduce((best, current) =>
+        Math.abs(current.lineNum - targetLine) < Math.abs(best.lineNum - targetLine)
+          ? current
+          : best
       );
       this.set({
-        focusedLine: closestLine,
+        focusedLine: closest.lineNum,
+        focusedLineSide: closest.side,
         selectionAnchor: null,
+        selectionAnchorSide: null,
         gotoLineMode: false,
         gotoLineInput: "",
       });
@@ -783,7 +911,10 @@ class PRReviewStore {
   clearLineSelection = () => {
     this.set({
       focusedLine: null,
+      focusedLineSide: null,
       selectionAnchor: null,
+      selectionAnchorSide: null,
+      focusedSkipBlockIndex: null,
       commentingOnLine: null,
       gotoLineMode: false,
       gotoLineInput: "",
@@ -849,16 +980,28 @@ class PRReviewStore {
       pendingComments,
       commentingOnLine: null,
       focusedLine: null,
+      focusedLineSide: null,
       selectionAnchor: null,
+      selectionAnchorSide: null,
       focusedPendingCommentId: comment.id,
       focusedCommentId: null,
     });
   };
 
   removePendingComment = (id: string) => {
+    // Find the comment to get its line before deleting
+    const comment = this.state.pendingComments.find((c) => c.id === id);
+    const commentLine = comment?.line;
+    
     const pendingComments = this.state.pendingComments.filter((c) => c.id !== id);
     this.persistPendingComments(pendingComments);
-    this.set({ pendingComments });
+    this.set({ 
+      pendingComments,
+      focusedPendingCommentId: null,
+      // Focus the line the comment was on so user can continue with keyboard
+      focusedLine: commentLine ?? null,
+      focusedLineSide: commentLine ? 'new' : null,
+    });
   };
 
   updatePendingCommentWithGitHubIds = (
@@ -896,9 +1039,16 @@ class PRReviewStore {
   };
 
   deleteComment = (commentId: number) => {
+    // Find the comment to get its line before deleting
+    const comment = this.state.comments.find((c) => c.id === commentId);
+    const commentLine = comment?.line ?? comment?.original_line;
+    
     this.set({
       comments: this.state.comments.filter((c) => c.id !== commentId),
       focusedCommentId: null,
+      // Focus the line the comment was on so user can continue with keyboard
+      focusedLine: commentLine ?? null,
+      focusedLineSide: commentLine ? 'new' : null,
     });
   };
 
@@ -962,7 +1112,9 @@ class PRReviewStore {
     } else {
       this.set({
         focusedLine: null,
+        focusedLineSide: null,
         selectionAnchor: null,
+        selectionAnchorSide: null,
         selectedFiles: new Set(),
       });
     }
@@ -1047,7 +1199,7 @@ class PRReviewStore {
       return true;
     }
     
-    // Handle line focus
+    // Handle line focus (default to 'new' side since we don't know the diff structure yet)
     if (lineParam) {
       const rangeMatch = lineParam.match(/^(\d+)-(\d+)$/);
       if (rangeMatch) {
@@ -1055,14 +1207,24 @@ class PRReviewStore {
         const end = parseInt(rangeMatch[2], 10);
         this.set({
           focusedLine: end,
+          focusedLineSide: 'new',
           selectionAnchor: start,
+          selectionAnchorSide: 'new',
+          focusedSkipBlockIndex: null,
+          focusedCommentId: null,
+          focusedPendingCommentId: null,
         });
       } else {
         const line = parseInt(lineParam, 10);
         if (!isNaN(line)) {
           this.set({
             focusedLine: line,
+            focusedLineSide: 'new',
             selectionAnchor: null,
+            selectionAnchorSide: null,
+            focusedSkipBlockIndex: null,
+            focusedCommentId: null,
+            focusedPendingCommentId: null,
           });
         }
       }
@@ -1265,41 +1427,55 @@ export function useSelectionRange(): { start: number; end: number } | null {
 // ============================================================================
 
 /** Check if a specific line is focused (for DiffLine component) */
-export function useIsLineFocused(lineNumber: number): boolean {
-  return usePRReviewSelector((s) => s.focusedLine === lineNumber);
+export function useIsLineFocused(lineNumber: number, side: 'old' | 'new'): boolean {
+  return usePRReviewSelector((s) => s.focusedLine === lineNumber && s.focusedLineSide === side);
 }
 
 /** Check if a specific line is in the selection range */
-export function useIsLineInSelection(lineNumber: number): boolean {
+export function useIsLineInSelection(lineNumber: number, side: 'old' | 'new'): boolean {
   return usePRReviewSelector((s) => {
-    if (!s.focusedLine) return false;
+    if (!s.focusedLine || !s.focusedLineSide) return false;
+    // Must match side
+    if (s.focusedLineSide !== side) return false;
     if (!s.selectionAnchor) return s.focusedLine === lineNumber;
+    // For selection ranges, we currently only support same-side selection
+    if (s.selectionAnchorSide !== side) return s.focusedLine === lineNumber && s.focusedLineSide === side;
     const start = Math.min(s.focusedLine, s.selectionAnchor);
     const end = Math.max(s.focusedLine, s.selectionAnchor);
     return lineNumber >= start && lineNumber <= end;
   });
 }
 
-/** Get selection boundary info for a specific line (for drawing selection outline) */
-export function useSelectionBoundary(lineNumber: number): { isFirst: boolean; isLast: boolean; isInSelection: boolean } {
-  const focusedLine = usePRReviewSelector((s) => s.focusedLine);
-  const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
+/** 
+ * Get selection boundary info for a specific line (for drawing selection outline).
+ * Uses a single selector that returns primitives to avoid re-renders of unaffected lines.
+ */
+export function useSelectionBoundary(lineNumber: number, side: 'old' | 'new'): { isFirst: boolean; isLast: boolean; isInSelection: boolean } {
+  // Use separate selectors that return booleans - only re-renders when THIS line's state changes
+  const isInSelection = usePRReviewSelector((s) => {
+    if (!s.focusedLine || !s.focusedLineSide) return false;
+    if (s.focusedLineSide !== side) return false;
+    if (!s.selectionAnchor || s.selectionAnchorSide !== side) return s.focusedLine === lineNumber;
+    const start = Math.min(s.focusedLine, s.selectionAnchor);
+    const end = Math.max(s.focusedLine, s.selectionAnchor);
+    return lineNumber >= start && lineNumber <= end;
+  });
   
-  return useMemo(() => {
-    if (!focusedLine) return { isFirst: false, isLast: false, isInSelection: false };
-    if (!selectionAnchor) {
-      const isSelected = focusedLine === lineNumber;
-      return { isFirst: isSelected, isLast: isSelected, isInSelection: isSelected };
-    }
-    const start = Math.min(focusedLine, selectionAnchor);
-    const end = Math.max(focusedLine, selectionAnchor);
-    const isInSelection = lineNumber >= start && lineNumber <= end;
-    return {
-      isFirst: lineNumber === start,
-      isLast: lineNumber === end,
-      isInSelection,
-    };
-  }, [focusedLine, selectionAnchor, lineNumber]);
+  const isFirst = usePRReviewSelector((s) => {
+    if (!s.focusedLine || !s.focusedLineSide) return false;
+    if (s.focusedLineSide !== side) return false;
+    if (!s.selectionAnchor || s.selectionAnchorSide !== side) return s.focusedLine === lineNumber;
+    return lineNumber === Math.min(s.focusedLine, s.selectionAnchor);
+  });
+  
+  const isLast = usePRReviewSelector((s) => {
+    if (!s.focusedLine || !s.focusedLineSide) return false;
+    if (s.focusedLineSide !== side) return false;
+    if (!s.selectionAnchor || s.selectionAnchorSide !== side) return s.focusedLine === lineNumber;
+    return lineNumber === Math.max(s.focusedLine, s.selectionAnchor);
+  });
+  
+  return { isFirst, isLast, isInSelection };
 }
 
 /** Check if a specific line is being commented on */
@@ -1319,17 +1495,12 @@ export function useIsLineInCommentingRange(lineNumber: number): boolean {
 
 /** Check if a specific line is within a comment's range (for multi-line comments) */
 export function useIsLineInCommentRange(lineNumber: number): boolean {
-  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
-  const comments = usePRReviewSelector((s) => s.comments);
-  const pendingComments = usePRReviewSelector((s) => s.pendingComments);
-  
-  // This is O(n) but the selector will only re-run when comments change,
-  // and useSyncExternalStore will prevent re-renders if the result doesn't change
-  return useMemo(() => {
-    if (!selectedFile) return false;
+  // Compute inside selector so we return a boolean primitive - only re-renders when result changes
+  return usePRReviewSelector((s) => {
+    if (!s.selectedFile) return false;
     
-    for (const comment of comments) {
-      if (comment.path !== selectedFile) continue;
+    for (const comment of s.comments) {
+      if (comment.path !== s.selectedFile) continue;
       if (
         comment.start_line &&
         comment.line &&
@@ -1340,8 +1511,8 @@ export function useIsLineInCommentRange(lineNumber: number): boolean {
       }
     }
     
-    for (const comment of pendingComments) {
-      if (comment.path !== selectedFile) continue;
+    for (const comment of s.pendingComments) {
+      if (comment.path !== s.selectedFile) continue;
       if (
         comment.start_line &&
         lineNumber >= comment.start_line &&
@@ -1352,7 +1523,7 @@ export function useIsLineInCommentRange(lineNumber: number): boolean {
     }
     
     return false;
-  }, [selectedFile, comments, pendingComments, lineNumber]);
+  });
 }
 
 // ============================================================================
@@ -1364,17 +1535,25 @@ export function useKeyboardNavigation() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Allow Ctrl/Cmd shortcuts to pass through (refresh, etc)
-      if (e.ctrlKey || e.metaKey) {
-        return;
-      }
-
       const target = e.target as HTMLElement;
       if (
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.isContentEditable
       ) {
+        return;
+      }
+
+      // Handle Ctrl/Cmd+Arrow for jumping by 10 lines
+      if ((e.ctrlKey || e.metaKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const jumpCount = 10;
+        store.navigateLine(e.key === "ArrowDown" ? "down" : "up", e.shiftKey, jumpCount);
+        return;
+      }
+
+      // Allow other Ctrl/Cmd shortcuts to pass through (refresh, etc)
+      if (e.ctrlKey || e.metaKey) {
         return;
       }
 
@@ -1405,15 +1584,26 @@ export function useKeyboardNavigation() {
         return;
       }
 
+      // Enter to expand focused skip block
+      if (e.key === "Enter" && state.focusedSkipBlockIndex !== null) {
+        e.preventDefault();
+        // Dispatch event to expand the skip block (handled by DiffViewer)
+        const event = new CustomEvent("pr-review:expand-skip-block", {
+          detail: { skipIndex: state.focusedSkipBlockIndex },
+        });
+        window.dispatchEvent(event);
+        return;
+      }
+
       // Arrow navigation
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        store.navigateLine("down", e.shiftKey);
+        store.navigateLine("down", e.shiftKey, 1);
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        store.navigateLine("up", e.shiftKey);
+        store.navigateLine("up", e.shiftKey, 1);
         return;
       }
 
@@ -1591,7 +1781,7 @@ const MAX_CACHE_SIZE = 100;
 
 // Check if a diff is already cached (sync check)
 function getDiffFromCache(file: PullRequestFile): ParsedDiff | null {
-  if (!file.patch) {
+  if (!file.patch || !file.sha) {
     return { hunks: [] };
   }
   return diffCache.get(file.sha) ?? null;
@@ -1615,7 +1805,7 @@ function abortPendingFetch(cacheKey: string) {
 }
 
 async function fetchParsedDiff(file: PullRequestFile, signal?: AbortSignal): Promise<ParsedDiff> {
-  if (!file.patch) {
+  if (!file.patch || !file.sha) {
     return { hunks: [] };
   }
 
@@ -2221,6 +2411,15 @@ export function useSkipBlockExpansion() {
       
       const expandedLines: DiffLine[] = await highlightResponse.json();
       store.setExpandedSkipBlock(key, expandedLines);
+      
+      // Focus the first expanded line so user can continue with keyboard
+      if (expandedLines.length > 0) {
+        const firstLine = expandedLines[0];
+        const firstLineNum = firstLine.newLineNumber || firstLine.oldLineNumber;
+        if (firstLineNum) {
+          store.setFocusedLine(firstLineNum, 'new');
+        }
+      }
     } catch (error) {
       console.error("Failed to expand skip block:", error);
     } finally {

@@ -27,7 +27,7 @@ import type {
   CheckRun,
   CombinedStatus,
   IssueComment,
-} from "@/api/github";
+} from "@/api/types";
 
 // ============================================================================
 // Markdown Content Component
@@ -508,6 +508,8 @@ function ReviewItem({ review }: { review: Review }) {
     }
   };
 
+  if (!review.user) return null;
+
   return (
     <div className="flex items-start gap-3 p-3 bg-card border border-border rounded-lg">
       <img
@@ -553,14 +555,16 @@ function CheckRunItem({ check }: { check: CheckRun }) {
     <div className="flex items-center gap-3 px-4 py-3">
       {getIcon()}
       <span className="flex-1 text-sm">{check.name}</span>
-      <a
-        href={check.html_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <ExternalLink className="w-4 h-4" />
-      </a>
+      {check.html_url && (
+        <a
+          href={check.html_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ExternalLink className="w-4 h-4" />
+        </a>
+      )}
     </div>
   );
 }
@@ -620,6 +624,8 @@ function MergeStatusIcon({ pr, checkStatus }: { pr: PullRequest; checkStatus: "s
 }
 
 function ConversationComment({ comment }: { comment: IssueComment }) {
+  if (!comment.user) return null;
+
   return (
     <div className="flex items-start gap-3 p-4 bg-card border border-border rounded-lg">
       <img
@@ -634,9 +640,11 @@ function ConversationComment({ comment }: { comment: IssueComment }) {
             {new Date(comment.created_at).toLocaleDateString()}
           </span>
         </div>
-        <div className="mt-2 text-sm text-foreground/90">
-          <MarkdownContent content={comment.body} />
-        </div>
+        {comment.body && (
+          <div className="mt-2 text-sm text-foreground/90">
+            <MarkdownContent content={comment.body} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -664,12 +672,14 @@ function getLatestReviewsByUser(reviews: Review[]): Review[] {
   const byUser = new Map<string, Review>();
   
   // Sort by date ascending so latest overwrites earlier
-  const sorted = [...reviews].sort(
-    (a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime()
-  );
+  const sorted = [...reviews]
+    .filter((r) => r.submitted_at && r.user)
+    .sort(
+      (a, b) => new Date(a.submitted_at!).getTime() - new Date(b.submitted_at!).getTime()
+    );
   
   for (const review of sorted) {
-    if (review.state !== "COMMENTED" && review.state !== "PENDING") {
+    if (review.state !== "COMMENTED" && review.state !== "PENDING" && review.user) {
       byUser.set(review.user.login, review);
     }
   }

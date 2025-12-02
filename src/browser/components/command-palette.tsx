@@ -16,7 +16,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
 import { Keycap, KeycapGroup } from "../ui/keycap";
-import type { PullRequestFile } from "@/api/github";
+import type { PullRequestFile } from "@/api/types";
 
 // ============================================================================
 // Search Context (avoids prop drilling that causes re-renders)

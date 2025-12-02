@@ -38,7 +38,7 @@ import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
 import { FileTree } from "./file-tree";
 import { FileHeader } from "./file-header";
-import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/github";
+import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
   PRReviewProvider,
   usePRReviewSelector,
@@ -509,13 +509,14 @@ const KeybindsBar = memo(function KeybindsBar() {
   const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
   const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
   const focusedPendingCommentId = usePRReviewSelector((s) => s.focusedPendingCommentId);
+  const focusedSkipBlockIndex = usePRReviewSelector((s) => s.focusedSkipBlockIndex);
   const commentingOnLine = usePRReviewSelector((s) => s.commentingOnLine);
   const pendingCommentsCount = usePRReviewSelector(
     (s) => s.pendingComments.length
   );
 
   const showEscape =
-    gotoLineMode || focusedLine || focusedCommentId || focusedPendingCommentId || commentingOnLine;
+    gotoLineMode || focusedLine || focusedCommentId || focusedPendingCommentId || focusedSkipBlockIndex !== null || commentingOnLine;
 
   return (
     <div
@@ -524,10 +525,12 @@ const KeybindsBar = memo(function KeybindsBar() {
                 gotoLineMode && "bg-blue-500/10",
                 (focusedCommentId || focusedPendingCommentId) && "bg-yellow-500/10",
                 commentingOnLine && "bg-green-500/10",
+                focusedSkipBlockIndex !== null && "bg-blue-500/10",
         !gotoLineMode &&
           !focusedCommentId &&
           !focusedPendingCommentId &&
           !commentingOnLine &&
+          focusedSkipBlockIndex === null &&
           "bg-muted/30"
       )}
     >
@@ -590,6 +593,18 @@ const KeybindsBar = memo(function KeybindsBar() {
                         </span>
                         <span className="flex items-center gap-1.5 text-muted-foreground">
                           <Keycap keyName="up" size="xs" /> back to line
+                        </span>
+                      </>
+                    ) : focusedSkipBlockIndex !== null ? (
+                      <>
+                        <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+                          EXPAND
+                        </span>
+                        <span className="flex items-center gap-1.5 text-muted-foreground">
+                          <Keycap keyName="Enter" size="xs" /> expand hidden lines
+                        </span>
+                        <span className="flex items-center gap-1.5 text-muted-foreground">
+                          <KeycapGroup keys={["up", "down"]} size="xs" /> navigate
                         </span>
                       </>
                     ) : focusedLine ? (
@@ -695,10 +710,10 @@ const MarkdownContent = memo(function MarkdownContent({ content }: { content: st
 interface LineDragContextValue {
   isDragging: boolean;
   dragAnchor: number | null;
-  onDragStart: (lineNum: number) => void;
-  onDragEnter: (lineNum: number) => void;
+  onDragStart: (lineNum: number, side: 'old' | 'new') => void;
+  onDragEnter: (lineNum: number, side: 'old' | 'new') => void;
   onDragEnd: () => void;
-  onClickFallback: (lineNum: number) => void;
+  onClickFallback: (lineNum: number, side: 'old' | 'new') => void;
 }
 
 const LineDragContext = React.createContext<LineDragContextValue | null>(null);
@@ -756,6 +771,7 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   // Use refs for drag state to avoid stale closure issues in handlers
   const isDraggingRef = useRef(false);
   const dragAnchorRef = useRef<number | null>(null);
+  const dragSideRef = useRef<'old' | 'new' | null>(null);
   const handledByMouseEventsRef = useRef(false);
   const [isDraggingState, setIsDraggingState] = useState(false);
 
@@ -900,6 +916,17 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     return rows;
   }, [hunks, skipBlockStartLines, commentingOnLine, pendingCommentsByLine, threadsByLine, getExpandedLines]);
 
+  // Create O(1) lookup map for line numbers -> row indices
+  const lineNumToRowIndex = useMemo(() => {
+    const map = new Map<number, number>();
+    virtualRows.forEach((row, index) => {
+      if (row.type === "line" && row.lineNum) {
+        map.set(row.lineNum, index);
+      }
+    });
+    return map;
+  }, [virtualRows]);
+
   // Estimate row heights for the virtualizer
   const estimateSize = useCallback((index: number) => {
     const row = virtualRows[index];
@@ -920,20 +947,22 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     count: virtualRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize,
-    overscan: 20, // Render 20 extra rows above/below viewport
+    overscan: 50, // Render 50 extra rows above/below viewport to prevent scroll jitter
   });
 
-  const onDragStart = useCallback((lineNum: number) => {
+  const onDragStart = useCallback((lineNum: number, side: 'old' | 'new') => {
     isDraggingRef.current = true;
     dragAnchorRef.current = lineNum;
-    store.setFocusedLine(lineNum);
-    store.setSelectionAnchor(lineNum);
+    dragSideRef.current = side;
+    store.setFocusedLine(lineNum, side);
+    store.setSelectionAnchor(lineNum, side);
     setIsDraggingState(true);
   }, [store]);
 
-  const onDragEnter = useCallback((lineNum: number) => {
-    if (isDraggingRef.current && dragAnchorRef.current !== null) {
-      store.setFocusedLine(lineNum);
+  const onDragEnter = useCallback((lineNum: number, side: 'old' | 'new') => {
+    if (isDraggingRef.current && dragAnchorRef.current !== null && dragSideRef.current === side) {
+      // Only extend selection within the same side (old or new)
+      store.setFocusedLine(lineNum, side);
     }
   }, [store]);
 
@@ -956,10 +985,11 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     }
     isDraggingRef.current = false;
     dragAnchorRef.current = null;
+    dragSideRef.current = null;
     setIsDraggingState(false);
   }, [store]);
 
-  const onClickFallback = useCallback((lineNum: number) => {
+  const onClickFallback = useCallback((lineNum: number, side: 'old' | 'new') => {
     if (handledByMouseEventsRef.current) {
       handledByMouseEventsRef.current = false;
       return;
@@ -977,12 +1007,40 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     return () => document.removeEventListener("mouseup", handleMouseUp);
   }, [onDragEnd]);
 
+  // Handle keyboard event to expand focused skip block
+  useEffect(() => {
+    const handleExpandSkipBlock = (e: CustomEvent<{ skipIndex: number }>) => {
+      const { skipIndex } = e.detail;
+      const startLine = skipBlockStartLines[skipIndex] ?? 1;
+      // Find the skip block to get its count
+      let count = 0;
+      let currentSkipIndex = 0;
+      for (const hunk of hunks) {
+        if (hunk.type === "skip") {
+          if (currentSkipIndex === skipIndex) {
+            count = hunk.count;
+            break;
+          }
+          currentSkipIndex++;
+        }
+      }
+      if (count > 0) {
+        expandSkipBlock(skipIndex, startLine, count);
+      }
+    };
+    
+    window.addEventListener("pr-review:expand-skip-block", handleExpandSkipBlock as EventListener);
+    return () => window.removeEventListener("pr-review:expand-skip-block", handleExpandSkipBlock as EventListener);
+  }, [hunks, skipBlockStartLines, expandSkipBlock]);
+
   // Handle mousemove during drag to extend selection even when not directly over line gutters
   useEffect(() => {
     if (!isDraggingState) return;
     
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isDraggingRef.current || !parentRef.current) return;
+      if (!isDraggingRef.current || !parentRef.current || !dragSideRef.current) return;
+      
+      const dragSide = dragSideRef.current;
       
       // Find the line element under the mouse by checking all rendered line elements
       const elements = parentRef.current.querySelectorAll('[data-line-gutter]');
@@ -995,21 +1053,25 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
         const distance = Math.abs(e.clientY - centerY);
         
         if (distance < closestDistance) {
-          closestDistance = distance;
-          // Get line number from the parent row's data
+          // Get line number and side from the parent row's data
           const row = el.closest('[data-index]');
           if (row) {
             const index = parseInt(row.getAttribute('data-index') || '-1', 10);
             const virtualRow = virtualRows[index];
             if (virtualRow?.type === 'line' && virtualRow.lineNum) {
-              closestLine = virtualRow.lineNum;
+              // Only consider lines on the same side as the drag
+              const rowSide = virtualRow.line.type === 'delete' ? 'old' : 'new';
+              if (rowSide === dragSide) {
+                closestDistance = distance;
+                closestLine = virtualRow.lineNum;
+              }
             }
           }
         }
       }
       
       if (closestLine !== null) {
-        store.setFocusedLine(closestLine);
+        store.setFocusedLine(closestLine, dragSide);
       }
     };
     
@@ -1026,18 +1088,17 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     onClickFallback,
   }), [isDraggingState, onDragStart, onDragEnter, onDragEnd, onClickFallback]);
 
-  // Scroll to focused line
+  // Scroll to focused line (O(1) lookup instead of O(n) findIndex)
+  // Include virtualRows.length in deps to re-run when diff loads
   const focusedLine = usePRReviewSelector((s) => s.focusedLine);
   useEffect(() => {
     if (focusedLine && !isDraggingState) {
-      const rowIndex = virtualRows.findIndex(
-        (r) => r.type === "line" && r.lineNum === focusedLine
-      );
-      if (rowIndex !== -1) {
+      const rowIndex = lineNumToRowIndex.get(focusedLine);
+      if (rowIndex !== undefined) {
         virtualizer.scrollToIndex(rowIndex, { align: "center", behavior: "auto" });
       }
     }
-  }, [focusedLine, isDraggingState, virtualRows, virtualizer]);
+  }, [focusedLine, isDraggingState, lineNumToRowIndex, virtualizer, virtualRows.length]);
 
   return (
     <LineDragContext.Provider value={dragValue}>
@@ -1087,6 +1148,7 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({ row }: { row: Virt
   const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
   const focusedPendingCommentId = usePRReviewSelector((s) => s.focusedPendingCommentId);
   const editingPendingCommentId = usePRReviewSelector((s) => s.editingPendingCommentId);
+  const focusedSkipBlockIndex = usePRReviewSelector((s) => s.focusedSkipBlockIndex);
   const { expandSkipBlock, isExpanding } = useSkipBlockExpansion();
 
   switch (row.type) {
@@ -1096,6 +1158,7 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({ row }: { row: Virt
       return (
         <SkipBlockRow 
           hunk={row.hunk} 
+          isFocused={focusedSkipBlockIndex === row.skipIndex}
           isExpanding={isExpanding(row.skipIndex)}
           onExpand={() => expandSkipBlock(row.skipIndex, row.startLine, row.hunk.count)} 
         />
@@ -1140,10 +1203,14 @@ const DiffLineRow = memo(function DiffLineRow({
   line,
   lineNum,
 }: DiffLineRowProps) {
+  const store = usePRReviewStore();
   const { onDragStart, onDragEnter, onDragEnd, onClickFallback } = useLineDrag();
 
+  // Determine which side this line is on: 'old' for deletes, 'new' for insert/context
+  const lineSide: 'old' | 'new' = line.type === 'delete' ? 'old' : 'new';
+
   // Fine-grained subscriptions - only re-render when THIS line's state changes
-  const { isFirst, isLast, isInSelection } = useSelectionBoundary(lineNum ?? -1);
+  const { isFirst, isLast, isInSelection } = useSelectionBoundary(lineNum ?? -1, lineSide);
   const isInCommentingRange = useIsLineInCommentingRange(lineNum ?? -1);
 
   // Check if this line has comment range highlighting using optimized selector
@@ -1151,15 +1218,13 @@ const DiffLineRow = memo(function DiffLineRow({
 
   const Tag =
     line.type === "insert" ? "ins" : line.type === "delete" ? "del" : "span";
-  const displayLineNum =
-    line.type === "delete" ? line.oldLineNumber : line.newLineNumber;
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (lineNum) {
       e.preventDefault();
-      onDragStart(lineNum);
+      onDragStart(lineNum, lineSide);
     }
-  }, [lineNum, onDragStart]);
+  }, [lineNum, lineSide, onDragStart]);
 
   const handleMouseUp = useCallback(() => {
     onDragEnd();
@@ -1167,41 +1232,70 @@ const DiffLineRow = memo(function DiffLineRow({
 
   const handleMouseEnter = useCallback(() => {
     if (lineNum) {
-      onDragEnter(lineNum);
+      onDragEnter(lineNum, lineSide);
     }
-  }, [lineNum, onDragEnter]);
+  }, [lineNum, lineSide, onDragEnter]);
 
   const handleClick = useCallback(() => {
     if (lineNum) {
-      onClickFallback(lineNum);
+      onClickFallback(lineNum, lineSide);
     }
-  }, [lineNum, onClickFallback]);
+  }, [lineNum, lineSide, onClickFallback]);
 
-  // Build selection shadow - use inset box-shadow to avoid layout shift
-  const getSelectionShadow = () => {
-    if (!isInSelection) return undefined;
+  // Click on code content to focus line (but not if user is selecting text)
+  const handleContentClick = useCallback(() => {
+    if (!lineNum) return;
     
-    // Build shadow parts: left, right, top (if first), bottom (if last)
-    const shadows = [
-      "inset 2px 0 0 rgb(59,130,246)",   // left
-      "inset -2px 0 0 rgb(59,130,246)",  // right
-    ];
-    if (isFirst) shadows.push("inset 0 2px 0 rgb(59,130,246)");  // top
-    if (isLast) shadows.push("inset 0 -2px 0 rgb(59,130,246)");  // bottom
+    // Check if user has made a text selection
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) {
+      return; // Don't focus if user is selecting text
+    }
     
-    return shadows.join(", ");
+    store.setFocusedLine(lineNum, lineSide);
+  }, [lineNum, lineSide, store]);
+
+  // Get combined styles - background with gap fix + selection border shadow
+  const getStyles = () => {
+    let bgColor: string | undefined;
+    
+    if (isInSelection || isInCommentingRange) {
+      bgColor = "#19273e"; // opaque blue
+    } else if (line.type === "insert") {
+      bgColor = "#122218"; // opaque green
+    } else if (line.type === "delete") {
+      bgColor = "#261710"; // opaque orange
+    } else if (hasCommentRange) {
+      bgColor = "#1b1810"; // opaque yellow
+    }
+    
+    const styles: React.CSSProperties = {};
+    
+    if (bgColor) {
+      // Use linear-gradient that extends 2px past the bottom to fill gaps
+      styles.background = `linear-gradient(${bgColor}, ${bgColor})`;
+      styles.backgroundSize = "100% calc(100% + 2px)";
+      styles.backgroundRepeat = "no-repeat";
+    }
+    
+    // Add selection border shadow
+    if (isInSelection) {
+      const shadows: string[] = [
+        "inset 2px 0 0 rgb(59,130,246)",   // left
+        "inset -2px 0 0 rgb(59,130,246)",  // right
+      ];
+      if (isFirst) shadows.push("inset 0 2px 0 rgb(59,130,246)");  // top
+      if (isLast) shadows.push("inset 0 -2px 0 rgb(59,130,246)");  // bottom
+      styles.boxShadow = shadows.join(", ");
+    }
+    
+    return styles;
   };
 
   return (
     <div
-      className={cn(
-        "flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout",
-        line.type === "insert" && "bg-[var(--code-added)]/10",
-        line.type === "delete" && "bg-[var(--code-removed)]/10",
-        hasCommentRange && "bg-yellow-500/5",
-        (isInSelection || isInCommentingRange) && "!bg-blue-500/20"
-      )}
-      style={{ boxShadow: getSelectionShadow() }}
+      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout"
+      style={getStyles()}
     >
       {/* Left border indicator */}
       <div
@@ -1211,19 +1305,39 @@ const DiffLineRow = memo(function DiffLineRow({
           line.type === "delete" && "!border-[var(--code-removed)]/80"
         )}
       />
-      {/* Line number gutter - clicking here starts selection */}
+      {/* Old line number (shown for delete and normal lines) */}
       <div
         data-line-gutter
-        className="w-12 shrink-0 tabular-nums text-center opacity-50 px-2 text-xs select-none cursor-pointer hover:bg-blue-500/20 pt-0.5"
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseEnter={handleMouseEnter}
-        onClick={handleClick}
+        className={cn(
+          "w-10 shrink-0 tabular-nums text-right opacity-50 pr-2 text-xs select-none pt-0.5",
+          line.type !== "insert" && "cursor-pointer hover:bg-blue-500/20"
+        )}
+        onMouseDown={line.type !== "insert" ? handleMouseDown : undefined}
+        onMouseUp={line.type !== "insert" ? handleMouseUp : undefined}
+        onMouseEnter={line.type !== "insert" ? handleMouseEnter : undefined}
+        onClick={line.type !== "insert" ? handleClick : undefined}
       >
-        {displayLineNum}
+        {line.type !== "insert" ? line.oldLineNumber : ""}
       </div>
-      {/* Code content */}
-      <div className="flex-1 whitespace-pre-wrap break-words pr-6 overflow-hidden">
+      {/* New line number (shown for insert and normal lines) */}
+      <div
+        data-line-gutter
+        className={cn(
+          "w-10 shrink-0 tabular-nums text-right opacity-50 pr-2 text-xs select-none pt-0.5 border-r border-border/30",
+          line.type !== "delete" && "cursor-pointer hover:bg-blue-500/20"
+        )}
+        onMouseDown={line.type !== "delete" ? handleMouseDown : undefined}
+        onMouseUp={line.type !== "delete" ? handleMouseUp : undefined}
+        onMouseEnter={line.type !== "delete" ? handleMouseEnter : undefined}
+        onClick={line.type !== "delete" ? handleClick : undefined}
+      >
+        {line.type !== "delete" ? line.newLineNumber : ""}
+      </div>
+      {/* Code content - click to focus line (unless selecting text) */}
+      <div 
+        className="flex-1 whitespace-pre-wrap break-words pr-6 overflow-hidden pl-2 cursor-text"
+        onClick={handleContentClick}
+      >
         <Tag className="no-underline">
           {line.content.map((seg, i) => (
             <span
@@ -1247,40 +1361,65 @@ const DiffLineRow = memo(function DiffLineRow({
 
 interface SkipBlockRowProps {
   hunk: DiffSkipBlock;
+  isFocused?: boolean;
   isExpanding?: boolean;
   onExpand?: () => void;
 }
 
-const SkipBlockRow = memo(function SkipBlockRow({ hunk, isExpanding, onExpand }: SkipBlockRowProps) {
+const SkipBlockRow = memo(function SkipBlockRow({ hunk, isFocused, isExpanding, onExpand }: SkipBlockRowProps) {
+  const skipBlockRef = useRef<HTMLDivElement>(null);
+
   const handleClick = useCallback(() => {
     if (onExpand && !isExpanding) {
       onExpand();
     }
   }, [onExpand, isExpanding]);
 
+  // Scroll into view when focused
+  useEffect(() => {
+    if (isFocused && skipBlockRef.current) {
+      skipBlockRef.current.scrollIntoView({ block: "center", behavior: "instant" });
+    }
+  }, [isFocused]);
+
   return (
     <div 
+      ref={skipBlockRef}
       onClick={handleClick}
       className={cn(
         "flex items-center h-10 font-mono bg-muted text-muted-foreground transition-colors group",
-        isExpanding ? "opacity-60" : "hover:bg-muted/80 cursor-pointer"
+        isExpanding ? "opacity-60" : "hover:bg-muted/80 cursor-pointer",
+        isFocused && "ring-2 ring-blue-500 ring-inset bg-blue-500/10"
       )}
     >
       <div className="w-1 shrink-0" />
-      <div className="w-12 shrink-0 opacity-50 select-none text-center group-hover:opacity-70">
+      {/* Two line number columns to match diff lines */}
+      <div className={cn(
+        "w-10 shrink-0 opacity-50 select-none flex items-center justify-center group-hover:opacity-70",
+        isFocused && "opacity-70"
+      )}>
         {isExpanding ? (
-          <Loader2 className="w-4 h-4 mx-auto animate-spin" />
+          <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
-          <ChevronsUpDown className="w-4 h-4 mx-auto" />
+          <ChevronsUpDown className="w-4 h-4" />
         )}
       </div>
+      <div className="w-10 shrink-0 border-r border-border/30" />
       <div className="flex-1">
-        <span className="pl-2 italic opacity-50 group-hover:opacity-70">
+        <span className={cn(
+          "pl-2 italic opacity-50 group-hover:opacity-70",
+          isFocused && "opacity-70"
+        )}>
           {hunk.content || `${hunk.count} lines hidden`}
         </span>
-        {!isExpanding && (
+        {!isExpanding && !isFocused && (
           <span className="ml-2 text-xs opacity-0 group-hover:opacity-50 transition-opacity">
             Click to expand
+          </span>
+        )}
+        {!isExpanding && isFocused && (
+          <span className="ml-2 text-xs text-blue-400 opacity-70">
+            Press Enter to expand
           </span>
         )}
         {isExpanding && (

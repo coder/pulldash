@@ -1,6 +1,6 @@
 import { GitPullRequest, GitMerge, ExternalLink } from "lucide-react";
 import { memo } from "react";
-import type { PullRequest } from "@/api/github";
+import type { PullRequest } from "@/api/types";
 
 interface PRHeaderProps {
   pr: PullRequest;

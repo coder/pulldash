@@ -1,4 +1,8 @@
 import { hc } from "hono/client";
-import app from "./api";
+import type { AppType } from "./api";
 
-export const client = hc<typeof app>(window.location.origin);
+export const createApiClient = (baseUrl: string = window.location.origin) => {
+  return hc<AppType>(baseUrl);
+};
+
+export type ApiClient = ReturnType<typeof createApiClient>;

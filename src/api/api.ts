@@ -1,95 +1,195 @@
 import { Hono } from "hono";
-import {
-  getPullRequest,
-  getPullRequestFiles,
-  getPullRequestComments,
-  createReviewComment,
-  replyToComment,
-  getReviews,
-  createReview,
-  createPendingReview,
-  submitPendingReview,
-  deletePendingReview,
-  getReviewComments,
-  updateReviewComment,
-  deleteReviewComment,
-  getCheckRuns,
-  getCombinedStatus,
-  mergePullRequest,
-  getIssueComments,
-  createIssueComment,
-  getFileContent,
-  getCurrentUser,
-  // GraphQL mutations for pending reviews
-  getPullRequestNodeId,
-  getPendingReviewNodeId,
-  addPendingReviewCommentGraphQL,
-  deletePendingReviewCommentGraphQL,
-  updatePendingReviewCommentGraphQL,
-  submitPendingReviewGraphQL,
-  // Review thread resolution
-  getReviewThreads,
-  resolveReviewThread,
-  unresolveReviewThread,
-} from "./github";
+import { Octokit } from "@octokit/core";
+import { execSync } from "child_process";
 import { parseDiffWithHighlighting, highlightFileLines } from "./diff";
 
-const api = new Hono().basePath("/api");
+// ============================================================================
+// GitHub Token & Octokit Setup
+// ============================================================================
 
-// Get PR details
-api.get("/pr/:owner/:repo/:number", async (c) => {
-  const { owner, repo, number } = c.req.param();
+let cachedToken: string | null = null;
+
+function getGitHubToken(): string {
+  if (cachedToken) return cachedToken;
   try {
-    const pr = await getPullRequest(owner, repo, parseInt(number, 10));
-    return c.json(pr);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch PR" },
-      500
+    cachedToken = execSync("gh auth token", { encoding: "utf-8" }).trim();
+    return cachedToken;
+  } catch {
+    throw new Error(
+      "Failed to get GitHub token. Make sure gh CLI is authenticated: gh auth login"
     );
   }
-});
+}
 
-// Get PR files
-api.get("/pr/:owner/:repo/:number/files", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  try {
-    const files = await getPullRequestFiles(owner, repo, parseInt(number, 10));
+const octokit = new Octokit({ auth: getGitHubToken() });
+
+// ============================================================================
+// GraphQL Helper
+// ============================================================================
+
+async function graphql<T>(
+  query: string,
+  variables: Record<string, unknown> = {}
+): Promise<T> {
+  const response = await octokit.graphql<T>(query, variables);
+  return response;
+}
+
+// ============================================================================
+// API Routes (Chained for Type Inference)
+// ============================================================================
+
+const api = new Hono()
+  .basePath("/api")
+
+  // -------------------------------------------------------------------------
+  // User
+  // -------------------------------------------------------------------------
+  .get("/user", async (c) => {
+    const { data } = await octokit.request("GET /user");
+    return c.json(data);
+  })
+
+  // -------------------------------------------------------------------------
+  // Pull Request
+  // -------------------------------------------------------------------------
+  .get("/pr/:owner/:repo/:number", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+      }
+    );
+    return c.json(data);
+  })
+
+  .get("/pr/:owner/:repo/:number/files", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const pullNumber = parseInt(number, 10);
+
+    // Paginate to get all files
+    const files: Awaited<
+      ReturnType<typeof octokit.request<"GET /repos/{owner}/{repo}/pulls/{pull_number}/files">>
+    >["data"] = [];
+    let page = 1;
+
+    while (true) {
+      const { data } = await octokit.request(
+        "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+        {
+          owner,
+          repo,
+          pull_number: pullNumber,
+          per_page: 100,
+          page,
+        }
+      );
+      files.push(...data);
+      if (data.length < 100) break;
+      page++;
+    }
+
     return c.json(files);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch files" },
-      500
+  })
+
+  .get("/pr/:owner/:repo/:number/comments", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const pullNumber = parseInt(number, 10);
+
+    // Paginate to get all comments
+    const comments: Awaited<
+      ReturnType<typeof octokit.request<"GET /repos/{owner}/{repo}/pulls/{pull_number}/comments">>
+    >["data"] = [];
+    let page = 1;
+
+    while (true) {
+      const { data } = await octokit.request(
+        "GET /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+        {
+          owner,
+          repo,
+          pull_number: pullNumber,
+          per_page: 100,
+          page,
+        }
+      );
+      comments.push(...data);
+      if (data.length < 100) break;
+      page++;
+    }
+
+    // Get thread resolution info from GraphQL
+    const threadsData = await graphql<{
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: Array<{
+              id: string;
+              isResolved: boolean;
+              resolvedBy: { login: string; avatarUrl: string } | null;
+              comments: {
+                nodes: Array<{ databaseId: number }>;
+              };
+            }>;
+          };
+        };
+      };
+    }>(
+      `
+      query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                resolvedBy {
+                  login
+                  avatarUrl
+                }
+                comments(first: 100) {
+                  nodes {
+                    databaseId
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `,
+      { owner, repo, number: pullNumber }
     );
-  }
-});
 
-// Get PR comments (with thread resolution info from GraphQL)
-api.get("/pr/:owner/:repo/:number/comments", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  try {
-    // Fetch both REST comments and GraphQL threads for resolution info
-    const [comments, threads] = await Promise.all([
-      getPullRequestComments(owner, repo, parseInt(number, 10)),
-      getReviewThreads(owner, repo, parseInt(number, 10)),
-    ]);
+    // Map comment ID to thread info
+    const commentToThread = new Map<
+      number,
+      {
+        threadId: string;
+        isResolved: boolean;
+        resolvedBy: { login: string; avatar_url: string } | null;
+      }
+    >();
 
-    // Create a map of comment database ID to thread info
-    const commentToThread = new Map<number, { threadId: string; isResolved: boolean; resolvedBy: { login: string; avatar_url: string } | null }>();
-    for (const thread of threads) {
-      for (const comment of thread.comments) {
+    for (const thread of threadsData.repository.pullRequest.reviewThreads.nodes) {
+      for (const comment of thread.comments.nodes) {
         commentToThread.set(comment.databaseId, {
           threadId: thread.id,
           isResolved: thread.isResolved,
-          resolvedBy: thread.resolvedBy ? {
-            login: thread.resolvedBy.login,
-            avatar_url: thread.resolvedBy.avatarUrl,
-          } : null,
+          resolvedBy: thread.resolvedBy
+            ? {
+                login: thread.resolvedBy.login,
+                avatar_url: thread.resolvedBy.avatarUrl,
+              }
+            : null,
         });
       }
     }
 
-    // Enrich REST comments with thread info
+    // Enrich comments with thread info
     const enrichedComments = comments.map((comment) => {
       const threadInfo = commentToThread.get(comment.id);
       return {
@@ -101,534 +201,740 @@ api.get("/pr/:owner/:repo/:number/comments", async (c) => {
     });
 
     return c.json(enrichedComments);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch comments" },
-      500
-    );
-  }
-});
+  })
 
-// Get review threads (GraphQL - includes resolution status)
-api.get("/pr/:owner/:repo/:number/threads", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  try {
-    const threads = await getReviewThreads(owner, repo, parseInt(number, 10));
-    return c.json(threads);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch threads" },
-      500
-    );
-  }
-});
-
-// Resolve a review thread
-api.post("/pr/:owner/:repo/:number/threads/:threadId/resolve", async (c) => {
-  const { threadId } = c.req.param();
-  try {
-    await resolveReviewThread(threadId);
-    return c.json({ success: true });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to resolve thread" },
-      500
-    );
-  }
-});
-
-// Unresolve a review thread
-api.post("/pr/:owner/:repo/:number/threads/:threadId/unresolve", async (c) => {
-  const { threadId } = c.req.param();
-  try {
-    await unresolveReviewThread(threadId);
-    return c.json({ success: true });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to unresolve thread" },
-      500
-    );
-  }
-});
-
-// Create PR comment
-api.post("/pr/:owner/:repo/:number/comments", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  const body = await c.req.json();
-
-  try {
-    let comment;
+  .post("/pr/:owner/:repo/:number/comments", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const pullNumber = parseInt(number, 10);
+    const body = await c.req.json<{
+      body: string;
+      reply_to_id?: number;
+      commit_id?: string;
+      path?: string;
+      line?: number;
+      side?: "LEFT" | "RIGHT";
+    }>();
 
     if (body.reply_to_id) {
-      comment = await replyToComment(
-        owner,
-        repo,
-        parseInt(number, 10),
-        body.reply_to_id,
-        body.body
+      const { data } = await octokit.request(
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies",
+        {
+          owner,
+          repo,
+          pull_number: pullNumber,
+          comment_id: body.reply_to_id,
+          body: body.body,
+        }
       );
-    } else {
-      comment = await createReviewComment(
-        owner,
-        repo,
-        parseInt(number, 10),
-        body.body,
-        body.commit_id,
-        body.path,
-        body.line,
-        body.side || "RIGHT"
-      );
+      return c.json(data);
     }
 
-    return c.json(comment);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to create comment" },
-      500
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        body: body.body,
+        commit_id: body.commit_id!,
+        path: body.path!,
+        line: body.line!,
+        side: body.side ?? "RIGHT",
+      }
     );
-  }
-});
+    return c.json(data);
+  })
 
-// Parse and highlight diff (server-side with caching)
-api.post("/parse-diff", async (c) => {
-  const { patch, filename, previousFilename, sha } = await c.req.json();
+  // -------------------------------------------------------------------------
+  // Review Threads
+  // -------------------------------------------------------------------------
+  .get("/pr/:owner/:repo/:number/threads", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const pullNumber = parseInt(number, 10);
 
-  if (!patch || !filename) {
-    return c.json({ error: "Missing patch or filename" }, 400);
-  }
+    const data = await graphql<{
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: Array<{
+              id: string;
+              isResolved: boolean;
+              resolvedBy: { login: string; avatarUrl: string } | null;
+              comments: {
+                nodes: Array<{
+                  id: string;
+                  databaseId: number;
+                  body: string;
+                  path: string;
+                  line: number | null;
+                  originalLine: number | null;
+                  startLine: number | null;
+                  author: { login: string; avatarUrl: string } | null;
+                  createdAt: string;
+                  updatedAt: string;
+                  replyTo: { databaseId: number } | null;
+                }>;
+              };
+            }>;
+          };
+        };
+      };
+    }>(
+      `
+      query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                resolvedBy {
+                  login
+                  avatarUrl
+                }
+                comments(first: 100) {
+                  nodes {
+                    id
+                    databaseId
+                    body
+                    path
+                    line
+                    originalLine
+                    startLine
+                    author {
+                      login
+                      avatarUrl
+                    }
+                    createdAt
+                    updatedAt
+                    replyTo {
+                      databaseId
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `,
+      { owner, repo, number: pullNumber }
+    );
 
-  try {
-    // Use SHA as cache key for immutable caching
-    const parsed = parseDiffWithHighlighting(patch, filename, previousFilename, sha);
-    
-    // Set cache headers for immutable content (SHA-based)
-    if (sha) {
-      c.header("Cache-Control", "public, max-age=31536000, immutable");
-      c.header("ETag", `"${sha}"`);
+    const threads = data.repository.pullRequest.reviewThreads.nodes.map(
+      (thread) => ({
+        id: thread.id,
+        isResolved: thread.isResolved,
+        resolvedBy: thread.resolvedBy,
+        comments: thread.comments.nodes,
+      })
+    );
+
+    return c.json(threads);
+  })
+
+  .post("/pr/:owner/:repo/:number/threads/:threadId/resolve", async (c) => {
+    const { threadId } = c.req.param();
+
+    await graphql(
+      `
+      mutation($input: ResolveReviewThreadInput!) {
+        resolveReviewThread(input: $input) {
+          thread { id isResolved }
+        }
+      }
+    `,
+      { input: { threadId } }
+    );
+
+    return c.json({ success: true });
+  })
+
+  .post("/pr/:owner/:repo/:number/threads/:threadId/unresolve", async (c) => {
+    const { threadId } = c.req.param();
+
+    await graphql(
+      `
+      mutation($input: UnresolveReviewThreadInput!) {
+        unresolveReviewThread(input: $input) {
+          thread { id isResolved }
+        }
+      }
+    `,
+      { input: { threadId } }
+    );
+
+    return c.json({ success: true });
+  })
+
+  // -------------------------------------------------------------------------
+  // Reviews
+  // -------------------------------------------------------------------------
+  .get("/pr/:owner/:repo/:number/reviews", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+      }
+    );
+    return c.json(data);
+  })
+
+  .post("/pr/:owner/:repo/:number/reviews", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const body = await c.req.json<{
+      commit_id: string;
+      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      body?: string;
+      comments?: Array<{
+        path: string;
+        line: number;
+        body: string;
+        side?: "LEFT" | "RIGHT";
+        start_line?: number;
+        start_side?: "LEFT" | "RIGHT";
+      }>;
+    }>();
+
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+        commit_id: body.commit_id,
+        event: body.event,
+        body: body.body ?? "",
+        comments: body.comments ?? [],
+      }
+    );
+    return c.json(data);
+  })
+
+  .post("/pr/:owner/:repo/:number/reviews/pending", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const body = await c.req.json<{ commit_id: string }>();
+
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+        commit_id: body.commit_id,
+      }
+    );
+    return c.json(data);
+  })
+
+  .post("/pr/:owner/:repo/:number/reviews/:reviewId/submit", async (c) => {
+    const { owner, repo, number, reviewId } = c.req.param();
+    const body = await c.req.json<{
+      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      body?: string;
+    }>();
+
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/events",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+        review_id: parseInt(reviewId, 10),
+        event: body.event,
+        body: body.body ?? "",
+      }
+    );
+    return c.json(data);
+  })
+
+  .delete("/pr/:owner/:repo/:number/reviews/:reviewId", async (c) => {
+    const { owner, repo, number, reviewId } = c.req.param();
+
+    await octokit.request(
+      "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+        review_id: parseInt(reviewId, 10),
+      }
+    );
+    return c.json({ success: true });
+  })
+
+  .get("/pr/:owner/:repo/:number/reviews/:reviewId/comments", async (c) => {
+    const { owner, repo, number, reviewId } = c.req.param();
+
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/comments",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+        review_id: parseInt(reviewId, 10),
+      }
+    );
+    return c.json(data);
+  })
+
+  // -------------------------------------------------------------------------
+  // GraphQL Pending Review APIs
+  // -------------------------------------------------------------------------
+  .get("/pr/:owner/:repo/:number/node-id", async (c) => {
+    const { owner, repo, number } = c.req.param();
+
+    const data = await graphql<{
+      repository: { pullRequest: { id: string } };
+    }>(
+      `
+      query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            id
+          }
+        }
+      }
+    `,
+      { owner, repo, number: parseInt(number, 10) }
+    );
+
+    return c.json({ nodeId: data.repository.pullRequest.id });
+  })
+
+  .get("/pr/:owner/:repo/:number/pending-review", async (c) => {
+    const { owner, repo, number } = c.req.param();
+
+    const data = await graphql<{
+      repository: {
+        pullRequest: {
+          reviews: {
+            nodes: Array<{
+              id: string;
+              databaseId: number;
+              viewerDidAuthor: boolean;
+              comments: {
+                nodes: Array<{
+                  id: string;
+                  databaseId: number;
+                  body: string;
+                  path: string;
+                  line: number;
+                  startLine: number | null;
+                }>;
+              };
+            }>;
+          };
+        };
+      };
+    }>(
+      `
+      query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            reviews(first: 10, states: [PENDING]) {
+              nodes {
+                id
+                databaseId
+                viewerDidAuthor
+                comments(first: 100) {
+                  nodes {
+                    id
+                    databaseId
+                    body
+                    path
+                    line
+                    startLine
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `,
+      { owner, repo, number: parseInt(number, 10) }
+    );
+
+    const pendingReview = data.repository.pullRequest.reviews.nodes.find(
+      (r) => r.viewerDidAuthor
+    );
+
+    if (!pendingReview) {
+      return c.json(null);
     }
-    
-    return c.json(parsed);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to parse diff" },
-      500
-    );
-  }
-});
 
-// ============================================================================
-// Review APIs
-// ============================================================================
+    return c.json({
+      reviewId: pendingReview.id,
+      comments: pendingReview.comments.nodes.map((c) => ({
+        id: c.id,
+        databaseId: c.databaseId,
+        body: c.body,
+        path: c.path,
+        line: c.line,
+        startLine: c.startLine,
+      })),
+    });
+  })
 
-// Get PR reviews
-api.get("/pr/:owner/:repo/:number/reviews", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  try {
-    const reviews = await getReviews(owner, repo, parseInt(number, 10));
-    return c.json(reviews);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch reviews" },
-      500
-    );
-  }
-});
+  .post("/pr/:owner/:repo/:number/pending-comment", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const body = await c.req.json<{
+      pull_request_id?: string;
+      path: string;
+      line: number;
+      body: string;
+      start_line?: number;
+    }>();
 
-// Submit a review (with all comments at once)
-api.post("/pr/:owner/:repo/:number/reviews", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  const body = await c.req.json();
-
-  try {
-    const review = await createReview(
-      owner,
-      repo,
-      parseInt(number, 10),
-      body.commit_id,
-      body.event,
-      body.body || "",
-      body.comments || []
-    );
-    return c.json(review);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to submit review" },
-      500
-    );
-  }
-});
-
-// Create a pending review (REST API - legacy)
-api.post("/pr/:owner/:repo/:number/reviews/pending", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  const body = await c.req.json();
-
-  try {
-    const review = await createPendingReview(
-      owner,
-      repo,
-      parseInt(number, 10),
-      body.commit_id
-    );
-    return c.json(review);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to create pending review" },
-      500
-    );
-  }
-});
-
-// Get PR node ID (for GraphQL mutations)
-api.get("/pr/:owner/:repo/:number/node-id", async (c) => {
-  const { owner, repo, number } = c.req.param();
-
-  try {
-    const nodeId = await getPullRequestNodeId(owner, repo, parseInt(number, 10));
-    return c.json({ nodeId });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to get PR node ID" },
-      500
-    );
-  }
-});
-
-// Get user's pending review via GraphQL
-api.get("/pr/:owner/:repo/:number/pending-review", async (c) => {
-  const { owner, repo, number } = c.req.param();
-
-  try {
-    const result = await getPendingReviewNodeId(owner, repo, parseInt(number, 10));
-    return c.json(result);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to get pending review" },
-      500
-    );
-  }
-});
-
-// Add a comment to pending review via GraphQL (creates review if needed)
-api.post("/pr/:owner/:repo/:number/pending-comment", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  const body = await c.req.json();
-
-  try {
     // Get PR node ID if not provided
     let pullRequestId = body.pull_request_id;
     if (!pullRequestId) {
-      pullRequestId = await getPullRequestNodeId(owner, repo, parseInt(number, 10));
+      const prData = await graphql<{
+        repository: { pullRequest: { id: string } };
+      }>(
+        `
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              id
+            }
+          }
+        }
+      `,
+        { owner, repo, number: parseInt(number, 10) }
+      );
+      pullRequestId = prData.repository.pullRequest.id;
     }
 
-    const result = await addPendingReviewCommentGraphQL(
+    const input: Record<string, unknown> = {
       pullRequestId,
-      body.path,
-      body.line,
-      body.body,
-      body.start_line
-    );
-    return c.json(result);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to add pending comment" },
-      500
-    );
-  }
-});
+      path: body.path,
+      line: body.line,
+      body: body.body,
+    };
 
-// Delete a pending review comment via GraphQL
-api.delete("/pr/:owner/:repo/:number/pending-comment/:commentId", async (c) => {
-  const { commentId } = c.req.param();
+    if (body.start_line && body.start_line !== body.line) {
+      input.startLine = body.start_line;
+    }
 
-  try {
-    await deletePendingReviewCommentGraphQL(commentId);
+    const data = await graphql<{
+      addPullRequestReviewComment: {
+        comment: {
+          id: string;
+          databaseId: number;
+          pullRequestReview: { id: string };
+        };
+      };
+    }>(
+      `
+      mutation($input: AddPullRequestReviewCommentInput!) {
+        addPullRequestReviewComment(input: $input) {
+          comment {
+            id
+            databaseId
+            pullRequestReview {
+              id
+            }
+          }
+        }
+      }
+    `,
+      { input }
+    );
+
+    return c.json({
+      reviewId: data.addPullRequestReviewComment.comment.pullRequestReview.id,
+      commentId: data.addPullRequestReviewComment.comment.id,
+      commentDatabaseId: data.addPullRequestReviewComment.comment.databaseId,
+    });
+  })
+
+  .delete("/pr/:owner/:repo/:number/pending-comment/:commentId", async (c) => {
+    const { commentId } = c.req.param();
+
+    await graphql(
+      `
+      mutation($input: DeletePullRequestReviewCommentInput!) {
+        deletePullRequestReviewComment(input: $input) {
+          pullRequestReview { id }
+        }
+      }
+    `,
+      { input: { id: commentId } }
+    );
+
     return c.json({ success: true });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to delete pending comment" },
-      500
+  })
+
+  .patch("/pr/:owner/:repo/:number/pending-comment/:commentId", async (c) => {
+    const { commentId } = c.req.param();
+    const body = await c.req.json<{ body: string }>();
+
+    await graphql(
+      `
+      mutation($input: UpdatePullRequestReviewCommentInput!) {
+        updatePullRequestReviewComment(input: $input) {
+          pullRequestReviewComment { id body }
+        }
+      }
+    `,
+      { input: { pullRequestReviewCommentId: commentId, body: body.body } }
     );
-  }
-});
 
-// Update a pending review comment via GraphQL
-api.patch("/pr/:owner/:repo/:number/pending-comment/:commentId", async (c) => {
-  const { commentId } = c.req.param();
-  const body = await c.req.json();
-
-  try {
-    await updatePendingReviewCommentGraphQL(commentId, body.body);
     return c.json({ success: true });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to update pending comment" },
-      500
+  })
+
+  .post("/pr/:owner/:repo/:number/pending-review/submit", async (c) => {
+    const body = await c.req.json<{
+      review_id: string;
+      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      body?: string;
+    }>();
+
+    await graphql(
+      `
+      mutation($input: SubmitPullRequestReviewInput!) {
+        submitPullRequestReview(input: $input) {
+          pullRequestReview { id state }
+        }
+      }
+    `,
+      {
+        input: {
+          pullRequestReviewId: body.review_id,
+          event: body.event,
+          body: body.body ?? "",
+        },
+      }
     );
-  }
-});
 
-// Submit pending review via GraphQL
-api.post("/pr/:owner/:repo/:number/pending-review/submit", async (c) => {
-  const body = await c.req.json();
-
-  try {
-    await submitPendingReviewGraphQL(body.review_id, body.event, body.body);
     return c.json({ success: true });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to submit review" },
-      500
+  })
+
+  // -------------------------------------------------------------------------
+  // Review Comments
+  // -------------------------------------------------------------------------
+  .patch("/pr/:owner/:repo/comments/:commentId", async (c) => {
+    const { owner, repo, commentId } = c.req.param();
+    const body = await c.req.json<{ body: string }>();
+
+    const { data } = await octokit.request(
+      "PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      {
+        owner,
+        repo,
+        comment_id: parseInt(commentId, 10),
+        body: body.body,
+      }
     );
-  }
-});
+    return c.json(data);
+  })
 
-// Submit a pending review
-api.post("/pr/:owner/:repo/:number/reviews/:reviewId/submit", async (c) => {
-  const { owner, repo, number, reviewId } = c.req.param();
-  const body = await c.req.json();
+  .delete("/pr/:owner/:repo/comments/:commentId", async (c) => {
+    const { owner, repo, commentId } = c.req.param();
 
-  try {
-    const review = await submitPendingReview(
-      owner,
-      repo,
-      parseInt(number, 10),
-      parseInt(reviewId, 10),
-      body.event,
-      body.body
-    );
-    return c.json(review);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to submit review" },
-      500
-    );
-  }
-});
-
-// Delete a pending review
-api.delete("/pr/:owner/:repo/:number/reviews/:reviewId", async (c) => {
-  const { owner, repo, number, reviewId } = c.req.param();
-
-  try {
-    await deletePendingReview(
-      owner,
-      repo,
-      parseInt(number, 10),
-      parseInt(reviewId, 10)
-    );
-    return c.json({ success: true });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to delete review" },
-      500
-    );
-  }
-});
-
-// Get comments for a specific review
-api.get("/pr/:owner/:repo/:number/reviews/:reviewId/comments", async (c) => {
-  const { owner, repo, number, reviewId } = c.req.param();
-
-  try {
-    const comments = await getReviewComments(
-      owner,
-      repo,
-      parseInt(number, 10),
-      parseInt(reviewId, 10)
-    );
-    return c.json(comments);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch review comments" },
-      500
-    );
-  }
-});
-
-// Update a review comment
-api.patch("/pr/:owner/:repo/comments/:commentId", async (c) => {
-  const { owner, repo, commentId } = c.req.param();
-  const body = await c.req.json();
-
-  try {
-    const comment = await updateReviewComment(
-      owner,
-      repo,
-      parseInt(commentId, 10),
-      body.body
-    );
-    return c.json(comment);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to update comment" },
-      500
-    );
-  }
-});
-
-// Delete a review comment
-api.delete("/pr/:owner/:repo/comments/:commentId", async (c) => {
-  const { owner, repo, commentId } = c.req.param();
-
-  try {
-    await deleteReviewComment(
-      owner,
-      repo,
-      parseInt(commentId, 10)
+    await octokit.request(
+      "DELETE /repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      {
+        owner,
+        repo,
+        comment_id: parseInt(commentId, 10),
+      }
     );
     return c.json({ success: true });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to delete comment" },
-      500
+  })
+
+  // -------------------------------------------------------------------------
+  // Checks & Status
+  // -------------------------------------------------------------------------
+  .get("/pr/:owner/:repo/:number/checks", async (c) => {
+    const { owner, repo, number } = c.req.param();
+
+    const { data: pr } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+      }
     );
-  }
-});
 
-// ============================================================================
-// Checks & Status
-// ============================================================================
-
-// Get check runs
-api.get("/pr/:owner/:repo/:number/checks", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  try {
-    const pr = await getPullRequest(owner, repo, parseInt(number, 10));
-    const [checkRuns, status] = await Promise.all([
-      getCheckRuns(owner, repo, pr.head.sha),
-      getCombinedStatus(owner, repo, pr.head.sha),
+    const [checkRunsResponse, statusResponse] = await Promise.all([
+      octokit.request(
+        "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+        {
+          owner,
+          repo,
+          ref: pr.head.sha,
+        }
+      ),
+      octokit.request(
+        "GET /repos/{owner}/{repo}/commits/{ref}/status",
+        {
+          owner,
+          repo,
+          ref: pr.head.sha,
+        }
+      ),
     ]);
-    return c.json({ checkRuns: checkRuns.check_runs, status });
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch checks" },
-      500
+
+    return c.json({
+      checkRuns: checkRunsResponse.data.check_runs,
+      status: statusResponse.data,
+    });
+  })
+
+  // -------------------------------------------------------------------------
+  // Merge
+  // -------------------------------------------------------------------------
+  .post("/pr/:owner/:repo/:number/merge", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const body = await c.req.json<{
+      merge_method?: "merge" | "squash" | "rebase";
+      commit_title?: string;
+      commit_message?: string;
+    }>();
+
+    const { data } = await octokit.request(
+      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge",
+      {
+        owner,
+        repo,
+        pull_number: parseInt(number, 10),
+        merge_method: body.merge_method ?? "squash",
+        commit_title: body.commit_title,
+        commit_message: body.commit_message,
+      }
     );
-  }
-});
+    return c.json(data);
+  })
 
-// ============================================================================
-// Merge
-// ============================================================================
+  // -------------------------------------------------------------------------
+  // Issue Comments (PR conversation)
+  // -------------------------------------------------------------------------
+  .get("/pr/:owner/:repo/:number/conversation", async (c) => {
+    const { owner, repo, number } = c.req.param();
 
-api.post("/pr/:owner/:repo/:number/merge", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  const body = await c.req.json();
-
-  try {
-    const result = await mergePullRequest(
-      owner,
-      repo,
-      parseInt(number, 10),
-      body.merge_method || "squash",
-      body.commit_title,
-      body.commit_message
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      {
+        owner,
+        repo,
+        issue_number: parseInt(number, 10),
+      }
     );
-    return c.json(result);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to merge PR" },
-      500
+    return c.json(data);
+  })
+
+  .post("/pr/:owner/:repo/:number/conversation", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    const body = await c.req.json<{ body: string }>();
+
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      {
+        owner,
+        repo,
+        issue_number: parseInt(number, 10),
+        body: body.body,
+      }
     );
-  }
-});
+    return c.json(data);
+  })
 
-// ============================================================================
-// Issue Comments (PR conversation)
-// ============================================================================
+  // -------------------------------------------------------------------------
+  // File Content
+  // -------------------------------------------------------------------------
+  .get("/file/:owner/:repo", async (c) => {
+    const { owner, repo } = c.req.param();
+    const path = c.req.query("path");
+    const ref = c.req.query("ref");
 
-api.get("/pr/:owner/:repo/:number/conversation", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  try {
-    const comments = await getIssueComments(owner, repo, parseInt(number, 10));
-    return c.json(comments);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch conversation" },
-      500
+    if (!path || !ref) {
+      return c.json({ error: "Missing path or ref query parameter" }, 400);
+    }
+
+    try {
+      const response = await octokit.request(
+        "GET /repos/{owner}/{repo}/contents/{path}",
+        {
+          owner,
+          repo,
+          path,
+          ref,
+          headers: {
+            Accept: "application/vnd.github.raw+json",
+          },
+        }
+      );
+      return c.text(response.data as unknown as string);
+    } catch (error: unknown) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "status" in error &&
+        error.status === 404
+      ) {
+        return c.text("");
+      }
+      throw error;
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // Diff Parsing
+  // -------------------------------------------------------------------------
+  .post("/parse-diff", async (c) => {
+    const body = await c.req.json<{
+      patch: string;
+      filename: string;
+      previousFilename?: string;
+      sha?: string;
+    }>();
+
+    if (!body.patch || !body.filename) {
+      return c.json({ error: "Missing patch or filename" }, 400);
+    }
+
+    const parsed = parseDiffWithHighlighting(
+      body.patch,
+      body.filename,
+      body.previousFilename,
+      body.sha
     );
-  }
-});
 
-api.post("/pr/:owner/:repo/:number/conversation", async (c) => {
-  const { owner, repo, number } = c.req.param();
-  const body = await c.req.json();
+    if (body.sha) {
+      c.header("Cache-Control", "public, max-age=31536000, immutable");
+      c.header("ETag", `"${body.sha}"`);
+    }
 
-  try {
-    const comment = await createIssueComment(
-      owner,
-      repo,
-      parseInt(number, 10),
-      body.body
-    );
-    return c.json(comment);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to add comment" },
-      500
-    );
-  }
-});
+    return c.json(parsed);
+  })
 
-// ============================================================================
-// File Content
-// ============================================================================
+  .post("/highlight-lines", async (c) => {
+    const body = await c.req.json<{
+      content: string;
+      filename: string;
+      startLine: number;
+      count: number;
+    }>();
 
-api.get("/file/:owner/:repo", async (c) => {
-  const { owner, repo } = c.req.param();
-  const path = c.req.query("path");
-  const ref = c.req.query("ref");
-
-  if (!path || !ref) {
-    return c.json({ error: "Missing path or ref query parameter" }, 400);
-  }
-
-  try {
-    const content = await getFileContent(owner, repo, path, ref);
-    return c.text(content);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch file content" },
-      500
-    );
-  }
-});
-
-// Highlight file lines (for skip block expansion)
-api.post("/highlight-lines", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { content, filename, startLine, count } = body;
-
-    if (!content || !filename || !startLine || !count) {
+    if (!body.content || !body.filename || !body.startLine || !body.count) {
       return c.json({ error: "Missing required fields" }, 400);
     }
 
-    const lines = highlightFileLines(content, filename, startLine, count);
+    const lines = highlightFileLines(
+      body.content,
+      body.filename,
+      body.startLine,
+      body.count
+    );
     return c.json(lines);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to highlight lines" },
-      500
-    );
-  }
-});
-
-// ============================================================================
-// User
-// ============================================================================
-
-api.get("/user", async (c) => {
-  try {
-    const user = await getCurrentUser();
-    return c.json(user);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch user" },
-      500
-    );
-  }
-});
+  });
 
 export default api;
+export type AppType = typeof api;

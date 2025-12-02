@@ -23,7 +23,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "../ui/context-menu";
-import type { PullRequestFile } from "@/api/github";
+import type { PullRequestFile } from "@/api/types";
 
 interface FileTreeProps {
   files: PullRequestFile[];

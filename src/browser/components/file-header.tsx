@@ -1,7 +1,7 @@
 import { Check, FileCode } from "lucide-react";
 import { cn } from "../cn";
 import { Keycap } from "../ui/keycap";
-import type { PullRequestFile } from "@/api/github";
+import type { PullRequestFile } from "@/api/types";
 import { memo } from "react";
 
 interface FileHeaderProps {
