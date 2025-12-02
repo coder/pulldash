@@ -1,4 +1,4 @@
-# pullpal
+# pulldash
 
 A lightning-fast UI to review pull requests on GitHub.
 

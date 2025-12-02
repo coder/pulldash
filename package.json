@@ -1,10 +1,10 @@
 {
-  "name": "pullpal",
+  "name": "pulldash",
   "version": "0.0.1",
   "description": "A fast, local PR review dashboard",
   "type": "module",
   "bin": {
-    "pullpal": "./dist/pullpal"
+    "pulldash": "./dist/pulldash"
   },
   "files": [
     "dist"

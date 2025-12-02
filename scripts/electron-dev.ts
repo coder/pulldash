@@ -72,7 +72,7 @@ function launchElectron(): void {
 }
 
 async function main() {
-  console.log("🚀 Starting PullPal Electron Dev Mode\n");
+  console.log("🚀 Starting Pulldash Electron Dev Mode\n");
 
   // Initial compilation
   const success = await compileMain();

@@ -50,13 +50,13 @@ export function Home() {
             <div className="absolute inset-0 bg-[#408AC3]/20 rounded-3xl blur-xl group-hover:bg-[#408AC3]/30 transition-colors duration-500" />
             <img
               src={logoUrl}
-              alt="PullPal"
+              alt="Pulldash"
               className="relative w-24 h-24 drop-shadow-2xl transition-transform duration-300 group-hover:scale-105"
             />
           </div>
           <div className="text-center space-y-2">
             <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-white via-white to-[#9ED8F7] bg-clip-text text-transparent">
-              PullPal
+              Pulldash
             </h1>
             <p className="text-muted-foreground text-sm">
               Lightning-fast GitHub PR reviews

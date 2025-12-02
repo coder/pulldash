@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.coder.pullpal",
-  "productName": "Pullpal",
+  "appId": "com.coder.pulldash",
+  "productName": "Pulldash",
   "copyright": "Copyright © 2025 Coder",
 
   "directories": {
@@ -83,7 +83,7 @@
     "installerHeaderIcon": "build/icon.ico",
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "Pullpal"
+    "shortcutName": "Pulldash"
   },
 
   "linux": {
@@ -106,7 +106,7 @@
   "publish": {
     "provider": "github",
     "owner": "coder",
-    "repo": "pullpal",
+    "repo": "pulldash",
     "releaseType": "release"
   }
 }

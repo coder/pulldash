@@ -32,4 +32,4 @@ serve({
   port: 3000,
 });
 
-console.log("🚀 pullpal running at http://localhost:3000");
+console.log("🚀 pulldash running at http://localhost:3000");

@@ -21,7 +21,7 @@ const DIST_DIR = join(ROOT_DIR, "dist");
 const ELECTRON_DIST = join(DIST_DIR, "electron");
 
 async function build() {
-  console.log("🔨 Building PullPal Electron App\n");
+  console.log("🔨 Building Pulldash Electron App\n");
 
   // Step 1: Build browser bundle
   console.log("📦 Step 1: Building browser bundle...");
