@@ -14,10 +14,10 @@ function getGitHubToken(): string {
   try {
     cachedToken = execSync("gh auth token", { encoding: "utf-8" }).trim();
     return cachedToken;
-  } catch {
-    throw new Error(
-      "Failed to get GitHub token. Make sure gh CLI is authenticated: gh auth login"
-    );
+  } catch (err) {
+    throw new Error("Failed to get GitHub token. Make sure gh CLI is authenticated: "+ (err as Error).message, {
+      cause: err,
+    });
   }
 }
 
@@ -186,9 +186,9 @@ const api = new Hono()
           isResolved: thread.isResolved,
           resolvedBy: thread.resolvedBy
             ? {
-                login: thread.resolvedBy.login,
-                avatar_url: thread.resolvedBy.avatarUrl,
-              }
+              login: thread.resolvedBy.login,
+              avatar_url: thread.resolvedBy.avatarUrl,
+            }
             : null,
         });
       }
