@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation } from "react-router-dom";
 import { File, FileCode, Search } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "../cn";
@@ -533,14 +532,8 @@ const FileIcon = memo(function FileIcon({ extension }: FileIconProps) {
 
 export function useCommandPalette() {
   const [open, setOpen] = useState(false);
-  const location = useLocation();
-
-  // Check if we're on a PR files page (where we have file context)
-  const isPRFilesPage = location.pathname.includes("/files");
 
   useEffect(() => {
-    if (!isPRFilesPage) return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ctrl+K or Ctrl+P to open command palette
       if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "p")) {
@@ -554,7 +547,7 @@ export function useCommandPalette() {
     document.addEventListener("keydown", handleKeyDown, { capture: true });
     return () =>
       document.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [isPRFilesPage]);
+  }, []);
 
   return { open, setOpen };
 }

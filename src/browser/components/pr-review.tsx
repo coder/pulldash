@@ -7,9 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useParams, useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Loader2,
@@ -24,7 +22,6 @@ import {
   Eye,
   EyeOff,
   Trash2,
-  GitPullRequest,
   FileCode,
   Pencil,
   ChevronLeft,
@@ -89,10 +86,60 @@ import {
   DropdownMenuRadioItem,
 } from "../ui/dropdown-menu";
 import { Keycap, KeycapGroup } from "../ui/keycap";
+import { Markdown } from "../ui/markdown";
 import { CommandPalette, useCommandPalette } from "./command-palette";
+import { useTabContext, type TabStatus } from "../contexts/tabs";
+import { usePRChecks } from "../contexts/data-store";
 
 // ============================================================================
-// Page Component (Data Fetching)
+// Hook to sync PR check status with tab
+// ============================================================================
+
+function useSyncTabStatus(
+  tabId: string | undefined,
+  owner: string,
+  repo: string,
+  number: number,
+  prData: {
+    merged: boolean;
+    draft?: boolean;
+    state: string;
+    mergeable: boolean | null;
+  } | null
+) {
+  const { status: checkStatus } = usePRChecks(owner, repo, number);
+
+  // Get tab context for status updates
+  let updateTabStatus: ((tabId: string, status: TabStatus) => void) | undefined;
+  try {
+    const tabContext = useTabContext();
+    updateTabStatus = tabContext.updateTabStatus;
+  } catch {
+    // Not in tab context, ignore
+  }
+
+  // Sync to tab whenever status changes
+  useEffect(() => {
+    if (!tabId || !updateTabStatus || !prData) return;
+
+    const state: TabStatus["state"] = prData.merged
+      ? "merged"
+      : prData.draft
+        ? "draft"
+        : prData.state === "open"
+          ? "open"
+          : "closed";
+
+    updateTabStatus(tabId, {
+      checks: checkStatus?.checks || "pending",
+      state,
+      mergeable: prData.mergeable,
+    });
+  }, [tabId, updateTabStatus, prData, checkStatus]);
+}
+
+// ============================================================================
+// Page Component (Data Fetching) - Used for direct URL access
 // ============================================================================
 
 export function PRReviewPage() {
@@ -101,17 +148,47 @@ export function PRReviewPage() {
     repo: string;
     number: string;
   }>();
-  const navigate = useNavigate();
 
+  if (!owner || !repo || !number) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <p className="text-destructive">Invalid PR URL</p>
+      </div>
+    );
+  }
+
+  return (
+    <PRReviewContent owner={owner} repo={repo} number={parseInt(number, 10)} />
+  );
+}
+
+// ============================================================================
+// Content Component (Used by tabs and direct URL)
+// ============================================================================
+
+interface PRReviewContentProps {
+  owner: string;
+  repo: string;
+  number: number;
+  tabId?: string;
+}
+
+export function PRReviewContent({
+  owner,
+  repo,
+  number,
+  tabId,
+}: PRReviewContentProps) {
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [files, setFiles] = useState<PullRequestFile[]>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!owner || !repo || !number) return;
+  // Sync check status with tab (uses data store for auto-refresh)
+  useSyncTabStatus(tabId, owner, repo, number, pr);
 
+  useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       setError(null);
@@ -148,7 +225,7 @@ export function PRReviewPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           <p className="text-sm text-muted-foreground">Loading PR...</p>
@@ -159,16 +236,10 @@ export function PRReviewPage() {
 
   if (error || !pr) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-4 max-w-md text-center">
           <p className="text-destructive font-medium">Failed to load PR</p>
           <p className="text-sm text-muted-foreground">{error}</p>
-          <button
-            onClick={() => navigate("/")}
-            className="px-4 py-2 text-sm rounded-lg bg-muted hover:bg-muted/80 transition-colors"
-          >
-            Go back
-          </button>
         </div>
       </div>
     );
@@ -179,10 +250,10 @@ export function PRReviewPage() {
       pr={pr}
       files={files}
       comments={comments}
-      owner={owner!}
-      repo={repo!}
+      owner={owner}
+      repo={repo}
     >
-      <PRReviewContent />
+      <PRReviewLayout />
     </PRReviewProvider>
   );
 }
@@ -191,7 +262,7 @@ export function PRReviewPage() {
 // Main Review Component (Layout)
 // ============================================================================
 
-function PRReviewContent() {
+function PRReviewLayout() {
   const store = usePRReviewStore();
   const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
     useCommandPalette();
@@ -279,10 +350,10 @@ function PRReviewContent() {
   const repo = usePRReviewSelector((s) => s.repo);
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full">
       <PRHeader pr={pr} owner={owner} repo={repo} />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden min-h-0">
         <FilePanel onOpenSearch={openCommandPalette} />
         <DiffPanel />
       </div>
@@ -305,9 +376,6 @@ interface FilePanelProps {
 
 const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
   const store = usePRReviewStore();
-  const owner = usePRReviewSelector((s) => s.owner);
-  const repo = usePRReviewSelector((s) => s.repo);
-  const pr = usePRReviewSelector((s) => s.pr);
   const files = usePRReviewSelector((s) => s.files);
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
@@ -319,30 +387,15 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
   const { copyDiff, copyFile, copyMainVersion } = useFileCopyActions();
 
   return (
-    <aside className="w-72 border-r border-border flex flex-col overflow-hidden shrink-0">
-      {/* Navigation tabs */}
-      <div className="flex border-b border-border">
-        <Link
-          to={`/${owner}/${repo}/pull/${pr.number}`}
-          className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-        >
-          <GitPullRequest className="w-4 h-4" />
-          Overview
-        </Link>
-        <div className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium border-b-2 border-primary bg-muted/30">
-          <FileCode className="w-4 h-4" />
-          Files
-        </div>
-      </div>
-
+    <aside className="w-64 border-r border-border flex flex-col overflow-hidden shrink-0">
       {/* Search button with hide-viewed toggle */}
-      <div className="mx-3 my-3 flex items-center gap-2">
+      <div className="mx-2 my-2 flex items-center gap-1.5">
         <button
           onClick={onOpenSearch}
-          className="flex-1 flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground bg-muted/50 hover:bg-muted rounded-lg border border-border transition-colors"
+          className="flex-1 flex items-center gap-1.5 px-2 py-1.5 text-xs text-muted-foreground bg-muted/50 hover:bg-muted rounded-md border border-border transition-colors"
         >
-          <Search className="w-4 h-4" />
-          <span className="flex-1 text-left">Search files...</span>
+          <Search className="w-3.5 h-3.5" />
+          <span className="flex-1 text-left">Search...</span>
           <KeycapGroup keys={["cmd", "k"]} size="xs" />
         </button>
         <TooltipProvider delayDuration={300}>
@@ -351,16 +404,16 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
               <button
                 onClick={store.toggleHideViewed}
                 className={cn(
-                  "p-2 rounded-lg border border-border transition-colors",
+                  "p-1.5 rounded-md border border-border transition-colors",
                   hideViewed
                     ? "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border-blue-500/30"
                     : "text-muted-foreground bg-muted/50 hover:bg-muted"
                 )}
               >
                 {hideViewed ? (
-                  <EyeOff className="w-4 h-4" />
+                  <EyeOff className="w-3.5 h-3.5" />
                 ) : (
-                  <Eye className="w-4 h-4" />
+                  <Eye className="w-3.5 h-3.5" />
                 )}
               </button>
             </TooltipTrigger>
@@ -418,36 +471,36 @@ const DiffPanel = memo(function DiffPanel() {
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
       {/* File navigation bar */}
-      <div className="shrink-0 border-b border-border bg-card px-4 py-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="shrink-0 border-b border-border bg-card/30 px-3 py-1.5 flex items-center justify-between">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => store.navigateToPrevUnviewedFile()}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
             title="Previous unreviewed file (j)"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-3.5 h-3.5" />
             <span>Prev</span>
-            <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 bg-muted/60 rounded text-[10px] font-mono text-muted-foreground">
+            <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
               j
             </kbd>
           </button>
-          <span className="text-sm text-muted-foreground tabular-nums">
+          <span className="text-xs text-muted-foreground tabular-nums">
             {currentIndex + 1} / {files.length}
           </span>
           <button
             onClick={() => store.navigateToNextUnviewedFile()}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
             title="Next unreviewed file (k)"
           >
             <span>Next</span>
-            <ChevronRight className="w-4 h-4" />
-            <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 bg-muted/60 rounded text-[10px] font-mono text-muted-foreground">
+            <ChevronRight className="w-3.5 h-3.5" />
+            <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
               k
             </kbd>
           </button>
         </div>
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">
             <span className="text-green-500">+{pr.additions}</span>{" "}
             <span className="text-red-500">−{pr.deletions}</span>
           </span>
@@ -462,7 +515,7 @@ const DiffPanel = memo(function DiffPanel() {
           </span>
           {files.length - viewedFiles.size > 0 && (
             <span className="text-yellow-500">
-              {files.length - viewedFiles.size} remaining
+              {files.length - viewedFiles.size} left
             </span>
           )}
           {selectedFiles.size > 0 && (
@@ -476,7 +529,7 @@ const DiffPanel = memo(function DiffPanel() {
         <div className="flex flex-col flex-1 min-h-0">
           {/* Sticky file header */}
           <div className="shrink-0 border-b border-border bg-muted/50 backdrop-blur-sm z-20">
-            <div className="px-4 py-2">
+            <div className="px-3 py-1.5">
               <FileHeader
                 file={currentFile}
                 isViewed={viewedFiles.has(currentFile.filename)}
@@ -549,7 +602,7 @@ const KeybindsBar = memo(function KeybindsBar() {
   return (
     <div
       className={cn(
-        "shrink-0 border-t border-border px-4 py-2.5",
+        "shrink-0 border-t border-border px-3 py-2 min-h-[36px]",
         gotoLineMode && "bg-blue-500/10",
         (focusedCommentId || focusedPendingCommentId) && "bg-yellow-500/10",
         commentingOnLine && "bg-green-500/10",
@@ -559,10 +612,10 @@ const KeybindsBar = memo(function KeybindsBar() {
           !focusedPendingCommentId &&
           !commentingOnLine &&
           focusedSkipBlockIndex === null &&
-          "bg-muted/30"
+          "bg-card/50"
       )}
     >
-      <div className="flex items-center justify-between text-sm">
+      <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-4">
           {gotoLineMode ? (
             <>
@@ -694,50 +747,6 @@ const KeybindsBar = memo(function KeybindsBar() {
           )}
         </div>
       </div>
-    </div>
-  );
-});
-
-// ============================================================================
-// Markdown Content Component
-// ============================================================================
-
-const MarkdownContent = memo(function MarkdownContent({
-  content,
-}: {
-  content: string;
-}) {
-  return (
-    <div
-      className="prose prose-sm prose-invert max-w-none
-      prose-p:my-1 prose-p:leading-relaxed
-      prose-pre:bg-muted prose-pre:rounded-md prose-pre:p-3
-      prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none
-      prose-ul:my-1 prose-ol:my-1 prose-li:my-0
-      prose-blockquote:border-l-2 prose-blockquote:border-muted-foreground prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-muted-foreground
-      prose-headings:my-2 prose-headings:font-semibold
-      prose-hr:border-border prose-hr:my-3
-      prose-img:rounded-md prose-img:my-2
-      prose-table:text-sm prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300 underline decoration-blue-400/50 hover:decoration-blue-300 transition-colors"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {content}
-      </ReactMarkdown>
     </div>
   );
 });
@@ -2030,7 +2039,7 @@ const CommentItem = memo(function CommentItem({
           ) : (
             <>
               <div className="mt-1 text-sm text-foreground/90">
-                <MarkdownContent content={comment.body} />
+                <Markdown>{comment.body}</Markdown>
               </div>
               <div className="flex items-center gap-3 mt-2">
                 <button
@@ -2219,7 +2228,7 @@ const PendingCommentItem = memo(function PendingCommentItem({
             ) : (
               <>
                 <div className="mt-1 text-sm text-foreground/90">
-                  <MarkdownContent content={comment.body} />
+                  <Markdown>{comment.body}</Markdown>
                 </div>
                 <div className="flex items-center gap-3 mt-2">
                   <button

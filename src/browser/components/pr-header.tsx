@@ -6,7 +6,6 @@ interface PRHeaderProps {
   pr: PullRequest;
   owner: string;
   repo: string;
-  showTabs?: boolean;
 }
 
 export const PRHeader = memo(function PRHeader({
@@ -16,52 +15,52 @@ export const PRHeader = memo(function PRHeader({
 }: PRHeaderProps) {
   const stateIcon =
     pr.state === "open" && !pr.draft ? (
-      <GitPullRequest className="w-4 h-4 text-green-500" />
+      <GitPullRequest className="w-3.5 h-3.5 text-green-500" />
     ) : pr.merged ? (
-      <GitMerge className="w-4 h-4 text-purple-500" />
+      <GitMerge className="w-3.5 h-3.5 text-purple-500" />
     ) : pr.draft ? (
-      <GitPullRequest className="w-4 h-4 text-muted-foreground" />
+      <GitPullRequest className="w-3.5 h-3.5 text-muted-foreground" />
     ) : (
-      <GitPullRequest className="w-4 h-4 text-red-500" />
+      <GitPullRequest className="w-3.5 h-3.5 text-red-500" />
     );
 
   return (
-    <header className="border-b border-border px-4 py-3 flex items-center gap-4 shrink-0 bg-background">
-      <div className="flex items-center gap-2">
+    <header className="border-b border-border px-3 py-1.5 flex items-center gap-3 shrink-0 bg-card/30">
+      <div className="flex items-center gap-1.5">
         {stateIcon}
         <a
           href={`https://github.com/${owner}/${repo}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors font-mono"
         >
           {owner}/{repo}
         </a>
-        <span className="text-muted-foreground">#</span>
-        <span className="font-medium">{pr.number}</span>
+        <span className="text-muted-foreground text-xs">#</span>
+        <span className="text-xs font-medium">{pr.number}</span>
         {pr.draft && (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-muted text-muted-foreground">
+          <span className="px-1 py-0.5 text-[10px] rounded bg-muted text-muted-foreground">
             Draft
           </span>
         )}
       </div>
 
-      <h1 className="text-sm font-medium truncate flex-1">{pr.title}</h1>
+      <h1 className="text-xs font-medium truncate flex-1">{pr.title}</h1>
 
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <img
             src={pr.user.avatar_url}
             alt={pr.user.login}
-            className="w-5 h-5 rounded-full"
+            className="w-4 h-4 rounded-full"
           />
           <span>{pr.user.login}</span>
         </div>
 
-        <div className="text-xs text-muted-foreground font-mono">
-          <span className="px-1.5 py-0.5 bg-muted rounded">{pr.base.ref}</span>
-          <span className="mx-1">←</span>
-          <span className="px-1.5 py-0.5 bg-muted rounded">{pr.head.ref}</span>
+        <div className="text-[10px] text-muted-foreground font-mono">
+          <span className="px-1 py-0.5 bg-muted rounded">{pr.base.ref}</span>
+          <span className="mx-0.5">←</span>
+          <span className="px-1 py-0.5 bg-muted rounded">{pr.head.ref}</span>
         </div>
 
         <a
@@ -71,7 +70,7 @@ export const PRHeader = memo(function PRHeader({
           className="text-muted-foreground hover:text-foreground transition-colors"
           title="View on GitHub"
         >
-          <ExternalLink className="w-4 h-4" />
+          <ExternalLink className="w-3.5 h-3.5" />
         </a>
       </div>
     </header>

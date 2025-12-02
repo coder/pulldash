@@ -69,6 +69,331 @@ const api = new Hono()
   })
 
   // -------------------------------------------------------------------------
+  // PR Search (generic search with custom query)
+  // -------------------------------------------------------------------------
+  .get("/search/prs", async (c) => {
+    const query = c.req.query("q");
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const perPage = parseInt(c.req.query("per_page") || "30", 10);
+    const enrich = c.req.query("enrich") === "true";
+
+    if (!query) {
+      return c.json({ items: [], total_count: 0 });
+    }
+
+    const { data } = await octokit.request("GET /search/issues", {
+      q: query,
+      sort: "updated",
+      order: "desc",
+      per_page: perPage,
+      page,
+    });
+
+    // If enrichment not requested, return basic results
+    if (!enrich) {
+      return c.json({
+        items: data.items,
+        total_count: data.total_count,
+        incomplete_results: data.incomplete_results,
+      });
+    }
+
+    // Extract owner/repo/number from each PR for GraphQL enrichment
+    const prIdentifiers = data.items
+      .map((item) => {
+        const match = item.repository_url?.match(/repos\/([^/]+)\/([^/]+)/);
+        if (match && item.number) {
+          return { owner: match[1], repo: match[2], number: item.number };
+        }
+        return null;
+      })
+      .filter(
+        (x): x is { owner: string; repo: string; number: number } => x !== null
+      );
+
+    // Batch fetch enrichment data via GraphQL
+    if (prIdentifiers.length === 0) {
+      return c.json({
+        items: data.items,
+        total_count: data.total_count,
+        incomplete_results: data.incomplete_results,
+      });
+    }
+
+    // Build GraphQL query for all PRs
+    const prQueries = prIdentifiers
+      .map(
+        (pr, idx) => `
+        pr${idx}: repository(owner: "${pr.owner}", name: "${pr.repo}") {
+          pullRequest(number: ${pr.number}) {
+            number
+            changedFiles
+            additions
+            deletions
+            commits(last: 1) {
+              nodes {
+                commit {
+                  committedDate
+                }
+              }
+            }
+            viewerLatestReview {
+              submittedAt
+            }
+          }
+        }
+      `
+      )
+      .join("\n");
+
+    try {
+      const enrichmentData = await graphql<
+        Record<
+          string,
+          {
+            pullRequest: {
+              number: number;
+              changedFiles: number;
+              additions: number;
+              deletions: number;
+              commits: { nodes: Array<{ commit: { committedDate: string } }> };
+              viewerLatestReview: { submittedAt: string } | null;
+            } | null;
+          }
+        >
+      >(`query { ${prQueries} }`);
+
+      // Build lookup map
+      const enrichmentMap = new Map<
+        string,
+        {
+          changedFiles: number;
+          additions: number;
+          deletions: number;
+          lastCommitAt: string | null;
+          viewerLastReviewAt: string | null;
+          hasNewChanges: boolean;
+        }
+      >();
+
+      prIdentifiers.forEach((pr, idx) => {
+        const result = enrichmentData[`pr${idx}`]?.pullRequest;
+        if (result) {
+          const lastCommitAt =
+            result.commits.nodes[0]?.commit.committedDate || null;
+          const viewerLastReviewAt =
+            result.viewerLatestReview?.submittedAt || null;
+
+          // Determine if there are new changes since last review
+          let hasNewChanges = false;
+          if (viewerLastReviewAt && lastCommitAt) {
+            hasNewChanges =
+              new Date(lastCommitAt) > new Date(viewerLastReviewAt);
+          }
+
+          enrichmentMap.set(`${pr.owner}/${pr.repo}/${pr.number}`, {
+            changedFiles: result.changedFiles,
+            additions: result.additions,
+            deletions: result.deletions,
+            lastCommitAt,
+            viewerLastReviewAt,
+            hasNewChanges,
+          });
+        }
+      });
+
+      // Merge enrichment data into items
+      const enrichedItems = data.items.map((item) => {
+        const match = item.repository_url?.match(/repos\/([^/]+)\/([^/]+)/);
+        if (match && item.number) {
+          const key = `${match[1]}/${match[2]}/${item.number}`;
+          const enrichment = enrichmentMap.get(key);
+          if (enrichment) {
+            return { ...item, ...enrichment };
+          }
+        }
+        return item;
+      });
+
+      return c.json({
+        items: enrichedItems,
+        total_count: data.total_count,
+        incomplete_results: data.incomplete_results,
+      });
+    } catch (err) {
+      // If enrichment fails, return basic results
+      console.error("PR enrichment failed:", err);
+      return c.json({
+        items: data.items,
+        total_count: data.total_count,
+        incomplete_results: data.incomplete_results,
+      });
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // Repository Search
+  // -------------------------------------------------------------------------
+  .get("/search/repos", async (c) => {
+    const query = c.req.query("q");
+    if (!query) {
+      return c.json({ items: [] });
+    }
+
+    const { data } = await octokit.request("GET /search/repositories", {
+      q: query,
+      order: "desc",
+      per_page: 10,
+    });
+
+    return c.json(data);
+  })
+
+  // -------------------------------------------------------------------------
+  // Repository PRs (with detailed stats via GraphQL)
+  // -------------------------------------------------------------------------
+  .get("/repos/:owner/:repo/pulls", async (c) => {
+    const { owner, repo } = c.req.param();
+    const state = c.req.query("state") || "open";
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const perPage = parseInt(c.req.query("per_page") || "20", 10);
+
+    // Use GraphQL to get PRs with additions, deletions, and comment counts
+    const stateFilter =
+      state === "all"
+        ? "[OPEN, CLOSED, MERGED]"
+        : state === "closed"
+          ? "[CLOSED, MERGED]"
+          : "[OPEN]";
+
+    const data = await graphql<{
+      repository: {
+        pullRequests: {
+          totalCount: number;
+          nodes: Array<{
+            number: number;
+            title: string;
+            state: string;
+            isDraft: boolean;
+            createdAt: string;
+            updatedAt: string;
+            additions: number;
+            deletions: number;
+            changedFiles: number;
+            comments: { totalCount: number };
+            reviews: { totalCount: number };
+            author: { login: string; avatarUrl: string } | null;
+            labels: { nodes: Array<{ name: string; color: string }> };
+            reviewRequests: {
+              nodes: Array<{
+                requestedReviewer: { login: string; avatarUrl: string } | null;
+              }>;
+            };
+          }>;
+        };
+      };
+    }>(
+      `
+        query (
+          $owner: String!
+          $repo: String!
+          $first: Int!
+          $states: [PullRequestState!]
+        ) {
+          repository(owner: $owner, name: $repo) {
+            pullRequests(
+              first: $first
+              states: $states
+              orderBy: { field: UPDATED_AT, direction: DESC }
+            ) {
+              totalCount
+              nodes {
+                number
+                title
+                state
+                isDraft
+                createdAt
+                updatedAt
+                additions
+                deletions
+                changedFiles
+                comments {
+                  totalCount
+                }
+                reviews {
+                  totalCount
+                }
+                author {
+                  login
+                  avatarUrl
+                }
+                labels(first: 10) {
+                  nodes {
+                    name
+                    color
+                  }
+                }
+                reviewRequests(first: 10) {
+                  nodes {
+                    requestedReviewer {
+                      ... on User {
+                        login
+                        avatarUrl
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `,
+      {
+        owner,
+        repo,
+        first: perPage,
+        states:
+          state === "all"
+            ? ["OPEN", "CLOSED", "MERGED"]
+            : state === "closed"
+              ? ["CLOSED", "MERGED"]
+              : ["OPEN"],
+      }
+    );
+
+    const prs = data.repository.pullRequests.nodes.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      state: pr.state.toLowerCase(),
+      draft: pr.isDraft,
+      created_at: pr.createdAt,
+      updated_at: pr.updatedAt,
+      additions: pr.additions,
+      deletions: pr.deletions,
+      changed_files: pr.changedFiles,
+      comments: pr.comments.totalCount,
+      review_comments: pr.reviews.totalCount,
+      user: pr.author
+        ? { login: pr.author.login, avatar_url: pr.author.avatarUrl }
+        : null,
+      labels: pr.labels.nodes.map((l) => ({ name: l.name, color: l.color })),
+      requested_reviewers: pr.reviewRequests.nodes
+        .filter((r) => r.requestedReviewer)
+        .map((r) => ({
+          login: r.requestedReviewer!.login,
+          avatar_url: r.requestedReviewer!.avatarUrl,
+        })),
+    }));
+
+    return c.json({
+      items: prs,
+      total_count: data.repository.pullRequests.totalCount,
+      page,
+      per_page: perPage,
+    });
+  })
+
+  // -------------------------------------------------------------------------
   // Pull Request
   // -------------------------------------------------------------------------
   .get("/pr/:owner/:repo/:number", async (c) => {
