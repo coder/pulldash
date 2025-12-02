@@ -1,10 +1,10 @@
 {
-  "name": "prdash",
+  "name": "pullpal",
   "version": "0.1.0",
   "description": "A fast, local PR review dashboard",
   "type": "module",
   "bin": {
-    "prdash": "./dist/prdash"
+    "pullpal": "./dist/pullpal"
   },
   "files": [
     "dist"
@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@hono/node-server": "^1.19.6",
+    "@octokit/core": "^7.0.6",
     "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",

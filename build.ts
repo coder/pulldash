@@ -2,7 +2,7 @@ import { $ } from "bun";
 
 // Build the CLI binary
 const result = await Bun.build({
-  entrypoints: ["./bin/prdash.ts"],
+  entrypoints: ["./bin/pullpal.ts"],
   outdir: "./dist",
   target: "bun",
   minify: true,
@@ -18,10 +18,10 @@ if (!result.success) {
 }
 
 // Make the binary executable
-await $`chmod +x ./dist/prdash.js`;
+await $`chmod +x ./dist/pullpal.js`;
 
-// Rename to just 'prdash' for cleaner bin usage
-await $`mv ./dist/prdash.js ./dist/prdash`;
+// Rename to just 'pullpal' for cleaner bin usage
+await $`mv ./dist/pullpal.js ./dist/pullpal`;
 
-console.log("✅ Build complete: ./dist/prdash");
+console.log("✅ Build complete: ./dist/pullpal");
 
