@@ -71,19 +71,22 @@ jobs:
         run: bun run scripts/build-electron.ts
 
       - name: Publish to GitHub Releases
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing
           CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          # macOS notarization
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows signing
           WIN_CSC_LINK: ${{ secrets.WIN_CERTIFICATE }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTIFICATE_PWD }}
         run: |
+          # Unset empty signing vars so electron-builder ignores them
+          [ -z "$CSC_LINK" ] && unset CSC_LINK CSC_KEY_PASSWORD && export CSC_IDENTITY_AUTO_DISCOVERY=false
+          [ -z "$APPLE_ID" ] && unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          [ -z "$WIN_CSC_LINK" ] && unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+
           npx electron-builder --config electron-builder.json --${{ matrix.platform }} --publish always
 
       # Upload artifacts for debugging
