@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Loader2,
   GitMerge,
@@ -26,6 +28,31 @@ import type {
   CombinedStatus,
   IssueComment,
 } from "@/api/github";
+
+// ============================================================================
+// Markdown Content Component
+// ============================================================================
+
+const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="prose prose-sm prose-invert max-w-none
+      prose-p:my-2 prose-p:leading-relaxed
+      prose-pre:bg-muted prose-pre:rounded-md prose-pre:p-3
+      prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none
+      prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline
+      prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5
+      prose-blockquote:border-l-2 prose-blockquote:border-muted-foreground prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-muted-foreground
+      prose-headings:my-3 prose-headings:font-semibold
+      prose-hr:border-border prose-hr:my-4
+      prose-img:rounded-md prose-img:my-2
+      prose-table:text-sm prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+});
 
 // ============================================================================
 // Page Component
@@ -247,11 +274,7 @@ function PROverview({
             {/* PR Description */}
             {pr.body && (
               <div className="p-4 bg-card border border-border rounded-lg">
-                <div className="prose prose-sm prose-invert max-w-none">
-                  <pre className="whitespace-pre-wrap font-sans text-sm text-foreground/90">
-                    {pr.body}
-                  </pre>
-                </div>
+                <MarkdownContent content={pr.body} />
               </div>
             )}
           </div>
@@ -499,7 +522,9 @@ function ReviewItem({ review }: { review: Review }) {
           <span className="text-muted-foreground">{getStateText()}</span>
         </div>
         {review.body && (
-          <p className="mt-1 text-sm text-foreground/80">{review.body}</p>
+          <div className="mt-1 text-sm text-foreground/80">
+            <MarkdownContent content={review.body} />
+          </div>
         )}
       </div>
     </div>
@@ -609,9 +634,9 @@ function ConversationComment({ comment }: { comment: IssueComment }) {
             {new Date(comment.created_at).toLocaleDateString()}
           </span>
         </div>
-        <p className="mt-2 text-sm text-foreground/90 whitespace-pre-wrap">
-          {comment.body}
-        </p>
+        <div className="mt-2 text-sm text-foreground/90">
+          <MarkdownContent content={comment.body} />
+        </div>
       </div>
     </div>
   );

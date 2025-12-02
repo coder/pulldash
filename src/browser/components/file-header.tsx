@@ -1,5 +1,6 @@
 import { Check, FileCode } from "lucide-react";
 import { cn } from "../cn";
+import { Keycap } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/github";
 import { memo } from "react";
 
@@ -58,6 +59,7 @@ export const FileHeader = memo(function FileHeader({ file, isViewed, onToggleVie
       >
         <Check className={cn("w-4 h-4", isViewed && "text-green-500")} />
         {isViewed ? "Viewed" : "Mark as viewed"}
+        <Keycap keyName="v" size="xs" className="ml-1" />
       </button>
     </div>
   );

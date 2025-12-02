@@ -19,7 +19,9 @@ app.use("/*", serveStatic({ root: distDir }));
 
 // SPA fallback - serve index.html for client-side routing
 app.get("*", (c) => {
-  console.log("getting index.html", c.req.path);
+  if (c.req.path === "/favicon.ico") {
+    return c.body(null, 404);
+  }
   const indexPath = resolve(distDir, "index.html");
   const html = readFileSync(indexPath, "utf-8");
   return c.html(html.replaceAll("./", "/"));

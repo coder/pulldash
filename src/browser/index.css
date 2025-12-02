@@ -2,6 +2,24 @@
 @import "tw-animate-css";
 @import "./ui/diff/theme.css";
 
+/* Geist Font Declarations */
+@font-face {
+  font-family: "Geist";
+  src: url("../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2")
+    format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -70,6 +88,9 @@
   --scrollbar-track: oklch(0.18 0 0);
   --scrollbar-thumb: oklch(0.35 0 0);
   --scrollbar-thumb-hover: oklch(0.45 0 0);
+
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: "Geist Mono", "Fira Code", "Fira Mono", ui-monospace, monospace;
 }
 
 @layer base {
@@ -78,13 +99,13 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    font-family: var(--font-sans);
   }
 }
 
 /* Diff content styling */
 .diff-content table {
-  font-family: "Fira Code", "Fira Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 .diff-content ins,

@@ -15,6 +15,34 @@ export function getGitHubToken(): string {
   }
 }
 
+// ============================================================================
+// GraphQL API
+// ============================================================================
+
+async function graphqlFetch<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  const token = getGitHubToken();
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`GitHub GraphQL error: ${response.status} - ${error}`);
+  }
+
+  const result = await response.json();
+  if (result.errors) {
+    throw new Error(`GraphQL error: ${result.errors.map((e: { message: string }) => e.message).join(", ")}`);
+  }
+
+  return result.data;
+}
+
 export interface PullRequest {
   number: number;
   title: string;
@@ -108,6 +136,10 @@ export interface ReviewComment {
   updated_at: string;
   in_reply_to_id?: number;
   diff_hunk: string;
+  // Thread resolution info (populated from GraphQL)
+  pull_request_review_thread_id?: string;
+  is_resolved?: boolean;
+  resolved_by?: { login: string; avatar_url: string } | null;
 }
 
 async function githubFetch<T>(
@@ -282,45 +314,46 @@ export async function createPendingReview(
 }
 
 // Add a comment to a pending review
+// Note: GitHub's REST API doesn't support adding individual comments to existing pending reviews.
+// Comments must be submitted together when creating/submitting a review.
+// This function creates a draft single-comment review that shows as "Pending"
 export async function addPendingReviewComment(
   owner: string,
   repo: string,
   number: number,
-  reviewId: number,
+  commitId: string,
   path: string,
   line: number,
   body: string,
   side: "LEFT" | "RIGHT" = "RIGHT",
-  startLine?: number,
-  startSide?: "LEFT" | "RIGHT"
-): Promise<ReviewComment> {
-  const payload: Record<string, unknown> = {
-    body,
+  startLine?: number
+): Promise<{ review: Review; comment: ReviewComment }> {
+  // Create a new pending review with this single comment
+  const comments: PendingReviewComment[] = [{
     path,
     line,
+    body,
     side,
-  };
+    start_line: startLine,
+  }];
   
-  if (startLine) {
-    payload.start_line = startLine;
-    payload.start_side = startSide || side;
-  }
-  
-  return githubFetch(
-    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/comments`,
+  // Create the review (it will be in PENDING state by default when no event is specified)
+  const review = await githubFetch<Review>(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}/reviews`,
     {
       method: "POST",
       body: JSON.stringify({
-        ...payload,
-        // Adding to existing pending review - use subject_type
-        subject_type: "line",
+        commit_id: commitId,
+        comments,
       }),
-      headers: {
-        // Use preview header to support adding to pending review
-        Accept: "application/vnd.github.v3+json",
-      },
     }
   );
+  
+  // Fetch the comments for this review to get the comment details
+  const reviewComments = await getReviewComments(owner, repo, number, review.id);
+  const comment = reviewComments[0];
+  
+  return { review, comment };
 }
 
 // Submit a pending review
@@ -485,6 +518,374 @@ export async function createIssueComment(
       body: JSON.stringify({ body }),
     }
   );
+}
+
+// ============================================================================
+// GraphQL Mutations for Pending Reviews
+// ============================================================================
+
+// Get the node ID of a pull request (needed for GraphQL mutations)
+export async function getPullRequestNodeId(
+  owner: string,
+  repo: string,
+  number: number
+): Promise<string> {
+  const query = `
+    query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          id
+        }
+      }
+    }
+  `;
+
+  const data = await graphqlFetch<{
+    repository: { pullRequest: { id: string } };
+  }>(query, { owner, repo, number });
+
+  return data.repository.pullRequest.id;
+}
+
+// Get user's pending review for a PR
+export async function getPendingReviewNodeId(
+  owner: string,
+  repo: string,
+  number: number
+): Promise<{ reviewId: string; comments: Array<{ id: string; databaseId: number; body: string; path: string; line: number; startLine: number | null }> } | null> {
+  const query = `
+    query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviews(first: 10, states: [PENDING]) {
+            nodes {
+              id
+              databaseId
+              viewerDidAuthor
+              comments(first: 100) {
+                nodes {
+                  id
+                  databaseId
+                  body
+                  path
+                  line
+                  startLine
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await graphqlFetch<{
+    repository: {
+      pullRequest: {
+        reviews: {
+          nodes: Array<{
+            id: string;
+            databaseId: number;
+            viewerDidAuthor: boolean;
+            comments: {
+              nodes: Array<{
+                id: string;
+                databaseId: number;
+                body: string;
+                path: string;
+                line: number;
+                startLine: number | null;
+              }>;
+            };
+          }>;
+        };
+      };
+    };
+  }>(query, { owner, repo, number });
+
+  // Find the user's pending review
+  const pendingReview = data.repository.pullRequest.reviews.nodes.find(
+    (r) => r.viewerDidAuthor
+  );
+
+  if (!pendingReview) return null;
+
+  return {
+    reviewId: pendingReview.id,
+    comments: pendingReview.comments.nodes.map((c) => ({
+      id: c.id,
+      databaseId: c.databaseId,
+      body: c.body,
+      path: c.path,
+      line: c.line,
+      startLine: c.startLine,
+    })),
+  };
+}
+
+// Add a comment to a pending review (creates the review if it doesn't exist)
+export async function addPendingReviewCommentGraphQL(
+  pullRequestId: string,
+  path: string,
+  line: number,
+  body: string,
+  startLine?: number
+): Promise<{ reviewId: string; commentId: string; commentDatabaseId: number }> {
+  const query = `
+    mutation($input: AddPullRequestReviewCommentInput!) {
+      addPullRequestReviewComment(input: $input) {
+        comment {
+          id
+          databaseId
+          pullRequestReview {
+            id
+          }
+        }
+      }
+    }
+  `;
+
+  const input: Record<string, unknown> = {
+    pullRequestId,
+    path,
+    line,
+    body,
+  };
+
+  // For multi-line comments
+  if (startLine && startLine !== line) {
+    input.startLine = startLine;
+  }
+
+  const data = await graphqlFetch<{
+    addPullRequestReviewComment: {
+      comment: {
+        id: string;
+        databaseId: number;
+        pullRequestReview: { id: string };
+      };
+    };
+  }>(query, { input });
+
+  return {
+    reviewId: data.addPullRequestReviewComment.comment.pullRequestReview.id,
+    commentId: data.addPullRequestReviewComment.comment.id,
+    commentDatabaseId: data.addPullRequestReviewComment.comment.databaseId,
+  };
+}
+
+// Delete a pending review comment
+export async function deletePendingReviewCommentGraphQL(
+  commentId: string
+): Promise<void> {
+  const query = `
+    mutation($input: DeletePullRequestReviewCommentInput!) {
+      deletePullRequestReviewComment(input: $input) {
+        pullRequestReview {
+          id
+        }
+      }
+    }
+  `;
+
+  await graphqlFetch(query, { input: { id: commentId } });
+}
+
+// Update a pending review comment body
+export async function updatePendingReviewCommentGraphQL(
+  commentId: string,
+  body: string
+): Promise<void> {
+  const query = `
+    mutation($input: UpdatePullRequestReviewCommentInput!) {
+      updatePullRequestReviewComment(input: $input) {
+        pullRequestReviewComment {
+          id
+          body
+        }
+      }
+    }
+  `;
+
+  await graphqlFetch(query, { input: { pullRequestReviewCommentId: commentId, body } });
+}
+
+// Submit a pending review
+export async function submitPendingReviewGraphQL(
+  reviewId: string,
+  event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  body?: string
+): Promise<void> {
+  const query = `
+    mutation($input: SubmitPullRequestReviewInput!) {
+      submitPullRequestReview(input: $input) {
+        pullRequestReview {
+          id
+          state
+        }
+      }
+    }
+  `;
+
+  await graphqlFetch(query, {
+    input: {
+      pullRequestReviewId: reviewId,
+      event,
+      body: body || "",
+    },
+  });
+}
+
+// ============================================================================
+// Review Thread Resolution (GraphQL)
+// ============================================================================
+
+export interface ReviewThread {
+  id: string;
+  isResolved: boolean;
+  resolvedBy: { login: string; avatarUrl: string } | null;
+  comments: Array<{
+    id: string;
+    databaseId: number;
+    body: string;
+    path: string;
+    line: number | null;
+    originalLine: number | null;
+    startLine: number | null;
+    author: { login: string; avatarUrl: string } | null;
+    createdAt: string;
+    updatedAt: string;
+    replyTo: { databaseId: number } | null;
+  }>;
+}
+
+// Get all review threads for a PR (includes resolution status)
+export async function getReviewThreads(
+  owner: string,
+  repo: string,
+  number: number
+): Promise<ReviewThread[]> {
+  const query = `
+    query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            nodes {
+              id
+              isResolved
+              resolvedBy {
+                login
+                avatarUrl
+              }
+              comments(first: 100) {
+                nodes {
+                  id
+                  databaseId
+                  body
+                  path
+                  line
+                  originalLine
+                  startLine
+                  author {
+                    login
+                    avatarUrl
+                  }
+                  createdAt
+                  updatedAt
+                  replyTo {
+                    databaseId
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await graphqlFetch<{
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          nodes: Array<{
+            id: string;
+            isResolved: boolean;
+            resolvedBy: { login: string; avatarUrl: string } | null;
+            comments: {
+              nodes: Array<{
+                id: string;
+                databaseId: number;
+                body: string;
+                path: string;
+                line: number | null;
+                originalLine: number | null;
+                startLine: number | null;
+                author: { login: string; avatarUrl: string } | null;
+                createdAt: string;
+                updatedAt: string;
+                replyTo: { databaseId: number } | null;
+              }>;
+            };
+          }>;
+        };
+      };
+    };
+  }>(query, { owner, repo, number });
+
+  return data.repository.pullRequest.reviewThreads.nodes.map((thread) => ({
+    id: thread.id,
+    isResolved: thread.isResolved,
+    resolvedBy: thread.resolvedBy,
+    comments: thread.comments.nodes,
+  }));
+}
+
+// Resolve a review thread
+export async function resolveReviewThread(threadId: string): Promise<void> {
+  const query = `
+    mutation($input: ResolveReviewThreadInput!) {
+      resolveReviewThread(input: $input) {
+        thread {
+          id
+          isResolved
+        }
+      }
+    }
+  `;
+
+  await graphqlFetch(query, { input: { threadId } });
+}
+
+// Unresolve a review thread
+export async function unresolveReviewThread(threadId: string): Promise<void> {
+  const query = `
+    mutation($input: UnresolveReviewThreadInput!) {
+      unresolveReviewThread(input: $input) {
+        thread {
+          id
+          isResolved
+        }
+      }
+    }
+  `;
+
+  await graphqlFetch(query, { input: { threadId } });
+}
+
+// ============================================================================
+// Current User API
+// ============================================================================
+
+export interface GitHubUser {
+  login: string;
+  avatar_url: string;
+  id: number;
+  name: string | null;
+}
+
+export async function getCurrentUser(): Promise<GitHubUser> {
+  return githubFetch("https://api.github.com/user");
 }
 
 // ============================================================================

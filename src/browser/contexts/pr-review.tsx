@@ -1,5 +1,7 @@
 import {
   createContext,
+  startTransition,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -21,7 +23,10 @@ import type {
 
 export interface LocalPendingComment extends PendingReviewComment {
   id: string;
-  github_id?: number;
+  // GraphQL node ID for the comment (for deletion)
+  nodeId?: string;
+  // Database ID (for REST API compatibility)
+  databaseId?: number;
 }
 
 interface LineSegment {
@@ -69,6 +74,7 @@ interface PRReviewState {
   files: PullRequestFile[];
   owner: string;
   repo: string;
+  currentUser: string | null;
 
   // File navigation
   selectedFile: string | null;
@@ -81,6 +87,9 @@ interface PRReviewState {
   // Diffs
   loadedDiffs: Record<string, ParsedDiff>;
   loadingFiles: Set<string>;
+  // Map of "filename:skipIndex" -> expanded lines content
+  expandedSkipBlocks: Record<string, DiffLine[]>;
+  expandingSkipBlocks: Set<string>;
 
   // Line selection
   focusedLine: number | null;
@@ -95,6 +104,10 @@ interface PRReviewState {
   focusedCommentId: number | null;
   editingCommentId: number | null;
   replyingToCommentId: number | null;
+  
+  // Pending comment focus/edit (separate from regular comments since IDs are strings)
+  focusedPendingCommentId: string | null;
+  editingPendingCommentId: string | null;
 
   // Review
   pendingReviewId: number | null;
@@ -115,15 +128,34 @@ class PRReviewStore {
   private listeners = new Set<Listener>();
   private storageKey: string;
 
-  constructor(initialState: Omit<PRReviewState, "viewedFiles" | "hideViewed" | "loadedDiffs" | "loadingFiles" | "selectedFile" | "selectedFiles" | "focusedLine" | "selectionAnchor" | "commentingOnLine" | "gotoLineMode" | "gotoLineInput" | "focusedCommentId" | "editingCommentId" | "replyingToCommentId" | "pendingReviewId" | "pendingComments" | "reviewBody" | "showReviewPanel" | "submittingReview">) {
-    this.storageKey = `viewed-${initialState.owner}-${initialState.repo}-${initialState.pr.number}`;
+  constructor(initialState: Omit<PRReviewState, "viewedFiles" | "hideViewed" | "loadedDiffs" | "loadingFiles" | "expandedSkipBlocks" | "expandingSkipBlocks" | "selectedFile" | "selectedFiles" | "focusedLine" | "selectionAnchor" | "commentingOnLine" | "gotoLineMode" | "gotoLineInput" | "focusedCommentId" | "editingCommentId" | "replyingToCommentId" | "focusedPendingCommentId" | "editingPendingCommentId" | "pendingReviewId" | "pendingComments" | "reviewBody" | "showReviewPanel" | "submittingReview" | "currentUser">) {
+    this.storageKey = `pr-${initialState.owner}-${initialState.repo}-${initialState.pr.number}`;
     
     // Load viewed files from localStorage
     let viewedFiles = new Set<string>();
+    let pendingComments: LocalPendingComment[] = [];
+    let reviewBody = "";
+    
     try {
-      const stored = localStorage.getItem(this.storageKey);
+      const stored = localStorage.getItem(`${this.storageKey}-viewed`);
       if (stored) {
         viewedFiles = new Set(JSON.parse(stored));
+      }
+    } catch {}
+    
+    // Load pending comments from localStorage
+    try {
+      const stored = localStorage.getItem(`${this.storageKey}-pending`);
+      if (stored) {
+        pendingComments = JSON.parse(stored);
+      }
+    } catch {}
+    
+    // Load review body from localStorage
+    try {
+      const stored = localStorage.getItem(`${this.storageKey}-body`);
+      if (stored) {
+        reviewBody = stored;
       }
     } catch {}
 
@@ -132,9 +164,11 @@ class PRReviewStore {
       selectedFile: initialState.files[0]?.filename || null,
       selectedFiles: new Set(),
       viewedFiles,
-      hideViewed: false,
+      hideViewed: true,
       loadedDiffs: {},
       loadingFiles: new Set(),
+      expandedSkipBlocks: {},
+      expandingSkipBlocks: new Set(),
       focusedLine: null,
       selectionAnchor: null,
       commentingOnLine: null,
@@ -143,13 +177,20 @@ class PRReviewStore {
       focusedCommentId: null,
       editingCommentId: null,
       replyingToCommentId: null,
+      focusedPendingCommentId: null,
+      editingPendingCommentId: null,
       pendingReviewId: null,
-      pendingComments: [],
-      reviewBody: "",
+      pendingComments,
+      reviewBody,
       showReviewPanel: false,
       submittingReview: false,
+      currentUser: null,
     };
   }
+
+  setCurrentUser = (username: string) => {
+    this.set({ currentUser: username });
+  };
 
   // ---------------------------------------------------------------------------
   // Subscription
@@ -177,6 +218,8 @@ class PRReviewStore {
 
   selectFile = (filename: string) => {
     if (this.state.selectedFile === filename) return;
+    // Track for shift+click range selection
+    this.lastSelectedFile = filename;
     this.set({
       selectedFile: filename,
       selectedFiles: new Set(),
@@ -189,6 +232,8 @@ class PRReviewStore {
       focusedCommentId: null,
       editingCommentId: null,
       replyingToCommentId: null,
+      focusedPendingCommentId: null,
+      editingPendingCommentId: null,
     });
   };
 
@@ -279,7 +324,30 @@ class PRReviewStore {
 
   private persistViewedFiles(viewedFiles: Set<string>) {
     try {
-      localStorage.setItem(this.storageKey, JSON.stringify([...viewedFiles]));
+      localStorage.setItem(`${this.storageKey}-viewed`, JSON.stringify([...viewedFiles]));
+    } catch {}
+  }
+
+  private persistPendingComments(pendingComments: LocalPendingComment[]) {
+    try {
+      localStorage.setItem(`${this.storageKey}-pending`, JSON.stringify(pendingComments));
+    } catch {}
+  }
+
+  private persistReviewBody(body: string) {
+    try {
+      if (body) {
+        localStorage.setItem(`${this.storageKey}-body`, body);
+      } else {
+        localStorage.removeItem(`${this.storageKey}-body`);
+      }
+    } catch {}
+  }
+
+  private clearPendingState() {
+    try {
+      localStorage.removeItem(`${this.storageKey}-pending`);
+      localStorage.removeItem(`${this.storageKey}-body`);
     } catch {}
   }
 
@@ -347,6 +415,45 @@ class PRReviewStore {
   };
 
   // ---------------------------------------------------------------------------
+  // Skip Block Expansion Actions
+  // ---------------------------------------------------------------------------
+
+  getSkipBlockKey = (filename: string, skipIndex: number): string => {
+    return `${filename}:${skipIndex}`;
+  };
+
+  setSkipBlockExpanding = (key: string, expanding: boolean) => {
+    const next = new Set(this.state.expandingSkipBlocks);
+    if (expanding) {
+      next.add(key);
+    } else {
+      next.delete(key);
+    }
+    this.set({ expandingSkipBlocks: next });
+  };
+
+  setExpandedSkipBlock = (key: string, lines: DiffLine[]) => {
+    this.set({
+      expandedSkipBlocks: { ...this.state.expandedSkipBlocks, [key]: lines },
+    });
+  };
+
+  isSkipBlockExpanded = (filename: string, skipIndex: number): boolean => {
+    const key = this.getSkipBlockKey(filename, skipIndex);
+    return key in this.state.expandedSkipBlocks;
+  };
+
+  isSkipBlockExpanding = (filename: string, skipIndex: number): boolean => {
+    const key = this.getSkipBlockKey(filename, skipIndex);
+    return this.state.expandingSkipBlocks.has(key);
+  };
+
+  getExpandedSkipBlockLines = (filename: string, skipIndex: number): DiffLine[] | null => {
+    const key = this.getSkipBlockKey(filename, skipIndex);
+    return this.state.expandedSkipBlocks[key] ?? null;
+  };
+
+  // ---------------------------------------------------------------------------
   // Line Selection Actions
   // ---------------------------------------------------------------------------
 
@@ -359,7 +466,7 @@ class PRReviewStore {
   };
 
   navigateLine = (direction: "up" | "down", withShift: boolean) => {
-    const { focusedLine, selectionAnchor, selectedFile, loadedDiffs, comments, pendingComments, focusedCommentId } = this.state;
+    const { focusedLine, selectionAnchor, selectedFile, loadedDiffs, comments, pendingComments, focusedCommentId, focusedPendingCommentId } = this.state;
     
     const diff = selectedFile ? loadedDiffs[selectedFile] : null;
     if (!diff?.hunks) return;
@@ -376,33 +483,165 @@ class PRReviewStore {
     }
     if (commentableLines.length === 0) return;
 
-    // Handle down navigation when on a line with comments
-    if (direction === "down" && focusedLine && !focusedCommentId) {
+    // Helper to get all comments for a line (sorted for thread navigation)
+    const getLineComments = (line: number) => {
       const lineComments = comments.filter(
-        (c) => c.path === selectedFile && (c.line === focusedLine || c.original_line === focusedLine)
+        (c) => c.path === selectedFile && (c.line === line || c.original_line === line)
       );
-      const linePendingComments = pendingComments.filter(
-        (c) => c.path === selectedFile && c.line === focusedLine
-      );
+      // Sort: root comments first, then replies by ID
+      return lineComments.sort((a, b) => {
+        if (!a.in_reply_to_id && b.in_reply_to_id) return -1;
+        if (a.in_reply_to_id && !b.in_reply_to_id) return 1;
+        return a.id - b.id;
+      });
+    };
 
-      if (lineComments.length > 0 || linePendingComments.length > 0) {
-        if (lineComments.length > 0) {
-          this.set({ focusedCommentId: lineComments[0].id });
-          return;
-        } else {
-          this.set({ commentingOnLine: { line: focusedLine } });
+    // Helper to get pending comments for a line
+    const getLinePendingComments = (line: number) => {
+      return pendingComments.filter(
+        (c) => c.path === selectedFile && c.line === line
+      );
+    };
+
+    // Handle navigation when focused on a pending comment
+    if (focusedPendingCommentId) {
+      const focusedPending = pendingComments.find((c) => c.id === focusedPendingCommentId);
+      if (!focusedPending) {
+        this.set({ focusedPendingCommentId: null });
+        return;
+      }
+
+      const pendingLine = focusedPending.line;
+      const linePending = getLinePendingComments(pendingLine);
+      const pendingIdx = linePending.findIndex((c) => c.id === focusedPendingCommentId);
+
+      if (direction === "down") {
+        // Try to go to next pending comment on this line
+        if (pendingIdx < linePending.length - 1) {
+          this.set({ focusedPendingCommentId: linePending[pendingIdx + 1].id });
           return;
         }
+        // No more pending comments, try regular comments on this line
+        const lineComments = getLineComments(pendingLine);
+        if (lineComments.length > 0) {
+          this.set({
+            focusedPendingCommentId: null,
+            focusedCommentId: lineComments[0].id,
+          });
+          return;
+        }
+        // No regular comments, move to next line
+        const lineIdx = commentableLines.indexOf(pendingLine);
+        if (lineIdx < commentableLines.length - 1) {
+          const nextLine = commentableLines[lineIdx + 1];
+          this.set({
+            focusedLine: nextLine,
+            focusedPendingCommentId: null,
+            focusedCommentId: null,
+            selectionAnchor: null,
+          });
+        }
+        return;
+      } else {
+        // Going up - try to go to previous pending comment
+        if (pendingIdx > 0) {
+          this.set({ focusedPendingCommentId: linePending[pendingIdx - 1].id });
+          return;
+        }
+        // No more pending comments above, go back to line
+        this.set({
+          focusedLine: pendingLine,
+          focusedPendingCommentId: null,
+          selectionAnchor: null,
+        });
+        return;
       }
     }
 
-    // Handle up navigation when focused on a comment
-    if (direction === "up" && focusedCommentId) {
-      this.set({ focusedCommentId: null });
-      return;
+    // Handle navigation when focused on a regular comment
+    if (focusedCommentId) {
+      const focusedComment = comments.find((c) => c.id === focusedCommentId);
+      if (!focusedComment) {
+        this.set({ focusedCommentId: null });
+        return;
+      }
+
+      const commentLine = focusedComment.line ?? focusedComment.original_line;
+      const lineComments = commentLine ? getLineComments(commentLine) : [];
+      const commentIdx = lineComments.findIndex((c) => c.id === focusedCommentId);
+
+      if (direction === "down") {
+        // Try to go to next comment in thread
+        if (commentIdx < lineComments.length - 1) {
+          this.set({ focusedCommentId: lineComments[commentIdx + 1].id });
+          return;
+        }
+        // No more comments, move to next line
+        if (commentLine) {
+          const lineIdx = commentableLines.indexOf(commentLine);
+          if (lineIdx < commentableLines.length - 1) {
+            const nextLine = commentableLines[lineIdx + 1];
+            this.set({
+              focusedLine: nextLine,
+              focusedCommentId: null,
+              selectionAnchor: null,
+            });
+          }
+        }
+        return;
+      } else {
+        // Going up - try to go to previous comment in thread
+        if (commentIdx > 0) {
+          this.set({ focusedCommentId: lineComments[commentIdx - 1].id });
+          return;
+        }
+        // No more regular comments above, check for pending comments
+        if (commentLine) {
+          const linePending = getLinePendingComments(commentLine);
+          if (linePending.length > 0) {
+            this.set({
+              focusedCommentId: null,
+              focusedPendingCommentId: linePending[linePending.length - 1].id,
+            });
+            return;
+          }
+          // No pending comments, go back to line
+          this.set({
+            focusedLine: commentLine,
+            focusedCommentId: null,
+            selectionAnchor: null,
+          });
+        }
+        return;
+      }
     }
 
-    // Clear comment focus when moving lines
+    // Handle down navigation when on a line - check for pending comments first, then regular comments
+    if (direction === "down" && focusedLine) {
+      // First check pending comments
+      const linePending = getLinePendingComments(focusedLine);
+      if (linePending.length > 0) {
+        this.set({
+          focusedPendingCommentId: linePending[0].id,
+          focusedLine: null,
+          selectionAnchor: null,
+        });
+        return;
+      }
+
+      // Then check regular comments
+      const lineComments = getLineComments(focusedLine);
+      if (lineComments.length > 0) {
+        this.set({
+          focusedCommentId: lineComments[0].id,
+          focusedLine: null,
+          selectionAnchor: null,
+        });
+        return;
+      }
+    }
+
+    // Normal line navigation
     const currentIdx = focusedLine ? commentableLines.indexOf(focusedLine) : -1;
     
     let nextIdx: number;
@@ -413,18 +652,45 @@ class PRReviewStore {
     }
 
     const nextLine = commentableLines[nextIdx];
+
+    // Handle up navigation - check if the target line has comments to enter (from the bottom)
+    if (direction === "up" && focusedLine && nextLine !== focusedLine) {
+      // First check regular comments on target line (enter from the bottom/last comment)
+      const targetLineComments = getLineComments(nextLine);
+      if (targetLineComments.length > 0) {
+        this.set({
+          focusedCommentId: targetLineComments[targetLineComments.length - 1].id,
+          focusedLine: null,
+          selectionAnchor: null,
+        });
+        return;
+      }
+
+      // Then check pending comments on target line (enter from the bottom/last comment)
+      const targetLinePending = getLinePendingComments(nextLine);
+      if (targetLinePending.length > 0) {
+        this.set({
+          focusedPendingCommentId: targetLinePending[targetLinePending.length - 1].id,
+          focusedLine: null,
+          selectionAnchor: null,
+        });
+        return;
+      }
+    }
     
     if (withShift) {
       this.set({
         focusedLine: nextLine,
         selectionAnchor: selectionAnchor ?? focusedLine ?? nextLine,
         focusedCommentId: null,
+        focusedPendingCommentId: null,
       });
     } else {
       this.set({
         focusedLine: nextLine,
         selectionAnchor: null,
         focusedCommentId: null,
+        focusedPendingCommentId: null,
       });
     }
   };
@@ -552,19 +818,72 @@ class PRReviewStore {
     this.set({ replyingToCommentId: null });
   };
 
+  // ---------------------------------------------------------------------------
+  // Pending Comment Focus/Edit Actions
+  // ---------------------------------------------------------------------------
+
+  setFocusedPendingCommentId = (id: string | null) => {
+    this.set({ focusedPendingCommentId: id, focusedCommentId: null });
+  };
+
+  startEditingPendingComment = (id: string) => {
+    this.set({ editingPendingCommentId: id });
+  };
+
+  cancelEditingPendingComment = () => {
+    this.set({ editingPendingCommentId: null });
+  };
+
+  updatePendingCommentBody = (id: string, body: string) => {
+    const pendingComments = this.state.pendingComments.map((c) =>
+      c.id === id ? { ...c, body } : c
+    );
+    this.persistPendingComments(pendingComments);
+    this.set({ pendingComments, editingPendingCommentId: null });
+  };
+
   addPendingComment = (comment: LocalPendingComment) => {
+    const pendingComments = [...this.state.pendingComments, comment];
+    this.persistPendingComments(pendingComments);
     this.set({
-      pendingComments: [...this.state.pendingComments, comment],
+      pendingComments,
       commentingOnLine: null,
       focusedLine: null,
       selectionAnchor: null,
+      focusedPendingCommentId: comment.id,
+      focusedCommentId: null,
     });
   };
 
   removePendingComment = (id: string) => {
-    this.set({
-      pendingComments: this.state.pendingComments.filter((c) => c.id !== id),
-    });
+    const pendingComments = this.state.pendingComments.filter((c) => c.id !== id);
+    this.persistPendingComments(pendingComments);
+    this.set({ pendingComments });
+  };
+
+  updatePendingCommentWithGitHubIds = (
+    localId: string,
+    reviewNodeId: string,
+    commentNodeId: string,
+    commentDatabaseId: number
+  ) => {
+    const pendingComments = this.state.pendingComments.map((c) =>
+      c.id === localId
+        ? { ...c, nodeId: commentNodeId, databaseId: commentDatabaseId }
+        : c
+    );
+    // Also store the review node ID
+    this.pendingReviewNodeId = reviewNodeId;
+    this.persistPendingComments(pendingComments);
+    this.set({ pendingComments });
+  };
+
+  // Store the pending review node ID for submission
+  private pendingReviewNodeId: string | null = null;
+
+  getPendingReviewNodeId = () => this.pendingReviewNodeId;
+  setPendingReviewNodeId = (id: string | null) => {
+    this.pendingReviewNodeId = id;
   };
 
   updateComment = (commentId: number, updatedComment: ReviewComment) => {
@@ -603,6 +922,7 @@ class PRReviewStore {
   };
 
   setReviewBody = (body: string) => {
+    this.persistReviewBody(body);
     this.set({ reviewBody: body });
   };
 
@@ -619,6 +939,7 @@ class PRReviewStore {
   };
 
   clearReviewState = () => {
+    this.clearPendingState();
     this.set({
       pendingComments: [],
       pendingReviewId: null,
@@ -633,9 +954,11 @@ class PRReviewStore {
   // ---------------------------------------------------------------------------
 
   clearAllSelections = () => {
-    const { focusedCommentId } = this.state;
+    const { focusedCommentId, focusedPendingCommentId } = this.state;
     if (focusedCommentId) {
       this.set({ focusedCommentId: null });
+    } else if (focusedPendingCommentId) {
+      this.set({ focusedPendingCommentId: null });
     } else {
       this.set({
         focusedLine: null,
@@ -643,6 +966,110 @@ class PRReviewStore {
         selectedFiles: new Set(),
       });
     }
+  };
+
+  // ---------------------------------------------------------------------------
+  // URL Hash Navigation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get the current navigation state as a URL hash string.
+   * Format: #file=<path>&L<line> or #file=<path>&L<start>-<end> or #file=<path>&C<commentId>
+   */
+  getHashFromState = (): string => {
+    const { selectedFile, focusedLine, selectionAnchor, focusedCommentId, focusedPendingCommentId } = this.state;
+    
+    if (!selectedFile) return "";
+    
+    const params = new URLSearchParams();
+    params.set("file", selectedFile);
+    
+    // Comment takes priority over line selection
+    if (focusedCommentId) {
+      params.set("comment", String(focusedCommentId));
+    } else if (focusedPendingCommentId) {
+      params.set("pending", focusedPendingCommentId);
+    } else if (focusedLine) {
+      if (selectionAnchor && selectionAnchor !== focusedLine) {
+        const start = Math.min(focusedLine, selectionAnchor);
+        const end = Math.max(focusedLine, selectionAnchor);
+        params.set("L", `${start}-${end}`);
+      } else {
+        params.set("L", String(focusedLine));
+      }
+    }
+    
+    return params.toString();
+  };
+
+  /**
+   * Navigate to a state from a URL hash string.
+   * Returns true if navigation was performed.
+   */
+  navigateFromHash = (hash: string): boolean => {
+    if (!hash) return false;
+    
+    // Remove leading # if present
+    const hashStr = hash.startsWith("#") ? hash.slice(1) : hash;
+    if (!hashStr) return false;
+    
+    const params = new URLSearchParams(hashStr);
+    const file = params.get("file");
+    const lineParam = params.get("L");
+    const commentParam = params.get("comment");
+    const pendingParam = params.get("pending");
+    
+    if (!file) return false;
+    
+    // Check if file exists
+    const fileExists = this.state.files.some((f) => f.filename === file);
+    if (!fileExists) return false;
+    
+    // Select the file
+    if (this.state.selectedFile !== file) {
+      this.selectFile(file);
+    }
+    
+    // Handle comment focus
+    if (commentParam) {
+      const commentId = parseInt(commentParam, 10);
+      if (!isNaN(commentId)) {
+        // We need to wait for the file's diff to load before focusing comments
+        // The hash navigation hook will handle the timing
+        this.set({ focusedCommentId: commentId });
+        return true;
+      }
+    }
+    
+    // Handle pending comment focus
+    if (pendingParam) {
+      this.set({ focusedPendingCommentId: pendingParam });
+      return true;
+    }
+    
+    // Handle line focus
+    if (lineParam) {
+      const rangeMatch = lineParam.match(/^(\d+)-(\d+)$/);
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1], 10);
+        const end = parseInt(rangeMatch[2], 10);
+        this.set({
+          focusedLine: end,
+          selectionAnchor: start,
+        });
+      } else {
+        const line = parseInt(lineParam, 10);
+        if (!isNaN(line)) {
+          this.set({
+            focusedLine: line,
+            selectionAnchor: null,
+          });
+        }
+      }
+      return true;
+    }
+    
+    return true;
   };
 }
 
@@ -853,6 +1280,28 @@ export function useIsLineInSelection(lineNumber: number): boolean {
   });
 }
 
+/** Get selection boundary info for a specific line (for drawing selection outline) */
+export function useSelectionBoundary(lineNumber: number): { isFirst: boolean; isLast: boolean; isInSelection: boolean } {
+  const focusedLine = usePRReviewSelector((s) => s.focusedLine);
+  const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
+  
+  return useMemo(() => {
+    if (!focusedLine) return { isFirst: false, isLast: false, isInSelection: false };
+    if (!selectionAnchor) {
+      const isSelected = focusedLine === lineNumber;
+      return { isFirst: isSelected, isLast: isSelected, isInSelection: isSelected };
+    }
+    const start = Math.min(focusedLine, selectionAnchor);
+    const end = Math.max(focusedLine, selectionAnchor);
+    const isInSelection = lineNumber >= start && lineNumber <= end;
+    return {
+      isFirst: lineNumber === start,
+      isLast: lineNumber === end,
+      isInSelection,
+    };
+  }, [focusedLine, selectionAnchor, lineNumber]);
+}
+
 /** Check if a specific line is being commented on */
 export function useIsLineCommenting(lineNumber: number): boolean {
   return usePRReviewSelector((s) => s.commentingOnLine?.line === lineNumber);
@@ -868,6 +1317,44 @@ export function useIsLineInCommentingRange(lineNumber: number): boolean {
   });
 }
 
+/** Check if a specific line is within a comment's range (for multi-line comments) */
+export function useIsLineInCommentRange(lineNumber: number): boolean {
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const comments = usePRReviewSelector((s) => s.comments);
+  const pendingComments = usePRReviewSelector((s) => s.pendingComments);
+  
+  // This is O(n) but the selector will only re-run when comments change,
+  // and useSyncExternalStore will prevent re-renders if the result doesn't change
+  return useMemo(() => {
+    if (!selectedFile) return false;
+    
+    for (const comment of comments) {
+      if (comment.path !== selectedFile) continue;
+      if (
+        comment.start_line &&
+        comment.line &&
+        lineNumber >= comment.start_line &&
+        lineNumber <= comment.line
+      ) {
+        return true;
+      }
+    }
+    
+    for (const comment of pendingComments) {
+      if (comment.path !== selectedFile) continue;
+      if (
+        comment.start_line &&
+        lineNumber >= comment.start_line &&
+        lineNumber <= comment.line
+      ) {
+        return true;
+      }
+    }
+    
+    return false;
+  }, [selectedFile, comments, pendingComments, lineNumber]);
+}
+
 // ============================================================================
 // Keyboard Navigation Hook
 // ============================================================================
@@ -877,6 +1364,11 @@ export function useKeyboardNavigation() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Allow Ctrl/Cmd shortcuts to pass through (refresh, etc)
+      if (e.ctrlKey || e.metaKey) {
+        return;
+      }
+
       const target = e.target as HTMLElement;
       if (
         target.tagName === "INPUT" ||
@@ -929,11 +1421,17 @@ export function useKeyboardNavigation() {
       switch (e.key.toLowerCase()) {
         case "k":
           e.preventDefault();
-          store.navigateToNextUnviewedFile();
+          // Use startTransition to allow React to interrupt rendering during rapid navigation
+          startTransition(() => {
+            store.navigateToNextUnviewedFile();
+          });
           break;
         case "j":
           e.preventDefault();
-          store.navigateToPrevUnviewedFile();
+          // Use startTransition to allow React to interrupt rendering during rapid navigation
+          startTransition(() => {
+            store.navigateToPrevUnviewedFile();
+          });
           break;
         case "v":
           e.preventDefault();
@@ -953,8 +1451,16 @@ export function useKeyboardNavigation() {
           break;
         case "e":
           if (state.focusedCommentId) {
+            // Check if user owns this comment
+            const commentToEdit = state.comments.find((c) => c.id === state.focusedCommentId);
+            if (commentToEdit && state.currentUser === commentToEdit.user.login) {
+              e.preventDefault();
+              store.startEditing(state.focusedCommentId);
+            }
+          } else if (state.focusedPendingCommentId) {
+            // Pending comments are always owned by current user
             e.preventDefault();
-            store.startEditing(state.focusedCommentId);
+            store.startEditingPendingComment(state.focusedPendingCommentId);
           }
           break;
         case "r":
@@ -965,11 +1471,24 @@ export function useKeyboardNavigation() {
           break;
         case "d":
           if (state.focusedCommentId) {
+            // Check if user owns this comment
+            const commentToDelete = state.comments.find((c) => c.id === state.focusedCommentId);
+            if (commentToDelete && state.currentUser === commentToDelete.user.login) {
+              e.preventDefault();
+              if (window.confirm("Are you sure you want to delete this comment?")) {
+                // Trigger delete via API - component handles this
+                const event = new CustomEvent("pr-review:delete-comment", {
+                  detail: { commentId: state.focusedCommentId },
+                });
+                window.dispatchEvent(event);
+              }
+            }
+          } else if (state.focusedPendingCommentId) {
+            // Pending comments are always owned by current user
             e.preventDefault();
-            if (window.confirm("Are you sure you want to delete this comment?")) {
-              // Trigger delete via API - component handles this
-              const event = new CustomEvent("pr-review:delete-comment", {
-                detail: { commentId: state.focusedCommentId },
+            if (window.confirm("Are you sure you want to delete this pending comment?")) {
+              const event = new CustomEvent("pr-review:delete-pending-comment", {
+                detail: { commentId: state.focusedPendingCommentId },
               });
               window.dispatchEvent(event);
             }
@@ -992,26 +1511,149 @@ export function useKeyboardNavigation() {
 }
 
 // ============================================================================
+// URL Hash Navigation Hook
+// ============================================================================
+
+export function useHashNavigation() {
+  const store = useStore();
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const focusedLine = usePRReviewSelector((s) => s.focusedLine);
+  const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
+  const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
+  const focusedPendingCommentId = usePRReviewSelector((s) => s.focusedPendingCommentId);
+  
+  // Track if we're currently updating the hash to avoid circular updates
+  const isUpdatingHash = useRef(false);
+  // Track if we've done initial navigation from hash
+  const hasInitialized = useRef(false);
+
+  // Handle initial navigation from hash on mount
+  useEffect(() => {
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
+    
+    const hash = window.location.hash;
+    if (hash) {
+      isUpdatingHash.current = true;
+      store.navigateFromHash(hash);
+      // Reset after a short delay to allow state to settle
+      setTimeout(() => {
+        isUpdatingHash.current = false;
+      }, 100);
+    }
+  }, [store]);
+
+  // Update hash when state changes
+  useEffect(() => {
+    if (isUpdatingHash.current) return;
+    
+    const newHash = store.getHashFromState();
+    const currentHash = window.location.hash.slice(1); // Remove leading #
+    
+    if (newHash !== currentHash) {
+      // Use replaceState to avoid creating history entries for every line navigation
+      // but use pushState for file changes to allow back/forward navigation
+      const currentParams = new URLSearchParams(currentHash);
+      const newParams = new URLSearchParams(newHash);
+      
+      if (currentParams.get("file") !== newParams.get("file")) {
+        // File changed - create history entry
+        window.history.pushState(null, "", newHash ? `#${newHash}` : window.location.pathname);
+      } else {
+        // Same file, just line/comment change - replace
+        window.history.replaceState(null, "", newHash ? `#${newHash}` : window.location.pathname);
+      }
+    }
+  }, [store, selectedFile, focusedLine, selectionAnchor, focusedCommentId, focusedPendingCommentId]);
+
+  // Handle browser back/forward navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      isUpdatingHash.current = true;
+      store.navigateFromHash(window.location.hash);
+      setTimeout(() => {
+        isUpdatingHash.current = false;
+      }, 100);
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, [store]);
+}
+
+// ============================================================================
 // Diff Loading Hook
 // ============================================================================
 
 const diffCache = new Map<string, ParsedDiff>();
-const pendingFetches = new Map<string, Promise<ParsedDiff>>();
+const pendingFetches = new Map<string, { promise: Promise<ParsedDiff>; controller: AbortController }>();
 const MAX_CACHE_SIZE = 100;
 
-async function fetchParsedDiff(file: PullRequestFile): Promise<ParsedDiff> {
+// Check if a diff is already cached (sync check)
+function getDiffFromCache(file: PullRequestFile): ParsedDiff | null {
+  if (!file.patch) {
+    return { hunks: [] };
+  }
+  return diffCache.get(file.sha) ?? null;
+}
+
+// Abort all pending fetches (used when navigating rapidly)
+function abortAllPendingFetches() {
+  for (const [key, { controller }] of pendingFetches) {
+    controller.abort();
+    pendingFetches.delete(key);
+  }
+}
+
+// Abort a specific pending fetch
+function abortPendingFetch(cacheKey: string) {
+  const pending = pendingFetches.get(cacheKey);
+  if (pending) {
+    pending.controller.abort();
+    pendingFetches.delete(cacheKey);
+  }
+}
+
+async function fetchParsedDiff(file: PullRequestFile, signal?: AbortSignal): Promise<ParsedDiff> {
   if (!file.patch) {
     return { hunks: [] };
   }
 
   const cacheKey = file.sha;
 
+  // Check cache first
   if (diffCache.has(cacheKey)) {
     return diffCache.get(cacheKey)!;
   }
 
-  if (pendingFetches.has(cacheKey)) {
-    return pendingFetches.get(cacheKey)!;
+  // Check if already aborted
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  // If there's already a pending fetch for this file, wait for it
+  const existing = pendingFetches.get(cacheKey);
+  if (existing) {
+    // If caller wants to abort, wrap the promise
+    if (signal) {
+      return new Promise((resolve, reject) => {
+        const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+        signal.addEventListener("abort", onAbort);
+        existing.promise
+          .then(resolve)
+          .catch(reject)
+          .finally(() => signal.removeEventListener("abort", onAbort));
+      });
+    }
+    return existing.promise;
+  }
+
+  // Create new fetch with its own controller
+  const controller = new AbortController();
+  
+  // Link to caller's signal
+  if (signal) {
+    signal.addEventListener("abort", () => controller.abort());
   }
 
   const fetchPromise = (async () => {
@@ -1024,27 +1666,35 @@ async function fetchParsedDiff(file: PullRequestFile): Promise<ParsedDiff> {
         previousFilename: file.previous_filename,
         sha: file.sha,
       }),
+      signal: controller.signal,
     });
 
     const parsed = await response.json();
+    
+    // Clean up pending entry
+    pendingFetches.delete(cacheKey);
 
     if (parsed.error || !parsed.hunks) {
-      pendingFetches.delete(cacheKey);
       return { hunks: [] };
     }
 
+    // Add to cache
     if (diffCache.size >= MAX_CACHE_SIZE) {
       const firstKey = diffCache.keys().next().value;
       if (firstKey) diffCache.delete(firstKey);
     }
-
     diffCache.set(cacheKey, parsed);
-    pendingFetches.delete(cacheKey);
 
     return parsed;
   })();
 
-  pendingFetches.set(cacheKey, fetchPromise);
+  pendingFetches.set(cacheKey, { promise: fetchPromise, controller });
+  
+  // Clean up on error
+  fetchPromise.catch(() => {
+    pendingFetches.delete(cacheKey);
+  });
+
   return fetchPromise;
 }
 
@@ -1058,37 +1708,95 @@ export function useDiffLoader() {
     if (!selectedFile) return;
 
     const file = files.find((f) => f.filename === selectedFile);
-    if (!file || loadedDiffs[selectedFile]) return;
+    if (!file) return;
+    
+    const currentFile = selectedFile;
 
-    store.setDiffLoading(selectedFile, true);
+    // Check cache synchronously - instant if cached
+    const cached = getDiffFromCache(file);
+    if (cached) {
+      if (!loadedDiffs[currentFile]) {
+        store.setLoadedDiff(currentFile, cached);
+      }
+      return;
+    }
 
-    fetchParsedDiff(file)
-      .then((diff) => {
-        store.setLoadedDiff(selectedFile, diff);
-      })
-      .catch(console.error)
-      .finally(() => {
-        store.setDiffLoading(selectedFile, false);
-      });
-  }, [selectedFile, files, loadedDiffs, store]);
+    // Already loaded in store
+    if (loadedDiffs[currentFile]) return;
 
-  // Prefetch next files
-  useEffect(() => {
-    if (!selectedFile) return;
+    // Abort ALL pending fetches - only care about current file
+    abortAllPendingFetches();
 
-    const currentIndex = files.findIndex((f) => f.filename === selectedFile);
-    const filesToPrefetch = files
-      .slice(currentIndex + 1, currentIndex + 6)
-      .filter((f) => !loadedDiffs[f.filename] && !pendingFetches.has(f.sha));
+    // Delay showing loading spinner to avoid flash for fast loads
+    const loadingTimeoutId = setTimeout(() => {
+      if (store.getSnapshot().selectedFile === currentFile && !store.getSnapshot().loadedDiffs[currentFile]) {
+        store.setDiffLoading(currentFile, true);
+      }
+    }, 100);
 
-    for (const file of filesToPrefetch) {
+    // Start fetch after minimal debounce (16ms = 1 frame)
+    const fetchTimeoutId = setTimeout(() => {
+      // Double-check we still need this file
+      if (store.getSnapshot().selectedFile !== currentFile) return;
+      if (store.getSnapshot().loadedDiffs[currentFile]) return;
+
       fetchParsedDiff(file)
         .then((diff) => {
-          store.setLoadedDiff(file.filename, diff);
+          if (store.getSnapshot().selectedFile === currentFile) {
+            store.setLoadedDiff(currentFile, diff);
+            store.setDiffLoading(currentFile, false);
+            
+            // Now prefetch next files
+            const currentIndex = files.findIndex((f) => f.filename === currentFile);
+            const filesToPrefetch = files
+              .slice(currentIndex + 1, currentIndex + 4)
+              .filter((f) => !store.getSnapshot().loadedDiffs[f.filename] && !getDiffFromCache(f));
+
+            for (const pfile of filesToPrefetch) {
+              fetchParsedDiff(pfile)
+                .then((pdiff) => store.setLoadedDiff(pfile.filename, pdiff))
+                .catch(() => {});
+            }
+          }
         })
-        .catch(() => {});
-    }
+        .catch((err) => {
+          if (err?.name !== "AbortError" && store.getSnapshot().selectedFile === currentFile) {
+            console.error(err);
+            store.setDiffLoading(currentFile, false);
+          }
+        });
+    }, 16); // 16ms = 1 frame, minimal debounce
+
+    // Cleanup: cancel timeouts
+    return () => {
+      clearTimeout(loadingTimeoutId);
+      clearTimeout(fetchTimeoutId);
+      store.setDiffLoading(currentFile, false);
+    };
   }, [selectedFile, files, loadedDiffs, store]);
+}
+
+// ============================================================================
+// Current User Hook
+// ============================================================================
+
+export function useCurrentUserLoader() {
+  const store = useStore();
+
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      try {
+        const response = await fetch("/api/user");
+        if (!response.ok) return;
+        const user = await response.json();
+        store.setCurrentUser(user.login);
+      } catch (error) {
+        console.error("Failed to fetch current user:", error);
+      }
+    };
+
+    fetchCurrentUser();
+  }, [store]);
 }
 
 // ============================================================================
@@ -1104,38 +1812,37 @@ export function usePendingReviewLoader() {
   useEffect(() => {
     const fetchPendingReview = async () => {
       try {
-        const reviewsRes = await fetch(
-          `/api/pr/${owner}/${repo}/${pr.number}/reviews`
+        // Use GraphQL API to get pending review
+        const response = await fetch(
+          `/api/pr/${owner}/${repo}/${pr.number}/pending-review`
         );
-        if (!reviewsRes.ok) return;
+        if (!response.ok) return;
 
-        const reviews: Review[] = await reviewsRes.json();
-        const pendingReview = reviews.find((r) => r.state === "PENDING");
+        const result = await response.json();
+        if (!result) return; // No pending review
 
-        if (pendingReview) {
-          store.setPendingReviewId(pendingReview.id);
+        const { reviewId, comments } = result;
 
-          const commentsRes = await fetch(
-            `/api/pr/${owner}/${repo}/${pr.number}/reviews/${pendingReview.id}/comments`
-          );
-          if (commentsRes.ok) {
-            const pendingReviewComments: ReviewComment[] =
-              await commentsRes.json();
-            const localComments: LocalPendingComment[] =
-              pendingReviewComments.map((c) => ({
-                id: `github-${c.id}`,
-                github_id: c.id,
-                path: c.path,
-                line: c.line || 0,
-                start_line: c.start_line || undefined,
-                body: c.body,
-                side: c.side,
-              }));
-            store.setPendingComments(localComments);
-          }
-        }
+        // Store the review node ID for submission
+        store.setPendingReviewNodeId(reviewId);
+
+        // Convert to local comments
+        const localComments: LocalPendingComment[] = comments.map(
+          (c: { id: string; databaseId: number; body: string; path: string; line: number; startLine: number | null }) => ({
+            id: `github-${c.databaseId}`,
+            nodeId: c.id,
+            databaseId: c.databaseId,
+            path: c.path,
+            line: c.line,
+            start_line: c.startLine || undefined,
+            body: c.body,
+            side: "RIGHT" as const,
+          })
+        );
+
+        store.setPendingComments(localComments);
       } catch (error) {
-        console.error("Failed to fetch pending reviews:", error);
+        console.error("Failed to fetch pending review:", error);
       }
     };
 
@@ -1146,6 +1853,59 @@ export function usePendingReviewLoader() {
 // ============================================================================
 // API Action Hooks
 // ============================================================================
+
+export function useThreadActions() {
+  const store = useStore();
+  const owner = usePRReviewSelector((s) => s.owner);
+  const repo = usePRReviewSelector((s) => s.repo);
+  const pr = usePRReviewSelector((s) => s.pr);
+
+  const resolveThread = async (threadId: string) => {
+    try {
+      const response = await fetch(
+        `/api/pr/${owner}/${repo}/${pr.number}/threads/${encodeURIComponent(threadId)}/resolve`,
+        { method: "POST" }
+      );
+
+      if (response.ok) {
+        // Update local state - mark all comments in this thread as resolved
+        const state = store.getSnapshot();
+        const updatedComments = state.comments.map((c) =>
+          c.pull_request_review_thread_id === threadId
+            ? { ...c, is_resolved: true }
+            : c
+        );
+        store.setComments(updatedComments);
+      }
+    } catch (error) {
+      console.error("Failed to resolve thread:", error);
+    }
+  };
+
+  const unresolveThread = async (threadId: string) => {
+    try {
+      const response = await fetch(
+        `/api/pr/${owner}/${repo}/${pr.number}/threads/${encodeURIComponent(threadId)}/unresolve`,
+        { method: "POST" }
+      );
+
+      if (response.ok) {
+        // Update local state - mark all comments in this thread as unresolved
+        const state = store.getSnapshot();
+        const updatedComments = state.comments.map((c) =>
+          c.pull_request_review_thread_id === threadId
+            ? { ...c, is_resolved: false }
+            : c
+        );
+        store.setComments(updatedComments);
+      }
+    } catch (error) {
+      console.error("Failed to unresolve thread:", error);
+    }
+  };
+
+  return { resolveThread, unresolveThread };
+}
 
 export function useCommentActions() {
   const store = useStore();
@@ -1161,8 +1921,10 @@ export function useCommentActions() {
     const state = store.getSnapshot();
     if (!state.selectedFile) return;
 
+    // Create a local comment first for immediate UI feedback
+    const localId = `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const newComment: LocalPendingComment = {
-      id: `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: localId,
       path: state.selectedFile,
       line,
       start_line: startLine,
@@ -1171,23 +1933,78 @@ export function useCommentActions() {
     };
 
     store.addPendingComment(newComment);
+
+    // Sync to GitHub via GraphQL - this creates/adds to the pending review
+    try {
+      const response = await fetch(
+        `/api/pr/${owner}/${repo}/${pr.number}/pending-comment`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            path: state.selectedFile,
+            line,
+            body,
+            start_line: startLine,
+          }),
+        }
+      );
+
+      if (response.ok) {
+        const { reviewId, commentId, commentDatabaseId } = await response.json();
+        // Update the local comment with GitHub IDs
+        store.updatePendingCommentWithGitHubIds(localId, reviewId, commentId, commentDatabaseId);
+      } else {
+        const error = await response.json();
+        console.error("Failed to create pending comment on GitHub:", error);
+      }
+    } catch (error) {
+      console.error("Failed to sync pending comment to GitHub:", error);
+    }
   };
 
   const removePendingComment = async (id: string) => {
     const state = store.getSnapshot();
     const comment = state.pendingComments.find((c) => c.id === id);
 
-    if (comment?.github_id) {
+    // Remove locally first
+    store.removePendingComment(id);
+
+    // Delete from GitHub via GraphQL if it was synced
+    if (comment?.nodeId) {
       try {
-        await fetch(`/api/pr/${owner}/${repo}/comments/${comment.github_id}`, {
-          method: "DELETE",
-        });
+        await fetch(
+          `/api/pr/${owner}/${repo}/${pr.number}/pending-comment/${encodeURIComponent(comment.nodeId)}`,
+          { method: "DELETE" }
+        );
       } catch (error) {
-        console.error("Failed to delete comment:", error);
+        console.error("Failed to delete comment from GitHub:", error);
       }
     }
+  };
 
-    store.removePendingComment(id);
+  const updatePendingComment = async (id: string, newBody: string) => {
+    const state = store.getSnapshot();
+    const comment = state.pendingComments.find((c) => c.id === id);
+
+    // Update locally first
+    store.updatePendingCommentBody(id, newBody);
+
+    // Update on GitHub via GraphQL if it was synced
+    if (comment?.nodeId) {
+      try {
+        await fetch(
+          `/api/pr/${owner}/${repo}/${pr.number}/pending-comment/${encodeURIComponent(comment.nodeId)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ body: newBody }),
+          }
+        );
+      } catch (error) {
+        console.error("Failed to update comment on GitHub:", error);
+      }
+    }
   };
 
   const updateComment = async (commentId: number, newBody: string) => {
@@ -1250,6 +2067,7 @@ export function useCommentActions() {
   return {
     addPendingComment,
     removePendingComment,
+    updatePendingComment,
     updateComment,
     deleteComment,
     replyToComment,
@@ -1269,59 +2087,161 @@ export function useReviewActions() {
     store.setSubmittingReview(true);
 
     try {
-      let response;
+      // Get the pending review node ID (from GraphQL)
+      const reviewNodeId = store.getPendingReviewNodeId();
 
-      if (state.pendingReviewId) {
-        response = await fetch(
-          `/api/pr/${owner}/${repo}/${pr.number}/reviews/${state.pendingReviewId}/submit`,
+      if (reviewNodeId) {
+        // Submit via GraphQL
+        const response = await fetch(
+          `/api/pr/${owner}/${repo}/${pr.number}/pending-review/submit`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              review_id: reviewNodeId,
               event,
               body: state.reviewBody,
             }),
           }
         );
-      } else {
-        response = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/reviews`, {
+
+        if (!response.ok) {
+          throw new Error("Failed to submit review");
+        }
+      } else if (state.pendingComments.length > 0) {
+        // Fallback: create a new review with all comments via REST
+        const response = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/reviews`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             commit_id: pr.head.sha,
             event,
             body: state.reviewBody,
-            comments: state.pendingComments
-              .filter((c) => !c.github_id)
-              .map(({ path, line, body, side, start_line }) => ({
-                path,
-                line,
-                body,
-                side,
-                start_line,
-              })),
+            comments: state.pendingComments.map(({ path, line, body, side, start_line }) => ({
+              path,
+              line,
+              body,
+              side,
+              start_line,
+            })),
           }),
         });
-      }
 
-      if (response.ok) {
-        // Refresh comments
-        const commentsRes = await fetch(
-          `/api/pr/${owner}/${repo}/${pr.number}/comments`
-        );
-        if (commentsRes.ok) {
-          const newComments = await commentsRes.json();
-          store.setComments(newComments);
+        if (!response.ok) {
+          throw new Error("Failed to submit review");
         }
+      } else {
+        // Just submitting a review with no comments (APPROVE, etc)
+        const response = await fetch(`/api/pr/${owner}/${repo}/${pr.number}/reviews`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            commit_id: pr.head.sha,
+            event,
+            body: state.reviewBody,
+            comments: [],
+          }),
+        });
 
-        store.clearReviewState();
+        if (!response.ok) {
+          throw new Error("Failed to submit review");
+        }
       }
+
+      // Refresh comments
+      const commentsRes = await fetch(
+        `/api/pr/${owner}/${repo}/${pr.number}/comments`
+      );
+      if (commentsRes.ok) {
+        const newComments = await commentsRes.json();
+        store.setComments(newComments);
+      }
+
+      store.clearReviewState();
     } finally {
       store.setSubmittingReview(false);
     }
   };
 
   return { submitReview };
+}
+
+// ============================================================================
+// Skip Block Expansion Hook
+// ============================================================================
+
+export function useSkipBlockExpansion() {
+  const store = useStore();
+  const owner = usePRReviewSelector((s) => s.owner);
+  const repo = usePRReviewSelector((s) => s.repo);
+  const pr = usePRReviewSelector((s) => s.pr);
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const expandedSkipBlocks = usePRReviewSelector((s) => s.expandedSkipBlocks);
+  const expandingSkipBlocks = usePRReviewSelector((s) => s.expandingSkipBlocks);
+
+  const expandSkipBlock = useCallback(async (skipIndex: number, startLine: number, count: number) => {
+    if (!selectedFile) return;
+    
+    const key = store.getSkipBlockKey(selectedFile, skipIndex);
+    
+    // Already expanded or expanding
+    if (expandedSkipBlocks[key] || expandingSkipBlocks.has(key)) return;
+    
+    store.setSkipBlockExpanding(key, true);
+    
+    try {
+      // Fetch the file content from the head commit
+      const fileResponse = await fetch(
+        `/api/file/${owner}/${repo}?path=${encodeURIComponent(selectedFile)}&ref=${pr.head.sha}`
+      );
+      
+      if (!fileResponse.ok) {
+        console.error("Failed to fetch file for skip block expansion");
+        return;
+      }
+      
+      const content = await fileResponse.text();
+      
+      // Get highlighted lines from the API
+      const highlightResponse = await fetch("/api/highlight-lines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content,
+          filename: selectedFile,
+          startLine,
+          count,
+        }),
+      });
+      
+      if (!highlightResponse.ok) {
+        console.error("Failed to highlight lines");
+        return;
+      }
+      
+      const expandedLines: DiffLine[] = await highlightResponse.json();
+      store.setExpandedSkipBlock(key, expandedLines);
+    } catch (error) {
+      console.error("Failed to expand skip block:", error);
+    } finally {
+      store.setSkipBlockExpanding(key, false);
+    }
+  }, [store, owner, repo, pr.head.sha, selectedFile, expandedSkipBlocks, expandingSkipBlocks]);
+
+  // Create a getExpandedLines function that uses the subscribed state directly
+  const getExpandedLines = useCallback((skipIndex: number): DiffLine[] | null => {
+    if (!selectedFile) return null;
+    const key = `${selectedFile}:${skipIndex}`;
+    return expandedSkipBlocks[key] ?? null;
+  }, [selectedFile, expandedSkipBlocks]);
+
+  const isExpanding = useCallback((skipIndex: number): boolean => {
+    if (!selectedFile) return false;
+    const key = `${selectedFile}:${skipIndex}`;
+    return expandingSkipBlocks.has(key);
+  }, [selectedFile, expandingSkipBlocks]);
+
+  return { expandSkipBlock, isExpanding, getExpandedLines };
 }
 
 // ============================================================================
@@ -1388,4 +2308,5 @@ export function getTimeAgo(date: Date): string {
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
   return date.toLocaleDateString();
 }
+
 

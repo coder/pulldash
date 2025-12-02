@@ -19,8 +19,20 @@ import {
   getIssueComments,
   createIssueComment,
   getFileContent,
+  getCurrentUser,
+  // GraphQL mutations for pending reviews
+  getPullRequestNodeId,
+  getPendingReviewNodeId,
+  addPendingReviewCommentGraphQL,
+  deletePendingReviewCommentGraphQL,
+  updatePendingReviewCommentGraphQL,
+  submitPendingReviewGraphQL,
+  // Review thread resolution
+  getReviewThreads,
+  resolveReviewThread,
+  unresolveReviewThread,
 } from "./github";
-import { parseDiffWithHighlighting } from "./diff";
+import { parseDiffWithHighlighting, highlightFileLines } from "./diff";
 
 const api = new Hono().basePath("/api");
 
@@ -52,19 +64,88 @@ api.get("/pr/:owner/:repo/:number/files", async (c) => {
   }
 });
 
-// Get PR comments
+// Get PR comments (with thread resolution info from GraphQL)
 api.get("/pr/:owner/:repo/:number/comments", async (c) => {
   const { owner, repo, number } = c.req.param();
   try {
-    const comments = await getPullRequestComments(
-      owner,
-      repo,
-      parseInt(number, 10)
-    );
-    return c.json(comments);
+    // Fetch both REST comments and GraphQL threads for resolution info
+    const [comments, threads] = await Promise.all([
+      getPullRequestComments(owner, repo, parseInt(number, 10)),
+      getReviewThreads(owner, repo, parseInt(number, 10)),
+    ]);
+
+    // Create a map of comment database ID to thread info
+    const commentToThread = new Map<number, { threadId: string; isResolved: boolean; resolvedBy: { login: string; avatar_url: string } | null }>();
+    for (const thread of threads) {
+      for (const comment of thread.comments) {
+        commentToThread.set(comment.databaseId, {
+          threadId: thread.id,
+          isResolved: thread.isResolved,
+          resolvedBy: thread.resolvedBy ? {
+            login: thread.resolvedBy.login,
+            avatar_url: thread.resolvedBy.avatarUrl,
+          } : null,
+        });
+      }
+    }
+
+    // Enrich REST comments with thread info
+    const enrichedComments = comments.map((comment) => {
+      const threadInfo = commentToThread.get(comment.id);
+      return {
+        ...comment,
+        pull_request_review_thread_id: threadInfo?.threadId,
+        is_resolved: threadInfo?.isResolved ?? false,
+        resolved_by: threadInfo?.resolvedBy ?? null,
+      };
+    });
+
+    return c.json(enrichedComments);
   } catch (error) {
     return c.json(
       { error: error instanceof Error ? error.message : "Failed to fetch comments" },
+      500
+    );
+  }
+});
+
+// Get review threads (GraphQL - includes resolution status)
+api.get("/pr/:owner/:repo/:number/threads", async (c) => {
+  const { owner, repo, number } = c.req.param();
+  try {
+    const threads = await getReviewThreads(owner, repo, parseInt(number, 10));
+    return c.json(threads);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to fetch threads" },
+      500
+    );
+  }
+});
+
+// Resolve a review thread
+api.post("/pr/:owner/:repo/:number/threads/:threadId/resolve", async (c) => {
+  const { threadId } = c.req.param();
+  try {
+    await resolveReviewThread(threadId);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to resolve thread" },
+      500
+    );
+  }
+});
+
+// Unresolve a review thread
+api.post("/pr/:owner/:repo/:number/threads/:threadId/unresolve", async (c) => {
+  const { threadId } = c.req.param();
+  try {
+    await unresolveReviewThread(threadId);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to unresolve thread" },
       500
     );
   }
@@ -177,7 +258,7 @@ api.post("/pr/:owner/:repo/:number/reviews", async (c) => {
   }
 });
 
-// Create a pending review
+// Create a pending review (REST API - legacy)
 api.post("/pr/:owner/:repo/:number/reviews/pending", async (c) => {
   const { owner, repo, number } = c.req.param();
   const body = await c.req.json();
@@ -193,6 +274,110 @@ api.post("/pr/:owner/:repo/:number/reviews/pending", async (c) => {
   } catch (error) {
     return c.json(
       { error: error instanceof Error ? error.message : "Failed to create pending review" },
+      500
+    );
+  }
+});
+
+// Get PR node ID (for GraphQL mutations)
+api.get("/pr/:owner/:repo/:number/node-id", async (c) => {
+  const { owner, repo, number } = c.req.param();
+
+  try {
+    const nodeId = await getPullRequestNodeId(owner, repo, parseInt(number, 10));
+    return c.json({ nodeId });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to get PR node ID" },
+      500
+    );
+  }
+});
+
+// Get user's pending review via GraphQL
+api.get("/pr/:owner/:repo/:number/pending-review", async (c) => {
+  const { owner, repo, number } = c.req.param();
+
+  try {
+    const result = await getPendingReviewNodeId(owner, repo, parseInt(number, 10));
+    return c.json(result);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to get pending review" },
+      500
+    );
+  }
+});
+
+// Add a comment to pending review via GraphQL (creates review if needed)
+api.post("/pr/:owner/:repo/:number/pending-comment", async (c) => {
+  const { owner, repo, number } = c.req.param();
+  const body = await c.req.json();
+
+  try {
+    // Get PR node ID if not provided
+    let pullRequestId = body.pull_request_id;
+    if (!pullRequestId) {
+      pullRequestId = await getPullRequestNodeId(owner, repo, parseInt(number, 10));
+    }
+
+    const result = await addPendingReviewCommentGraphQL(
+      pullRequestId,
+      body.path,
+      body.line,
+      body.body,
+      body.start_line
+    );
+    return c.json(result);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to add pending comment" },
+      500
+    );
+  }
+});
+
+// Delete a pending review comment via GraphQL
+api.delete("/pr/:owner/:repo/:number/pending-comment/:commentId", async (c) => {
+  const { commentId } = c.req.param();
+
+  try {
+    await deletePendingReviewCommentGraphQL(commentId);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to delete pending comment" },
+      500
+    );
+  }
+});
+
+// Update a pending review comment via GraphQL
+api.patch("/pr/:owner/:repo/:number/pending-comment/:commentId", async (c) => {
+  const { commentId } = c.req.param();
+  const body = await c.req.json();
+
+  try {
+    await updatePendingReviewCommentGraphQL(commentId, body.body);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to update pending comment" },
+      500
+    );
+  }
+});
+
+// Submit pending review via GraphQL
+api.post("/pr/:owner/:repo/:number/pending-review/submit", async (c) => {
+  const body = await c.req.json();
+
+  try {
+    await submitPendingReviewGraphQL(body.review_id, body.event, body.body);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to submit review" },
       500
     );
   }
@@ -405,6 +590,42 @@ api.get("/file/:owner/:repo", async (c) => {
   } catch (error) {
     return c.json(
       { error: error instanceof Error ? error.message : "Failed to fetch file content" },
+      500
+    );
+  }
+});
+
+// Highlight file lines (for skip block expansion)
+api.post("/highlight-lines", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { content, filename, startLine, count } = body;
+
+    if (!content || !filename || !startLine || !count) {
+      return c.json({ error: "Missing required fields" }, 400);
+    }
+
+    const lines = highlightFileLines(content, filename, startLine, count);
+    return c.json(lines);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to highlight lines" },
+      500
+    );
+  }
+});
+
+// ============================================================================
+// User
+// ============================================================================
+
+api.get("/user", async (c) => {
+  try {
+    const user = await getCurrentUser();
+    return c.json(user);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to fetch user" },
       500
     );
   }

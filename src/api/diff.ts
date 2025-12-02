@@ -136,6 +136,36 @@ function highlight(code: string, lang: string): string {
   }
 }
 
+/**
+ * Highlight a range of lines from file content.
+ * Returns an array of DiffLine objects with syntax highlighting.
+ */
+export function highlightFileLines(
+  content: string,
+  filename: string,
+  startLine: number,
+  count: number
+): DiffLine[] {
+  const language = guessLang(filename);
+  const allLines = content.split("\n");
+  const result: DiffLine[] = [];
+  
+  for (let i = 0; i < count; i++) {
+    const lineNum = startLine + i;
+    const lineContent = allLines[lineNum - 1] ?? "";
+    const highlighted = highlight(lineContent, language);
+    
+    result.push({
+      type: "normal",
+      oldLineNumber: lineNum,
+      newLineNumber: lineNum,
+      content: [{ value: lineContent, html: highlighted, type: "normal" }],
+    });
+  }
+  
+  return result;
+}
+
 // ============================================================================
 // Diff Parsing
 // ============================================================================
