@@ -295,11 +295,13 @@ export function Home() {
   }, [config]);
 
   // Fetch PRs when queries or page changes (or when GitHub becomes ready)
+  // Skip if anonymous and queries use @me (requires authentication)
+  const queriesRequireAuth = searchQueries.some((q) => q.includes("@me"));
   useEffect(() => {
-    if (githubReady) {
+    if (githubReady && !(isAnonymous && queriesRequireAuth)) {
       fetchPRList(searchQueries, page, perPage);
     }
-  }, [fetchPRList, searchQueries, page, perPage, githubReady]);
+  }, [fetchPRList, searchQueries, page, perPage, githubReady, isAnonymous, queriesRequireAuth]);
 
   // Reset page when config changes
   useEffect(() => {
@@ -405,8 +407,8 @@ export function Home() {
     return <HomeLoadingSkeleton />;
   }
 
-  // Check if user needs to auth to see PRs
-  const needsAuth = isAnonymous && !isAuthenticated;
+  // Check if user needs to auth to see PRs (anonymous + queries that require @me)
+  const needsAuth = isAnonymous && !isAuthenticated && queriesRequireAuth;
 
   return (
     <div className="h-full bg-background flex flex-col overflow-hidden">
@@ -433,7 +435,7 @@ export function Home() {
           </div>
 
           {/* Repo Chips with Mode Dropdowns */}
-          <div className="flex items-center gap-1.5 shrink-0 flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             {config.repos.length === 0 && (
               <span className="text-xs text-muted-foreground">
                 Add a filter to get started →
