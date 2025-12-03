@@ -17,9 +17,11 @@ import type {
 } from "@/api/types";
 import {
   useGitHub,
-  useGitHubSafe,
+  useGitHubStore,
+  useGitHubSelector,
   type GitHubClient,
 } from "@/browser/contexts/github";
+import { useTelemetry } from "@/browser/contexts/telemetry";
 import { diffService } from "@/browser/lib/diff";
 
 // ============================================================================
@@ -2047,14 +2049,14 @@ export function useKeyboardNavigation() {
 
       // Shortcuts
       switch (e.key.toLowerCase()) {
-        case "k":
+        case "j":
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
             store.navigateToNextUnviewedFile();
           });
           break;
-        case "j":
+        case "k":
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
@@ -2456,14 +2458,15 @@ export function useDiffLoader() {
 
 export function useCurrentUserLoader() {
   const store = useStore();
-  const github = useGitHubSafe();
-  const currentUser = github?.getState().currentUser ?? null;
+  const github = useGitHubStore();
+  const ready = useGitHubSelector((s) => s.ready);
+  const currentUser = github.getState().currentUser?.login ?? null;
 
   useEffect(() => {
-    if (currentUser) {
+    if (ready && currentUser) {
       store.setCurrentUser(currentUser);
     }
-  }, [currentUser, store]);
+  }, [ready, currentUser, store]);
 }
 
 // ============================================================================
@@ -2472,13 +2475,14 @@ export function useCurrentUserLoader() {
 
 export function usePendingReviewLoader() {
   const store = useStore();
-  const github = useGitHubSafe();
+  const github = useGitHubStore();
+  const ready = useGitHubSelector((s) => s.ready);
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
   const pr = usePRReviewSelector((s) => s.pr);
 
   useEffect(() => {
-    if (!github) return;
+    if (!ready) return;
 
     const fetchPendingReview = async () => {
       try {
@@ -2561,6 +2565,7 @@ export function useCommentActions() {
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
   const pr = usePRReviewSelector((s) => s.pr);
+  const { track } = useTelemetry();
 
   const addPendingComment = async (
     line: number,
@@ -2582,6 +2587,15 @@ export function useCommentActions() {
     };
 
     store.addPendingComment(newComment);
+
+    // Track comment added
+    track("comment_added", {
+      pr_number: pr.number,
+      owner,
+      repo,
+      is_pending: true,
+      has_range: !!startLine && startLine !== line,
+    });
 
     // Sync to GitHub via GraphQL - this creates/adds to the pending review
     try {
@@ -2693,6 +2707,7 @@ export function useReviewActions() {
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
   const pr = usePRReviewSelector((s) => s.pr);
+  const { track } = useTelemetry();
 
   const submitReview = async (
     event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"
@@ -2732,6 +2747,16 @@ export function useReviewActions() {
           comments: [],
         });
       }
+
+      // Track review submission
+      track("review_submitted", {
+        pr_number: pr.number,
+        owner,
+        repo,
+        review_type: event,
+        comment_count: state.pendingComments.length,
+        files_reviewed: state.viewedFiles.size,
+      });
 
       // Refresh comments
       const newComments = await github.getPRComments(owner, repo, pr.number);

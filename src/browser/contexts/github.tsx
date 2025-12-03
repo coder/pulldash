@@ -97,6 +97,7 @@ export interface ReviewThread {
       line: number | null;
       originalLine: number | null;
       startLine: number | null;
+      diffHunk: string | null;
       author: { login: string; avatarUrl: string } | null;
       createdAt: string;
       updatedAt: string;
@@ -341,10 +342,22 @@ interface PRCheckState {
   lastFetchedAt: number | null;
 }
 
+export interface CurrentUserData {
+  id: number;
+  login: string;
+  name: string | null;
+  email: string | null;
+  avatar_url: string;
+  html_url: string;
+  bio: string | null;
+  company: string | null;
+  location: string | null;
+}
+
 interface GitHubState {
   ready: boolean;
   error: string | null;
-  currentUser: string | null;
+  currentUser: CurrentUserData | null;
   prList: PRListState;
   prListQueries: string[];
   prListPage: number;
@@ -445,12 +458,28 @@ function createGitHubStore() {
   // Initialization
   // ---------------------------------------------------------------------------
 
+  function extractUserData(
+    user: components["schemas"]["private-user"]
+  ): CurrentUserData {
+    return {
+      id: user.id,
+      login: user.login,
+      name: user.name ?? null,
+      email: user.email ?? null,
+      avatar_url: user.avatar_url,
+      html_url: user.html_url,
+      bio: user.bio ?? null,
+      company: user.company ?? null,
+      location: user.location ?? null,
+    };
+  }
+
   function initialize(token: string) {
     // Load cached user immediately for instant UI
     const cachedUser =
       cache.getStale<components["schemas"]["private-user"]>("user:current");
     if (cachedUser) {
-      setState({ currentUser: cachedUser.data.login });
+      setState({ currentUser: extractUserData(cachedUser.data) });
     }
 
     octokit = new Octokit({ auth: token });
@@ -510,7 +539,7 @@ function createGitHubStore() {
       FRESH_TTL
     );
     if (stale) {
-      setState({ currentUser: stale.data.login });
+      setState({ currentUser: extractUserData(stale.data) });
       // If fresh, don't revalidate
       if (!stale.isStale) return;
     }
@@ -520,7 +549,7 @@ function createGitHubStore() {
       cache.getPending<components["schemas"]["private-user"]>(cacheKey);
     if (pending) {
       const user = await pending;
-      setState({ currentUser: user.login });
+      setState({ currentUser: extractUserData(user) });
       return;
     }
 
@@ -533,7 +562,7 @@ function createGitHubStore() {
 
     try {
       const user = await promise;
-      setState({ currentUser: user.login });
+      setState({ currentUser: extractUserData(user) });
     } catch {
       // Ignore - we may have stale data to show
     }
@@ -1895,7 +1924,7 @@ function createGitHubStore() {
               nodes {
                 id
                 isResolved
-                  resolvedBy { login avatarUrl }
+                resolvedBy { login avatarUrl }
                 comments(first: 100) {
                   nodes {
                     id
@@ -1905,10 +1934,11 @@ function createGitHubStore() {
                     line
                     originalLine
                     startLine
-                      author { login avatarUrl }
+                    diffHunk
+                    author { login avatarUrl }
                     createdAt
                     updatedAt
-                      replyTo { databaseId }
+                    replyTo { databaseId }
                   }
                 }
               }
@@ -2291,7 +2321,7 @@ export function useGitHubReady() {
   return { ready, error };
 }
 
-export function useCurrentUser() {
+export function useCurrentUser(): CurrentUserData | null {
   return useGitHubSelector((s) => s.currentUser);
 }
 
@@ -2332,16 +2362,6 @@ export function useRefreshAll() {
     store.refreshPRList();
     store.refreshAllPRChecks();
   }, [store]);
-}
-
-/**
- * Hook that returns the GitHub store only when ready.
- * Returns null while loading.
- */
-export function useGitHubSafe(): GitHubStore | null {
-  const store = useGitHubStore();
-  const ready = useGitHubSelector((s) => s.ready);
-  return ready ? store : null;
 }
 
 /**

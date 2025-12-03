@@ -72,6 +72,7 @@
     "hono": "^4.10.7",
     "lucide-react": "^0.555.0",
     "png2icons": "^2.0.1",
+    "posthog-js": "^1.300.0",
     "prettier": "^3.7.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

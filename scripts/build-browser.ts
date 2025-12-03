@@ -28,7 +28,10 @@ async function build() {
   const indexHtml = await Bun.file(indexPath).text();
   await Bun.write(indexPath, indexHtml.replaceAll("./", "/"));
 
-  await cp(resolve(process.cwd(), "src", "browser", "logo.svg"), resolve(process.cwd(), "dist", "browser", "logo.svg"));
+  await cp(
+    resolve(process.cwd(), "src", "browser", "logo.svg"),
+    resolve(process.cwd(), "dist", "browser", "logo.svg")
+  );
 
   // Build worker separately with document shim for Prism/refractor
   const workerResult = await Bun.build({

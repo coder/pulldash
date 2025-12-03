@@ -7,7 +7,11 @@ import {
   GitPullRequest,
 } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./hover-card";
-import { useGitHubSafe, type UserProfile } from "../contexts/github";
+import {
+  useGitHubStore,
+  useGitHubSelector,
+  type UserProfile,
+} from "../contexts/github";
 import { Skeleton } from "./skeleton";
 import { cn } from "../cn";
 
@@ -35,13 +39,14 @@ export function UserHoverCard({
   side = "bottom",
   align = "start",
 }: UserHoverCardProps) {
-  const github = useGitHubSafe();
+  const github = useGitHubStore();
+  const ready = useGitHubSelector((s) => s.ready);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchProfile = useCallback(async () => {
-    if (!github || profile || loading) return;
+    if (!ready || profile || loading) return;
 
     setLoading(true);
     setError(null);
@@ -54,7 +59,7 @@ export function UserHoverCard({
     } finally {
       setLoading(false);
     }
-  }, [github, login, profile, loading]);
+  }, [github, ready, login, profile, loading]);
 
   return (
     <HoverCard openDelay={300} closeDelay={100}>

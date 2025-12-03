@@ -61,8 +61,10 @@ import {
   type Reaction,
   type ReactionContent,
   type TimelineEvent,
+  type ReviewThread,
 } from "../contexts/github";
 import { useCanWrite } from "../contexts/auth";
+import { useTelemetry } from "../contexts/telemetry";
 
 // ============================================================================
 // Types
@@ -83,13 +85,15 @@ export const PROverview = memo(function PROverview() {
   const github = useGitHub();
   const store = usePRReviewStore();
   const canWrite = useCanWrite();
+  const { track } = useTelemetry();
   const pr = usePRReviewSelector((s) => s.pr);
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
   const files = usePRReviewSelector((s) => s.files);
-  const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser()?.login ?? null;
 
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewThreads, setReviewThreads] = useState<ReviewThread[]>([]);
   const [checks, setChecks] = useState<{
     checkRuns: CheckRun[];
     status: CombinedStatus;
@@ -113,6 +117,17 @@ export const PROverview = memo(function PROverview() {
   // Comment state
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
+
+  // Action loading states
+  const [closingPR, setClosingPR] = useState(false);
+  const [convertingToDraft, setConvertingToDraft] = useState(false);
+  const [markingReady, setMarkingReady] = useState(false);
+  const [assigningSelf, setAssigningSelf] = useState(false);
+
+  // Repo permissions - check if user can push (merge) and if repo is archived
+  const isArchived = pr.base?.repo?.archived ?? false;
+  const canPush = pr.base?.repo?.permissions?.push ?? false;
+  const canMergeRepo = canWrite && canPush && !isArchived;
 
   // Reviewers and Assignees state
   const [collaborators, setCollaborators] = useState<
@@ -177,6 +192,7 @@ export const PROverview = memo(function PROverview() {
           conversationData,
           commitsData,
           timelineData,
+          reviewThreadsData,
         ] = await Promise.all([
           github
             .getPRReviews(owner, repo, pr.number)
@@ -202,6 +218,9 @@ export const PROverview = memo(function PROverview() {
           github
             .getPRTimeline(owner, repo, pr.number)
             .catch(() => [] as TimelineEvent[]),
+          github
+            .getReviewThreads(owner, repo, pr.number)
+            .catch(() => [] as ReviewThread[]),
         ]);
 
         setReviews(reviewsData);
@@ -210,6 +229,7 @@ export const PROverview = memo(function PROverview() {
         setConversation(conversationData);
         setCommits(commitsData);
         setTimeline(timelineData);
+        setReviewThreads(reviewThreadsData);
       } finally {
         setLoading(false);
       }
@@ -237,13 +257,22 @@ export const PROverview = memo(function PROverview() {
       await github.mergePR(owner, repo, pr.number, {
         merge_method: mergeMethod,
       });
+
+      // Track PR merged
+      track("pr_merged", {
+        pr_number: pr.number,
+        owner,
+        repo,
+        merge_method: mergeMethod,
+      });
+
       window.location.reload();
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : "Failed to merge");
     } finally {
       setMerging(false);
     }
-  }, [github, owner, repo, pr.number, mergeMethod]);
+  }, [github, owner, repo, pr.number, mergeMethod, track]);
 
   const handleAddComment = useCallback(async () => {
     if (!commentText.trim()) return;
@@ -265,35 +294,8 @@ export const PROverview = memo(function PROverview() {
     }
   }, [github, owner, repo, pr.number, commentText]);
 
-  const handleConvertToDraft = useCallback(async () => {
-    try {
-      await github.convertToDraft(owner, repo, pr.number);
-      window.location.reload();
-    } catch (error) {
-      console.error("Failed to convert to draft:", error);
-    }
-  }, [github, owner, repo, pr.number]);
-
-  const handleMarkReadyForReview = useCallback(async () => {
-    try {
-      await github.markReadyForReview(owner, repo, pr.number);
-      window.location.reload();
-    } catch (error) {
-      console.error("Failed to mark ready for review:", error);
-    }
-  }, [github, owner, repo, pr.number]);
-
   const handleUpdateBranch = useCallback(async () => {
     await github.updateBranch(owner, repo, pr.number);
-  }, [github, owner, repo, pr.number]);
-
-  const handleClosePR = useCallback(async () => {
-    try {
-      await github.closePR(owner, repo, pr.number);
-      window.location.reload();
-    } catch (error) {
-      console.error("Failed to close PR:", error);
-    }
   }, [github, owner, repo, pr.number]);
 
   // Fetch collaborators when picker is opened
@@ -351,6 +353,42 @@ export const PROverview = memo(function PROverview() {
     }
   }, [github, owner, repo, pr.number, store]);
 
+  const handleConvertToDraft = useCallback(async () => {
+    setConvertingToDraft(true);
+    try {
+      await github.convertToDraft(owner, repo, pr.number);
+      await refetchPR();
+    } catch (error) {
+      console.error("Failed to convert to draft:", error);
+    } finally {
+      setConvertingToDraft(false);
+    }
+  }, [github, owner, repo, pr.number, refetchPR]);
+
+  const handleMarkReadyForReview = useCallback(async () => {
+    setMarkingReady(true);
+    try {
+      await github.markReadyForReview(owner, repo, pr.number);
+      await refetchPR();
+    } catch (error) {
+      console.error("Failed to mark ready for review:", error);
+    } finally {
+      setMarkingReady(false);
+    }
+  }, [github, owner, repo, pr.number, refetchPR]);
+
+  const handleClosePR = useCallback(async () => {
+    setClosingPR(true);
+    try {
+      await github.closePR(owner, repo, pr.number);
+      await refetchPR();
+    } catch (error) {
+      console.error("Failed to close PR:", error);
+    } finally {
+      setClosingPR(false);
+    }
+  }, [github, owner, repo, pr.number, refetchPR]);
+
   const handleRequestReviewer = useCallback(
     async (login: string) => {
       try {
@@ -401,11 +439,14 @@ export const PROverview = memo(function PROverview() {
 
   const handleAssignSelf = useCallback(async () => {
     if (!currentUser) return;
+    setAssigningSelf(true);
     try {
       await github.addAssignees(owner, repo, pr.number, [currentUser]);
       await refetchPR();
     } catch (error) {
       console.error("Failed to assign self:", error);
+    } finally {
+      setAssigningSelf(false);
     }
   }, [github, owner, repo, pr.number, currentUser, refetchPR]);
 
@@ -639,7 +680,8 @@ export const PROverview = memo(function PROverview() {
                   type TimelineEntry =
                     | { type: "comment"; data: IssueComment; date: Date }
                     | { type: "review"; data: Review; date: Date }
-                    | { type: "event"; data: TimelineEvent; date: Date };
+                    | { type: "event"; data: TimelineEvent; date: Date }
+                    | { type: "thread"; data: ReviewThread; date: Date };
 
                   const entries: TimelineEntry[] = [];
 
@@ -662,6 +704,18 @@ export const PROverview = memo(function PROverview() {
                         date: new Date(review.submitted_at!),
                       });
                     });
+
+                  // Add review threads (inline code comments)
+                  reviewThreads.forEach((thread) => {
+                    const firstComment = thread.comments.nodes[0];
+                    if (firstComment) {
+                      entries.push({
+                        type: "thread",
+                        data: thread,
+                        date: new Date(firstComment.createdAt),
+                      });
+                    }
+                  });
 
                   // Add timeline events (excluding those we show as comments/reviews)
                   timeline.forEach((event) => {
@@ -739,12 +793,32 @@ export const PROverview = memo(function PROverview() {
                         />
                       );
                     }
+                    if (entry.type === "thread") {
+                      return (
+                        <ReviewThreadBox
+                          key={`thread-${entry.data.id}`}
+                          thread={entry.data}
+                          owner={owner}
+                          repo={repo}
+                        />
+                      );
+                    }
                     return null;
                   });
                 })()}
 
-                {/* Merge Section - only show when user can write */}
-                {canWrite && pr.state === "open" && !pr.merged && (
+                {/* Archived repo notice */}
+                {isArchived && pr.state === "open" && !pr.merged && (
+                  <div className="flex items-center gap-2 py-3 px-4 bg-yellow-500/10 border border-yellow-500/20 rounded-md">
+                    <Lock className="w-4 h-4 text-yellow-500" />
+                    <span className="text-sm text-yellow-200">
+                      This repository has been archived. No changes can be made.
+                    </span>
+                  </div>
+                )}
+
+                {/* Merge Section - only show when user can merge */}
+                {canMergeRepo && pr.state === "open" && !pr.merged && (
                   <>
                     <MergeSection
                       pr={pr}
@@ -770,9 +844,12 @@ export const PROverview = memo(function PROverview() {
                           Still in progress?{" "}
                           <button
                             onClick={handleConvertToDraft}
-                            className="text-blue-400 hover:underline"
+                            disabled={convertingToDraft}
+                            className="text-blue-400 hover:underline disabled:opacity-50"
                           >
-                            Convert to draft
+                            {convertingToDraft
+                              ? "Converting..."
+                              : "Convert to draft"}
                           </button>
                         </p>
                       </div>
@@ -780,7 +857,7 @@ export const PROverview = memo(function PROverview() {
                   </>
                 )}
 
-                {/* Add a comment - only show when user can write */}
+                {/* Add a comment - only show when user can write (comments allowed even without push) */}
                 {canWrite ? (
                   <div className="flex gap-3">
                     {/* Avatar */}
@@ -810,15 +887,24 @@ export const PROverview = memo(function PROverview() {
                           Markdown is supported
                         </p>
                         <div className="flex items-center gap-2">
-                          {pr.state === "open" && !pr.merged && (
-                            <button
-                              onClick={handleClosePR}
-                              className="flex items-center gap-2 px-3 py-1.5 border border-red-500/50 text-red-400 rounded-md hover:bg-red-500/10 transition-colors text-sm font-medium"
-                            >
-                              <GitPullRequest className="w-4 h-4" />
-                              Close pull request
-                            </button>
-                          )}
+                          {canMergeRepo &&
+                            pr.state === "open" &&
+                            !pr.merged && (
+                              <button
+                                onClick={handleClosePR}
+                                disabled={closingPR}
+                                className="flex items-center gap-2 px-3 py-1.5 border border-red-500/50 text-red-400 rounded-md hover:bg-red-500/10 transition-colors text-sm font-medium disabled:opacity-50"
+                              >
+                                {closingPR ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <GitPullRequest className="w-4 h-4" />
+                                )}
+                                {closingPR
+                                  ? "Closing..."
+                                  : "Close pull request"}
+                              </button>
+                            )}
                           <button
                             onClick={handleAddComment}
                             disabled={!commentText.trim() || submittingComment}
@@ -864,7 +950,7 @@ export const PROverview = memo(function PROverview() {
             <SidebarSection
               title="Reviewers"
               action={
-                canWrite && pr.state === "open" && !pr.merged ? (
+                canMergeRepo && pr.state === "open" && !pr.merged ? (
                   <button
                     ref={reviewersButtonRef}
                     onClick={handleToggleReviewersPicker}
@@ -896,7 +982,7 @@ export const PROverview = memo(function PROverview() {
                         </span>
                       </UserHoverCard>
                       <Clock className="w-3.5 h-3.5 text-yellow-500" />
-                      {canWrite && pr.state === "open" && !pr.merged && (
+                      {canMergeRepo && pr.state === "open" && !pr.merged && (
                         <button
                           onClick={() => handleRemoveReviewer(reviewer.login)}
                           className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1008,7 +1094,7 @@ export const PROverview = memo(function PROverview() {
             <SidebarSection
               title="Assignees"
               action={
-                canWrite && pr.state === "open" && !pr.merged ? (
+                canMergeRepo && pr.state === "open" && !pr.merged ? (
                   <button
                     ref={assigneesButtonRef}
                     onClick={handleToggleAssigneesPicker}
@@ -1039,7 +1125,7 @@ export const PROverview = memo(function PROverview() {
                           {assignee.login}
                         </span>
                       </UserHoverCard>
-                      {canWrite && pr.state === "open" && !pr.merged && (
+                      {canMergeRepo && pr.state === "open" && !pr.merged && (
                         <button
                           onClick={() => handleRemoveAssignee(assignee.login)}
                           className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1054,12 +1140,15 @@ export const PROverview = memo(function PROverview() {
               ) : (
                 <span className="text-sm text-muted-foreground">
                   No one—
-                  <button
-                    onClick={handleAssignSelf}
-                    className="text-blue-400 hover:underline"
-                  >
-                    assign yourself
-                  </button>
+                  {canMergeRepo && pr.state === "open" && !pr.merged ? (
+                    <button
+                      onClick={handleAssignSelf}
+                      disabled={assigningSelf}
+                      className="text-blue-400 hover:underline disabled:opacity-50"
+                    >
+                      {assigningSelf ? "assigning..." : "assign yourself"}
+                    </button>
+                  ) : null}
                 </span>
               )}
             </SidebarSection>
@@ -1122,20 +1211,23 @@ export const PROverview = memo(function PROverview() {
               owner={owner}
               repo={repo}
               onUpdate={refetchPR}
-              canWrite={canWrite}
+              canWrite={canMergeRepo}
             />
 
             {/* Draft - Mark as ready for review */}
-            {canWrite && pr.state === "open" && !pr.merged && pr.draft && (
+            {canMergeRepo && pr.state === "open" && !pr.merged && pr.draft && (
               <div className="pt-2 border-t border-border">
                 <p className="text-xs text-muted-foreground mb-1">
                   This pull request is still a work in progress.
                 </p>
                 <button
                   onClick={handleMarkReadyForReview}
-                  className="text-sm text-blue-400 hover:underline"
+                  disabled={markingReady}
+                  className="text-sm text-blue-400 hover:underline disabled:opacity-50"
                 >
-                  Mark as ready for review
+                  {markingReady
+                    ? "Marking ready..."
+                    : "Mark as ready for review"}
                 </button>
               </div>
             )}
@@ -1568,6 +1660,203 @@ function ReviewStateIcon({ state }: { state: string }) {
     default:
       return <Circle className="w-4 h-4 text-muted-foreground ml-auto" />;
   }
+}
+
+// ============================================================================
+// Review Thread Box Component (for inline code comments)
+// ============================================================================
+
+function ReviewThreadBox({
+  thread,
+  owner,
+  repo,
+}: {
+  thread: ReviewThread;
+  owner: string;
+  repo: string;
+}) {
+  const comments = thread.comments.nodes;
+  if (comments.length === 0) return null;
+
+  const firstComment = comments[0];
+  const filePath = firstComment.path;
+  const diffHunk = firstComment.diffHunk;
+
+  // Parse diff hunk to get line numbers and content
+  const parseDiffHunk = (hunk: string | null) => {
+    if (!hunk) return [];
+
+    const lines = hunk.split("\n");
+    const result: Array<{
+      type: "header" | "context" | "addition" | "deletion";
+      content: string;
+      oldLine?: number;
+      newLine?: number;
+    }> = [];
+
+    let oldLine = 0;
+    let newLine = 0;
+
+    for (const line of lines) {
+      if (line.startsWith("@@")) {
+        // Parse hunk header like "@@ -20,4 +20,4 @@"
+        const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (match) {
+          oldLine = parseInt(match[1], 10);
+          newLine = parseInt(match[2], 10);
+        }
+        result.push({ type: "header", content: line });
+      } else if (line.startsWith("+")) {
+        result.push({ type: "addition", content: line.slice(1), newLine });
+        newLine++;
+      } else if (line.startsWith("-")) {
+        result.push({ type: "deletion", content: line.slice(1), oldLine });
+        oldLine++;
+      } else {
+        // Context line (starts with space or is empty)
+        const content = line.startsWith(" ") ? line.slice(1) : line;
+        result.push({ type: "context", content, oldLine, newLine });
+        oldLine++;
+        newLine++;
+      }
+    }
+
+    return result;
+  };
+
+  const diffLines = parseDiffHunk(diffHunk);
+
+  return (
+    <div
+      className={cn(
+        "border rounded-md overflow-hidden",
+        thread.isResolved ? "border-muted opacity-60" : "border-border"
+      )}
+    >
+      {/* File header */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-card/50 border-b border-border text-sm">
+        <a
+          href={`https://github.com/${owner}/${repo}/blob/HEAD/${filePath}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-mono text-muted-foreground hover:text-blue-400 hover:underline"
+        >
+          {filePath}
+        </a>
+        {thread.isResolved && (
+          <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
+            <Check className="w-3 h-3" />
+            Resolved
+            {thread.resolvedBy && <span> by {thread.resolvedBy.login}</span>}
+          </span>
+        )}
+      </div>
+
+      {/* Code context (diff hunk) */}
+      {diffLines.length > 0 && (
+        <div className="bg-[#0d1117] border-b border-border overflow-x-auto">
+          <table className="w-full text-xs font-mono">
+            <tbody>
+              {diffLines.map((line, i) => (
+                <tr
+                  key={i}
+                  className={cn(
+                    line.type === "addition" && "bg-green-500/15",
+                    line.type === "deletion" && "bg-red-500/15",
+                    line.type === "header" && "bg-blue-500/10 text-blue-400"
+                  )}
+                >
+                  {line.type === "header" ? (
+                    <td
+                      colSpan={3}
+                      className="px-2 py-0.5 text-muted-foreground"
+                    >
+                      {line.content}
+                    </td>
+                  ) : (
+                    <>
+                      <td className="w-10 text-right px-2 py-0.5 text-muted-foreground select-none border-r border-border/50">
+                        {line.type !== "addition" ? line.oldLine : ""}
+                      </td>
+                      <td className="w-10 text-right px-2 py-0.5 text-muted-foreground select-none border-r border-border/50">
+                        {line.type !== "deletion" ? line.newLine : ""}
+                      </td>
+                      <td className="px-2 py-0.5 whitespace-pre">
+                        <span
+                          className={cn(
+                            "select-none mr-1",
+                            line.type === "addition" && "text-green-400",
+                            line.type === "deletion" && "text-red-400"
+                          )}
+                        >
+                          {line.type === "addition"
+                            ? "+"
+                            : line.type === "deletion"
+                              ? "-"
+                              : " "}
+                        </span>
+                        {line.content}
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Comments in thread */}
+      <div className="divide-y divide-border">
+        {comments.map((comment) => (
+          <div key={comment.id} className="p-4">
+            <div className="flex items-center gap-2 mb-2 text-sm">
+              {comment.author && (
+                <>
+                  <UserHoverCard login={comment.author.login}>
+                    <img
+                      src={comment.author.avatarUrl}
+                      alt={comment.author.login}
+                      className="w-5 h-5 rounded-full cursor-pointer"
+                    />
+                  </UserHoverCard>
+                  <UserHoverCard login={comment.author.login}>
+                    <span className="font-semibold hover:text-blue-400 hover:underline cursor-pointer">
+                      {comment.author.login}
+                    </span>
+                  </UserHoverCard>
+                </>
+              )}
+              <span className="text-muted-foreground">
+                {getTimeAgo(new Date(comment.createdAt))}
+              </span>
+            </div>
+            <div className="pl-7">
+              <Markdown>{comment.body}</Markdown>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Reply section placeholder */}
+      <div className="flex items-center gap-2 px-4 py-2 bg-card/30 border-t border-border">
+        <input
+          type="text"
+          placeholder="Reply..."
+          className="flex-1 bg-transparent text-sm text-muted-foreground placeholder:text-muted-foreground/50 outline-none cursor-not-allowed"
+          disabled
+        />
+        {!thread.isResolved && (
+          <button
+            className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded border border-border hover:bg-muted cursor-not-allowed"
+            disabled
+          >
+            Resolve conversation
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ============================================================================

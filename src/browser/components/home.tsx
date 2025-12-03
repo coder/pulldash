@@ -29,7 +29,7 @@ import {
 } from "../ui/pagination";
 import { useOpenPRReviewTab } from "../contexts/tabs";
 import {
-  useGitHubSafe,
+  useGitHubStore,
   useGitHubReady,
   usePRList,
   usePRListActions,
@@ -161,7 +161,7 @@ function buildSearchQueries(config: FilterConfig): string[] {
 
   // Handle "All Repos" global filters (one query per mode)
   for (const filter of allReposFilters) {
-    const parts = ["is:pr"];
+    const parts = ["is:pr", "archived:false"];
     if (stateFilter) parts.push(stateFilter);
     const modeFilter = getModeFilter(filter.mode);
     if (modeFilter) parts.push(modeFilter);
@@ -181,7 +181,7 @@ function buildSearchQueries(config: FilterConfig): string[] {
     }
 
     for (const [mode, repos] of byMode) {
-      const parts = ["is:pr"];
+      const parts = ["is:pr", "archived:false"];
       if (stateFilter) parts.push(stateFilter);
       // Multiple repo: qualifiers act as OR
       parts.push(...repos.map((r) => `repo:${r}`));
@@ -267,7 +267,7 @@ const STATE_OPTIONS = [
 export function Home() {
   const openPRReviewTab = useOpenPRReviewTab();
   const { ready: githubReady, error: githubError } = useGitHubReady();
-  const github = useGitHubSafe();
+  const github = useGitHubStore();
   const { isAuthenticated, isAnonymous, setShowWelcomeDialog } = useAuth();
 
   // Data store

@@ -48,11 +48,13 @@ import { FileHeader } from "./file-header";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
   useGitHub,
-  useGitHubSafe,
+  useGitHubStore,
   useGitHubReady,
+  useGitHubSelector,
   usePRChecks,
 } from "../contexts/github";
 import { useCanWrite, useAuth } from "../contexts/auth";
+import { useTelemetry } from "../contexts/telemetry";
 import {
   PRReviewProvider,
   usePRReviewSelector,
@@ -186,7 +188,8 @@ export function PRReviewContent({
   tabId,
 }: PRReviewContentProps) {
   const { ready: githubReady, error: githubError } = useGitHubReady();
-  const github = useGitHubSafe();
+  const github = useGitHubStore();
+  const { track } = useTelemetry();
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [files, setFiles] = useState<PullRequestFile[]>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
@@ -197,7 +200,7 @@ export function PRReviewContent({
   useSyncTabStatus(tabId, owner, repo, number, pr);
 
   useEffect(() => {
-    if (!github) return;
+    if (!githubReady) return;
 
     const fetchData = async () => {
       setLoading(true);
@@ -213,6 +216,16 @@ export function PRReviewContent({
         setPr(prData);
         setFiles(filesData);
         setComments(commentsData as ReviewComment[]);
+
+        // Track PR viewed
+        track("pr_viewed", {
+          pr_number: number,
+          owner,
+          repo,
+          file_count: filesData.length,
+          additions: prData.additions,
+          deletions: prData.deletions,
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Unknown error");
       } finally {
@@ -221,7 +234,7 @@ export function PRReviewContent({
     };
 
     fetchData();
-  }, [github, owner, repo, number]);
+  }, [github, owner, repo, number, track]);
 
   // Show loading while GitHub client initializes
   if (!githubReady) {
@@ -274,6 +287,7 @@ export function PRReviewContent({
 
 function PRReviewLayout() {
   const store = usePRReviewStore();
+  const { track } = useTelemetry();
   const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
     useCommandPalette();
 
@@ -358,6 +372,21 @@ function PRReviewLayout() {
   const pr = usePRReviewSelector((s) => s.pr);
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+
+  // Track file views (only once per file per session)
+  const trackedFilesRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (selectedFile && !trackedFilesRef.current.has(selectedFile)) {
+      trackedFilesRef.current.add(selectedFile);
+      track("file_viewed", {
+        pr_number: pr.number,
+        owner,
+        repo,
+        file_path: selectedFile,
+      });
+    }
+  }, [selectedFile, pr.number, owner, repo, track]);
 
   return (
     <div className="flex flex-col h-full">
@@ -2839,7 +2868,12 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
               e.stopPropagation();
               handleSubmit();
             }}
-            disabled={submitting || (reviewType === "COMMENT" && pendingCount === 0 && !reviewBody.trim())}
+            disabled={
+              submitting ||
+              (reviewType === "COMMENT" &&
+                pendingCount === 0 &&
+                !reviewBody.trim())
+            }
             className={cn(
               "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50",
               reviewType === "APPROVE" &&

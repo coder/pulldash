@@ -6,7 +6,6 @@ import { serveStatic } from "@hono/node-server/serve-static";
 
 const app = new Hono();
 
-
 // Debug route to see filesystem structure on Vercel
 app.get("/_debug", (c) => {
   const listDir = (path: string, depth = 0): string[] => {
@@ -18,10 +17,12 @@ app.get("/_debug", (c) => {
         return results;
       }
       const entries = readdirSync(path, { withFileTypes: true });
-      for (const entry of entries.slice(0, 50)) { // Limit to 50 entries
+      for (const entry of entries.slice(0, 50)) {
+        // Limit to 50 entries
         if (entry.isDirectory()) {
           results.push(`${indent}${entry.name}/`);
-          if (depth < 2) { // Limit depth
+          if (depth < 2) {
+            // Limit depth
             results.push(...listDir(resolve(path, entry.name), depth + 1));
           }
         } else {
@@ -36,7 +37,7 @@ app.get("/_debug", (c) => {
 
   const cwd = process.cwd();
   const metaDirname = import.meta.dirname;
-  
+
   const info = {
     cwd,
     metaDirname,
@@ -53,7 +54,6 @@ app.get("/_debug", (c) => {
 app.route("/", api);
 
 app.use("/*", serveStatic({ root: resolve(process.cwd(), "public") }));
-
 
 // SPA fallback - serve index.html for client-side routing
 // Static files are served by Vercel CDN from public/

@@ -1173,7 +1173,7 @@ export function WelcomeDialog() {
 export function UserMenuButton({ className }: { className?: string }) {
   const { isAuthenticated, isAnonymous, logout, setShowWelcomeDialog } =
     useAuth();
-  const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser()?.login ?? null;
   const [showConfirm, setShowConfirm] = useState(false);
 
   // Anonymous mode - show read-only indicator with sign-in option
