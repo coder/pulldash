@@ -749,7 +749,8 @@ export const PROverview = memo(function PROverview() {
                     <MergeSection
                       pr={{
                         ...pr,
-                        requested_reviewers: pr.requested_reviewers ?? undefined,
+                        requested_reviewers:
+                          pr.requested_reviewers ?? undefined,
                       }}
                       checkStatus={checkStatus}
                       checks={checks}

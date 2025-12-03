@@ -113,7 +113,9 @@ function UserHoverCardContent({
             {(profile as UserProfile & { pronouns?: string }).pronouns && (
               <>
                 <span>·</span>
-                <span>{(profile as UserProfile & { pronouns?: string }).pronouns}</span>
+                <span>
+                  {(profile as UserProfile & { pronouns?: string }).pronouns}
+                </span>
               </>
             )}
           </div>

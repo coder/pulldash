@@ -1354,11 +1354,13 @@ function createGitHubStore() {
         per_page: 100,
       })
       .then(({ data: labels }) => {
-        const result = labels.map((l: { name: string; color: string; description: string | null }) => ({
-          name: l.name,
-          color: l.color,
-          description: l.description ?? null,
-        }));
+        const result = labels.map(
+          (l: { name: string; color: string; description: string | null }) => ({
+            name: l.name,
+            color: l.color,
+            description: l.description ?? null,
+          })
+        );
         cache.set(cacheKey, result);
         return result;
       });
