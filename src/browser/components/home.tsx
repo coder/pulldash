@@ -6,24 +6,17 @@ import {
   Star,
   X,
   Plus,
-  MessageSquare,
   FileCode,
   Check,
   GitMerge,
-  ExternalLink,
-  CheckCircle2,
-  XCircle,
-  MinusCircle,
-  AlertCircle,
   ChevronDown,
-  Send,
-  Clock,
   Eye,
   User,
   Users,
   RefreshCw,
 } from "lucide-react";
 import { cn } from "../cn";
+import { Skeleton } from "../ui/skeleton";
 import {
   Pagination,
   PaginationContent,
@@ -32,13 +25,14 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "../ui/pagination";
-import { Markdown } from "../ui/markdown";
 import { useOpenPRReviewTab } from "../contexts/tabs";
 import {
+  useGitHubSafe,
+  useGitHubReady,
   usePRList,
   usePRListActions,
   type PRSearchResult,
-} from "../contexts/data-store";
+} from "../contexts/github";
 
 // ============================================================================
 // Types
@@ -48,83 +42,10 @@ interface SearchResult {
   id: number;
   full_name: string;
   description: string | null;
-  stargazers_count: number;
-  forks_count: number;
-  updated_at: string;
+  stargazers_count?: number;
+  forks_count?: number;
+  updated_at?: string;
   owner: {
-    login: string;
-    avatar_url: string;
-  };
-}
-
-// PRSearchResult is imported from data-store
-
-interface PRDetail {
-  number: number;
-  title: string;
-  body: string | null;
-  state: string;
-  draft: boolean;
-  merged: boolean;
-  mergeable: boolean | null;
-  created_at: string;
-  updated_at: string;
-  additions: number;
-  deletions: number;
-  changed_files: number;
-  commits: number;
-  comments: number;
-  review_comments: number;
-  head: { ref: string; sha: string };
-  base: { ref: string };
-  user: {
-    login: string;
-    avatar_url: string;
-  };
-  labels: Array<{
-    name: string;
-    color: string;
-  }>;
-  requested_reviewers: Array<{
-    login: string;
-    avatar_url: string;
-  }>;
-}
-
-interface Review {
-  id: number;
-  state: string;
-  body: string | null;
-  submitted_at: string | null;
-  user: {
-    login: string;
-    avatar_url: string;
-  } | null;
-}
-
-interface CheckRun {
-  id: number;
-  name: string;
-  status: string;
-  conclusion: string | null;
-  html_url: string | null;
-}
-
-interface CombinedStatus {
-  state: string;
-  statuses: Array<{
-    state: string;
-    context: string;
-    description: string | null;
-    target_url: string | null;
-  }>;
-}
-
-interface IssueComment {
-  id: number;
-  body: string | null;
-  created_at: string;
-  user: {
     login: string;
     avatar_url: string;
   } | null;
@@ -310,6 +231,8 @@ const STATE_OPTIONS = [
 
 export function Home() {
   const openPRReviewTab = useOpenPRReviewTab();
+  const { ready: githubReady, error: githubError } = useGitHubReady();
+  const github = useGitHubSafe();
 
   // Data store
   const prList = usePRList();
@@ -331,13 +254,6 @@ export function Home() {
   const [page, setPage] = useState(1);
   const perPage = 30;
 
-  // Selected PR for split view
-  const [selectedPR, setSelectedPR] = useState<{
-    owner: string;
-    repo: string;
-    number: number;
-  } | null>(null);
-
   // Build queries from config (one per mode group)
   const searchQueries = useMemo(() => buildSearchQueries(config), [config]);
 
@@ -346,10 +262,12 @@ export function Home() {
     saveFilterConfig(config);
   }, [config]);
 
-  // Fetch PRs when queries or page changes
+  // Fetch PRs when queries or page changes (or when GitHub becomes ready)
   useEffect(() => {
-    fetchPRList(searchQueries, page, perPage);
-  }, [fetchPRList, searchQueries, page, perPage]);
+    if (githubReady) {
+      fetchPRList(searchQueries, page, perPage);
+    }
+  }, [fetchPRList, searchQueries, page, perPage, githubReady]);
 
   // Reset page when config changes
   useEffect(() => {
@@ -385,7 +303,7 @@ export function Home() {
 
   // Search repositories with debounce
   useEffect(() => {
-    if (!searchQuery.trim()) {
+    if (!github || !searchQuery.trim()) {
       setSearchResults([]);
       return;
     }
@@ -400,13 +318,8 @@ export function Home() {
           query = `org:${org} ${name}`;
         }
 
-        const res = await fetch(
-          `/api/search/repos?q=${encodeURIComponent(query)}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setSearchResults(data.items || []);
-        }
+        const data = await github.searchRepos(query);
+        setSearchResults(data.items || []);
       } catch (e) {
         console.error("Failed to search repos:", e);
       } finally {
@@ -415,7 +328,7 @@ export function Home() {
     }, 300);
 
     return () => clearTimeout(timeout);
-  }, [searchQuery]);
+  }, [github, searchQuery]);
 
   const handleAddRepo = useCallback((fullName: string) => {
     setConfig((prev) => {
@@ -452,22 +365,33 @@ export function Home() {
     setConfig((prev) => ({ ...prev, state }));
   }, []);
 
-  const handleSelectPR = useCallback(
+  const handleOpenPR = useCallback(
     (owner: string, repo: string, number: number) => {
-      setSelectedPR({ owner, repo, number });
+      openPRReviewTab(owner, repo, number);
     },
-    []
+    [openPRReviewTab]
   );
-
-  const handleClosePR = useCallback(() => {
-    setSelectedPR(null);
-  }, []);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
 
   // Track which repo dropdown is open
   const [openRepoDropdown, setOpenRepoDropdown] = useState<string | null>(null);
   const [showAddRepo, setShowAddRepo] = useState(false);
+
+  // Show loading/error state while GitHub client initializes
+  if (!githubReady) {
+    if (githubError) {
+      return (
+        <div className="h-full bg-background flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <p className="text-destructive font-medium">Failed to connect to GitHub</p>
+            <p className="text-sm text-muted-foreground">{githubError}</p>
+          </div>
+        </div>
+      );
+    }
+    return <HomeLoadingSkeleton />;
+  }
 
   return (
     <div className="h-full bg-background flex flex-col overflow-hidden">
@@ -621,17 +545,19 @@ export function Home() {
                       }}
                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
                     >
-                      <img
-                        src={repo.owner.avatar_url}
-                        alt={repo.owner.login}
-                        className="w-4 h-4 rounded shrink-0"
-                      />
+                      {repo.owner && (
+                        <img
+                          src={repo.owner.avatar_url}
+                          alt={repo.owner.login}
+                          className="w-4 h-4 rounded shrink-0"
+                        />
+                      )}
                       <span className="font-medium text-xs truncate flex-1">
                         {repo.full_name}
                       </span>
                       <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                         <Star className="w-3 h-3" />
-                        {repo.stargazers_count.toLocaleString()}
+                        {(repo.stargazers_count ?? 0).toLocaleString()}
                       </span>
                     </button>
                   ))
@@ -682,12 +608,7 @@ export function Home() {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* PR List Panel */}
-        <div
-          className={cn(
-            "flex-1 flex flex-col overflow-hidden",
-            selectedPR && "max-w-[50%] border-r border-border"
-          )}
-        >
+        <div className="flex-1 flex flex-col overflow-hidden">
           {/* Results Header */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
             <span className="text-xs text-muted-foreground">
@@ -729,7 +650,10 @@ export function Home() {
 
           {/* PR List */}
           <div className="flex-1 overflow-auto">
-            {!loadingPrs && prs.length === 0 ? (
+            {/* Show skeleton when loading OR when repos configured but no items yet (initial fetch) */}
+            {(loadingPrs || (config.repos.length > 0 && prs.length === 0 && !prList.error)) ? (
+              <PRListSkeleton count={8} />
+            ) : prs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <GitPullRequest className="w-12 h-12 text-muted-foreground/30 mb-4" />
                 <p className="text-lg font-medium text-muted-foreground">
@@ -747,8 +671,7 @@ export function Home() {
                   <PRListItem
                     key={pr.id}
                     pr={pr}
-                    isSelected={selectedPR?.number === pr.number}
-                    onSelect={handleSelectPR}
+                    onSelect={handleOpenPR}
                   />
                 ))}
               </div>
@@ -844,16 +767,6 @@ export function Home() {
             </div>
           )}
         </div>
-
-        {/* PR Detail Panel */}
-        {selectedPR && (
-          <PRDetailPanel
-            owner={selectedPR.owner}
-            repo={selectedPR.repo}
-            number={selectedPR.number}
-            onClose={handleClosePR}
-          />
-        )}
       </div>
     </div>
   );
@@ -865,11 +778,10 @@ export function Home() {
 
 interface PRListItemProps {
   pr: PRSearchResult;
-  isSelected: boolean;
   onSelect: (owner: string, repo: string, number: number) => void;
 }
 
-function PRListItem({ pr, isSelected, onSelect }: PRListItemProps) {
+function PRListItem({ pr, onSelect }: PRListItemProps) {
   const repoInfo = extractRepoFromUrl(pr.repository_url);
   const isMerged = pr.pull_request?.merged_at != null;
   const isClosed = pr.state === "closed" && !isMerged;
@@ -883,10 +795,7 @@ function PRListItem({ pr, isSelected, onSelect }: PRListItemProps) {
   return (
     <button
       onClick={handleClick}
-      className={cn(
-        "w-full flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left",
-        isSelected && "bg-blue-500/10"
-      )}
+      className="w-full flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left"
     >
       {/* PR Icon */}
       {isMerged ? (
@@ -968,684 +877,67 @@ function PRListItem({ pr, isSelected, onSelect }: PRListItemProps) {
 }
 
 // ============================================================================
-// PR Detail Panel
+// Skeleton Components
 // ============================================================================
 
-interface PRDetailPanelProps {
-  owner: string;
-  repo: string;
-  number: number;
-  onClose: () => void;
-}
-
-function PRDetailPanel({ owner, repo, number, onClose }: PRDetailPanelProps) {
-  const openPRReviewTab = useOpenPRReviewTab();
-
-  const [pr, setPr] = useState<PRDetail | null>(null);
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [checks, setChecks] = useState<{
-    checkRuns: CheckRun[];
-    status: CombinedStatus;
-  } | null>(null);
-  const [conversation, setConversation] = useState<IssueComment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Merge state
-  const [merging, setMerging] = useState(false);
-  const [mergeMethod, setMergeMethod] = useState<"merge" | "squash" | "rebase">(
-    "squash"
-  );
-  const [showMergeOptions, setShowMergeOptions] = useState(false);
-  const [mergeError, setMergeError] = useState<string | null>(null);
-
-  // Comment state
-  const [commentText, setCommentText] = useState("");
-  const [submittingComment, setSubmittingComment] = useState(false);
-
-  const handleReviewFiles = useCallback(() => {
-    openPRReviewTab(owner, repo, number);
-  }, [openPRReviewTab, owner, repo, number]);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [prRes, reviewsRes, checksRes, conversationRes] =
-          await Promise.all([
-            fetch(`/api/pr/${owner}/${repo}/${number}`),
-            fetch(`/api/pr/${owner}/${repo}/${number}/reviews`),
-            fetch(`/api/pr/${owner}/${repo}/${number}/checks`),
-            fetch(`/api/pr/${owner}/${repo}/${number}/conversation`),
-          ]);
-
-        if (!prRes.ok) throw new Error("Failed to fetch PR");
-        setPr(await prRes.json());
-        if (reviewsRes.ok) setReviews(await reviewsRes.json());
-        if (checksRes.ok) setChecks(await checksRes.json());
-        if (conversationRes.ok) setConversation(await conversationRes.json());
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Unknown error");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [owner, repo, number]);
-
-  const handleMerge = useCallback(async () => {
-    if (!pr) return;
-    setMerging(true);
-    setMergeError(null);
-
-    try {
-      const response = await fetch(
-        `/api/pr/${owner}/${repo}/${pr.number}/merge`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ merge_method: mergeMethod }),
-        }
-      );
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Failed to merge");
-      }
-
-      window.location.reload();
-    } catch (e) {
-      setMergeError(e instanceof Error ? e.message : "Failed to merge");
-    } finally {
-      setMerging(false);
-    }
-  }, [owner, repo, pr, mergeMethod]);
-
-  const handleAddComment = useCallback(async () => {
-    if (!commentText.trim() || !pr) return;
-
-    setSubmittingComment(true);
-    try {
-      const response = await fetch(
-        `/api/pr/${owner}/${repo}/${pr.number}/conversation`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body: commentText }),
-        }
-      );
-
-      if (response.ok) {
-        const newComment = await response.json();
-        setConversation((prev) => [...prev, newComment]);
-        setCommentText("");
-      }
-    } finally {
-      setSubmittingComment(false);
-    }
-  }, [owner, repo, pr, commentText]);
-
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center max-w-[50%]">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error || !pr) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center p-6 max-w-[50%]">
-        <AlertCircle className="w-10 h-10 text-destructive mb-3" />
-        <p className="text-destructive font-medium">Failed to load PR</p>
-        <p className="text-sm text-muted-foreground mt-1">{error}</p>
-        <button
-          onClick={onClose}
-          className="mt-4 px-4 py-2 text-sm rounded-lg bg-muted hover:bg-muted/80"
-        >
-          Close
-        </button>
-      </div>
-    );
-  }
-
-  // Calculate check status
-  const checkStatus = calculateCheckStatus(checks);
-  const latestReviews = getLatestReviewsByUser(reviews);
-  const canMergePR = canMerge(pr, checkStatus);
-
-  const stateIcon = pr.merged ? (
-    <GitMerge className="w-5 h-5 text-purple-500" />
-  ) : pr.state === "open" ? (
-    <GitPullRequest
-      className={cn(
-        "w-5 h-5",
-        pr.draft ? "text-muted-foreground" : "text-green-500"
-      )}
-    />
-  ) : (
-    <GitPullRequest className="w-5 h-5 text-red-500" />
-  );
-
-  const stateLabel = pr.merged
-    ? "Merged"
-    : pr.draft
-      ? "Draft"
-      : pr.state === "open"
-        ? "Open"
-        : "Closed";
-  const stateColor = pr.merged
-    ? "bg-purple-500/20 text-purple-400"
-    : pr.state === "open"
-      ? pr.draft
-        ? "bg-muted text-muted-foreground"
-        : "bg-green-500/20 text-green-400"
-      : "bg-red-500/20 text-red-400";
-
+function HomeLoadingSkeleton() {
   return (
-    <div className="flex-1 flex flex-col overflow-hidden max-w-[50%]">
-      {/* Header */}
-      <div className="border-b border-border px-6 py-4 shrink-0">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              {stateIcon}
-              <span
-                className={cn(
-                  "px-2 py-0.5 text-xs font-medium rounded-full",
-                  stateColor
-                )}
-              >
-                {stateLabel}
-              </span>
-            </div>
-            <h2 className="text-lg font-semibold mt-2">{pr.title}</h2>
-            <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground flex-wrap">
-              <img
-                src={pr.user.avatar_url}
-                alt={pr.user.login}
-                className="w-5 h-5 rounded-full"
-              />
-              <span>{pr.user.login}</span>
-              <span>•</span>
-              <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                {pr.head.ref}
-              </code>
-              <span>→</span>
-              <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                {pr.base.ref}
-              </code>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-2 mt-4">
-          <button
-            onClick={handleReviewFiles}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors text-sm"
-          >
-            <FileCode className="w-4 h-4" />
-            Review Files
-          </button>
-          <a
-            href={`https://github.com/${owner}/${repo}/pull/${number}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted transition-colors text-sm"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </a>
-        </div>
+    <div className="h-full bg-background flex flex-col overflow-hidden">
+      {/* Filter Bar Skeleton */}
+      <div className="border-b border-border px-4 py-2 shrink-0 flex items-center gap-3 bg-card/30">
+        <Skeleton className="h-7 w-24" />
+        <Skeleton className="h-6 w-48" />
+        <div className="flex-1" />
+        <Skeleton className="h-7 w-24" />
+        <Skeleton className="h-7 w-[200px]" />
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-auto">
-        <div className="p-4 space-y-4">
-          {/* Stats */}
-          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <FileCode className="w-4 h-4" />
-              {pr.changed_files} files
-            </span>
-            <span>
-              <span className="text-green-500">+{pr.additions}</span>{" "}
-              <span className="text-red-500">−{pr.deletions}</span>
-            </span>
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Results Header Skeleton */}
+          <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-4 w-20" />
           </div>
 
-          {/* Labels */}
-          {pr.labels.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {pr.labels.map((label) => (
-                <span
-                  key={label.name}
-                  className="px-2 py-0.5 text-xs font-medium rounded-full"
-                  style={{
-                    backgroundColor: `#${label.color}20`,
-                    color: `#${label.color}`,
-                    border: `1px solid #${label.color}40`,
-                  }}
-                >
-                  {label.name}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Description */}
-          {pr.body && (
-            <div className="p-4 bg-card border border-border rounded-lg">
-              <Markdown>{pr.body}</Markdown>
-            </div>
-          )}
-
-          {/* Merge Section */}
-          {pr.state === "open" && !pr.merged && (
-            <div className="p-4 bg-card border border-border rounded-lg space-y-3">
-              <div className="flex items-center gap-3">
-                {canMergePR ? (
-                  <CheckCircle2 className="w-5 h-5 text-green-500" />
-                ) : (
-                  <AlertCircle className="w-5 h-5 text-yellow-500" />
-                )}
-                <div className="flex-1">
-                  <p className="font-medium text-sm">
-                    {getMergeStatusText(pr, checkStatus)}
-                  </p>
-                  {mergeError && (
-                    <p className="text-xs text-destructive mt-1">
-                      {mergeError}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <button
-                    onClick={() => setShowMergeOptions(!showMergeOptions)}
-                    className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-sm"
-                    disabled={merging || !canMergePR}
-                  >
-                    <span className="flex items-center gap-2">
-                      <GitMerge className="w-4 h-4" />
-                      {getMergeButtonText(mergeMethod)}
-                    </span>
-                    <ChevronDown className="w-4 h-4" />
-                  </button>
-
-                  {showMergeOptions && (
-                    <div className="absolute left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-xl z-10 overflow-hidden">
-                      {(["merge", "squash", "rebase"] as const).map(
-                        (method) => (
-                          <button
-                            key={method}
-                            onClick={() => {
-                              setMergeMethod(method);
-                              setShowMergeOptions(false);
-                            }}
-                            className={cn(
-                              "w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors",
-                              mergeMethod === method && "bg-muted"
-                            )}
-                          >
-                            {getMergeButtonText(method)}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  onClick={handleMerge}
-                  disabled={merging || !canMergePR}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-sm"
-                >
-                  {merging ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    "Confirm"
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Merged State */}
-          {pr.merged && (
-            <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg flex items-center gap-2">
-              <GitMerge className="w-4 h-4 text-purple-500" />
-              <p className="text-sm font-medium text-purple-400">
-                Pull request merged
-              </p>
-            </div>
-          )}
-
-          {/* Reviews */}
-          {latestReviews.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium flex items-center gap-2">
-                <MessageSquare className="w-4 h-4" />
-                Reviews
-              </h3>
-              {latestReviews.map((review) => (
-                <ReviewItem key={review.id} review={review} />
-              ))}
-            </div>
-          )}
-
-          {/* Checks */}
-          {checks &&
-            (checks.checkRuns.length > 0 ||
-              checks.status.statuses.length > 0) && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium flex items-center gap-2">
-                  <CheckStatusIcon status={checkStatus} />
-                  Checks
-                </h3>
-                <div className="border border-border rounded-lg divide-y divide-border overflow-hidden">
-                  {checks.checkRuns.map((check) => (
-                    <CheckRunItem key={check.id} check={check} />
-                  ))}
-                  {checks.status.statuses.map((status, idx) => (
-                    <StatusItem key={idx} status={status} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-          {/* Conversation */}
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" />
-              Conversation ({conversation.length})
-            </h3>
-
-            {conversation.map((comment) => (
-              <ConversationComment key={comment.id} comment={comment} />
-            ))}
-
-            {/* Add Comment */}
-            <div className="space-y-2">
-              <textarea
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                placeholder="Leave a comment..."
-                className="w-full min-h-[80px] px-3 py-2 text-sm rounded-lg border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              <div className="flex justify-end">
-                <button
-                  onClick={handleAddComment}
-                  disabled={!commentText.trim() || submittingComment}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 text-sm"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  Comment
-                </button>
-              </div>
-            </div>
-          </div>
+          {/* PR List Skeleton */}
+          <PRListSkeleton count={8} />
         </div>
       </div>
     </div>
   );
 }
 
-// ============================================================================
-// Helper Components
-// ============================================================================
-
-function ReviewItem({ review }: { review: Review }) {
-  if (!review.user) return null;
-
-  const getIcon = () => {
-    switch (review.state) {
-      case "APPROVED":
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-      case "CHANGES_REQUESTED":
-        return <XCircle className="w-4 h-4 text-red-500" />;
-      case "COMMENTED":
-        return <MessageSquare className="w-4 h-4 text-blue-500" />;
-      default:
-        return <MinusCircle className="w-4 h-4 text-muted-foreground" />;
-    }
-  };
-
-  const getStateText = () => {
-    switch (review.state) {
-      case "APPROVED":
-        return "approved";
-      case "CHANGES_REQUESTED":
-        return "requested changes";
-      case "COMMENTED":
-        return "commented";
-      default:
-        return "reviewed";
-    }
-  };
-
+function PRListSkeleton({ count = 5 }: { count?: number }) {
   return (
-    <div className="flex items-start gap-2 p-3 bg-card border border-border rounded-lg">
-      <img
-        src={review.user.avatar_url}
-        alt={review.user.login}
-        className="w-6 h-6 rounded-full"
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 text-sm">
-          {getIcon()}
-          <span className="font-medium">{review.user.login}</span>
-          <span className="text-muted-foreground">{getStateText()}</span>
+    <div className="divide-y divide-border">
+      {Array.from({ length: count }).map((_, i) => (
+        <PRListItemSkeleton key={i} />
+      ))}
+    </div>
+  );
+}
+
+function PRListItemSkeleton() {
+  return (
+    <div className="flex items-start gap-3 px-4 py-3">
+      {/* PR Icon */}
+      <Skeleton className="w-4 h-4 mt-0.5 rounded-full shrink-0" />
+
+      {/* Content */}
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-5 w-[60%]" />
+          <Skeleton className="h-4 w-12 rounded-full" />
         </div>
-        {review.body && (
-          <div className="mt-1 text-sm">
-            <Markdown>{review.body}</Markdown>
-          </div>
-        )}
+        <div className="flex items-center gap-1.5">
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="h-3 w-8" />
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="h-3 w-20" />
+        </div>
       </div>
     </div>
   );
-}
-
-function CheckRunItem({ check }: { check: CheckRun }) {
-  const getIcon = () => {
-    if (check.status !== "completed") {
-      return <Clock className="w-4 h-4 text-yellow-500 animate-pulse" />;
-    }
-    switch (check.conclusion) {
-      case "success":
-        return <Check className="w-4 h-4 text-green-500" />;
-      case "failure":
-        return <X className="w-4 h-4 text-red-500" />;
-      default:
-        return <MinusCircle className="w-4 h-4 text-muted-foreground" />;
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-2 px-3 py-2">
-      {getIcon()}
-      <span className="flex-1 text-sm truncate">{check.name}</span>
-      {check.html_url && (
-        <a
-          href={check.html_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-        </a>
-      )}
-    </div>
-  );
-}
-
-function StatusItem({
-  status,
-}: {
-  status: {
-    state: string;
-    context: string;
-    description: string | null;
-    target_url: string | null;
-  };
-}) {
-  const getIcon = () => {
-    switch (status.state) {
-      case "success":
-        return <Check className="w-4 h-4 text-green-500" />;
-      case "failure":
-      case "error":
-        return <X className="w-4 h-4 text-red-500" />;
-      default:
-        return <Clock className="w-4 h-4 text-yellow-500 animate-pulse" />;
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-2 px-3 py-2">
-      {getIcon()}
-      <span className="flex-1 text-sm truncate">{status.context}</span>
-      {status.target_url && (
-        <a
-          href={status.target_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-        </a>
-      )}
-    </div>
-  );
-}
-
-function CheckStatusIcon({
-  status,
-}: {
-  status: "success" | "failure" | "pending";
-}) {
-  switch (status) {
-    case "success":
-      return <Check className="w-4 h-4 text-green-500" />;
-    case "failure":
-      return <X className="w-4 h-4 text-red-500" />;
-    default:
-      return <Clock className="w-4 h-4 text-yellow-500" />;
-  }
-}
-
-function ConversationComment({ comment }: { comment: IssueComment }) {
-  if (!comment.user) return null;
-
-  return (
-    <div className="flex items-start gap-2 p-3 bg-card border border-border rounded-lg">
-      <img
-        src={comment.user.avatar_url}
-        alt={comment.user.login}
-        className="w-6 h-6 rounded-full"
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="font-medium">{comment.user.login}</span>
-          <span className="text-muted-foreground text-xs">
-            {new Date(comment.created_at).toLocaleDateString()}
-          </span>
-        </div>
-        {comment.body && (
-          <div className="mt-1 text-sm">
-            <Markdown>{comment.body}</Markdown>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-function calculateCheckStatus(
-  checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null
-): "success" | "failure" | "pending" {
-  if (!checks) return "success";
-
-  const allChecks = [
-    ...checks.checkRuns.map((c) =>
-      c.status === "completed" ? c.conclusion : "pending"
-    ),
-    ...checks.status.statuses.map((s) => s.state),
-  ];
-
-  if (allChecks.length === 0) return "success";
-  if (allChecks.some((c) => c === "failure" || c === "error")) return "failure";
-  if (allChecks.some((c) => c === "pending" || c === null)) return "pending";
-  return "success";
-}
-
-function getLatestReviewsByUser(reviews: Review[]): Review[] {
-  const byUser = new Map<string, Review>();
-  const sorted = [...reviews]
-    .filter((r) => r.submitted_at && r.user)
-    .sort(
-      (a, b) =>
-        new Date(a.submitted_at!).getTime() -
-        new Date(b.submitted_at!).getTime()
-    );
-
-  for (const review of sorted) {
-    if (
-      review.state !== "COMMENTED" &&
-      review.state !== "PENDING" &&
-      review.user
-    ) {
-      byUser.set(review.user.login, review);
-    }
-  }
-
-  const commented = sorted.filter((r) => r.state === "COMMENTED");
-  return [...byUser.values(), ...commented];
-}
-
-function canMerge(
-  pr: PRDetail,
-  checkStatus: "success" | "failure" | "pending"
-): boolean {
-  if (pr.draft) return false;
-  if (pr.state !== "open") return false;
-  if (pr.mergeable === false) return false;
-  return true;
-}
-
-function getMergeStatusText(
-  pr: PRDetail,
-  checkStatus: "success" | "failure" | "pending"
-): string {
-  if (pr.draft) return "This pull request is still a draft";
-  if (pr.mergeable === false) return "This branch has conflicts";
-  if (checkStatus === "failure") return "Some checks have failed";
-  if (checkStatus === "pending") return "Checks are running";
-  return "Ready to merge";
-}
-
-function getMergeButtonText(method: "merge" | "squash" | "rebase"): string {
-  switch (method) {
-    case "merge":
-      return "Create merge commit";
-    case "squash":
-      return "Squash and merge";
-    case "rebase":
-      return "Rebase and merge";
-  }
 }

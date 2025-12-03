@@ -223,13 +223,14 @@ export function TabProvider({ children }: TabProviderProps) {
 // ============================================================================
 
 export function useOpenPRReviewTab() {
-  const { openTab, getExistingPRTab } = useTabContext();
+  const { openTab, getExistingPRTab, setActiveTab } = useTabContext();
 
   return useCallback(
     (owner: string, repo: string, number: number) => {
       // Check if tab already exists
       const existing = getExistingPRTab(owner, repo, number);
       if (existing) {
+        setActiveTab(existing.id);
         return existing.id;
       }
 
@@ -244,6 +245,6 @@ export function useOpenPRReviewTab() {
         number,
       });
     },
-    [openTab, getExistingPRTab]
+    [openTab, getExistingPRTab, setActiveTab]
   );
 }

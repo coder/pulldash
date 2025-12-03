@@ -1,16 +1,16 @@
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { APIProvider } from "./contexts/api";
+import { GitHubProvider } from "./contexts/github";
 import { TabProvider } from "./contexts/tabs";
-import { DataStoreProvider } from "./contexts/data-store";
+import { CommandPaletteProvider } from "./components/command-palette";
 import { AppShell } from "./components/app-shell";
 import { PRReviewPage } from "./components/pr-review";
 import "./index.css";
 
 createRoot(document.getElementById("app")!).render(
-  <APIProvider>
-    <DataStoreProvider>
-      <TabProvider>
+  <GitHubProvider>
+    <TabProvider>
+      <CommandPaletteProvider>
         <BrowserRouter>
           <Routes>
             {/* Main app shell with tabs */}
@@ -22,7 +22,7 @@ createRoot(document.getElementById("app")!).render(
             />
           </Routes>
         </BrowserRouter>
-      </TabProvider>
-    </DataStoreProvider>
-  </APIProvider>
+      </CommandPaletteProvider>
+    </TabProvider>
+  </GitHubProvider>
 );

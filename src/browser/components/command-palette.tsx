@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { File, FileCode, Search } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -16,6 +17,51 @@ import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
 import { Keycap, KeycapGroup } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/types";
+
+// ============================================================================
+// Global Command Palette Context
+// ============================================================================
+
+interface CommandPaletteContextValue {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}
+
+const CommandPaletteContext = createContext<CommandPaletteContextValue | null>(null);
+
+export function CommandPaletteProvider({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+K or Ctrl+P to open command palette
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "p")) {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen((prev) => !prev);
+      }
+    };
+
+    // Use capture phase to intercept before browser handles it
+    document.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () =>
+      document.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, []);
+
+  return (
+    <CommandPaletteContext.Provider value={{ open, setOpen }}>
+      {children}
+    </CommandPaletteContext.Provider>
+  );
+}
+
+export function useCommandPalette() {
+  const context = useContext(CommandPaletteContext);
+  if (!context) {
+    throw new Error("useCommandPalette must be used within CommandPaletteProvider");
+  }
+  return context;
+}
 
 // ============================================================================
 // Search Context (avoids prop drilling that causes re-renders)
@@ -526,28 +572,3 @@ const FileIcon = memo(function FileIcon({ extension }: FileIconProps) {
   );
 });
 
-// ============================================================================
-// Hook to use command palette
-// ============================================================================
-
-export function useCommandPalette() {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+K or Ctrl+P to open command palette
-      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "p")) {
-        e.preventDefault();
-        e.stopPropagation();
-        setOpen((prev) => !prev);
-      }
-    };
-
-    // Use capture phase to intercept before browser handles it
-    document.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () =>
-      document.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, []);
-
-  return { open, setOpen };
-}

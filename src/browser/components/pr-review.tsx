@@ -1,7 +1,6 @@
 import React, {
   memo,
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -32,7 +31,10 @@ import {
   ChevronUp,
   Search,
   ExternalLink,
+  BookOpen,
 } from "lucide-react";
+import { Skeleton } from "../ui/skeleton";
+import { PROverview } from "./pr-overview";
 import {
   Tooltip,
   TooltipContent,
@@ -44,6 +46,7 @@ import { PRHeader } from "./pr-header";
 import { FileTree } from "./file-tree";
 import { FileHeader } from "./file-header";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
+import { useGitHub, useGitHubSafe, useGitHubReady, usePRChecks } from "../contexts/github";
 import {
   PRReviewProvider,
   usePRReviewSelector,
@@ -65,9 +68,8 @@ import {
   useCurrentFilePendingComments,
   useCommentCountsByFile,
   usePendingCommentCountsByFile,
-  useIsLineInCommentingRange,
-  useIsLineInCommentRange,
-  useSelectionBoundary,
+  useCommentingRange,
+  useCommentRangeLookup,
   getTimeAgo,
   type LocalPendingComment,
   type ParsedDiff,
@@ -86,10 +88,9 @@ import {
   DropdownMenuRadioItem,
 } from "../ui/dropdown-menu";
 import { Keycap, KeycapGroup } from "../ui/keycap";
-import { Markdown } from "../ui/markdown";
+import { Markdown, MarkdownEditor } from "../ui/markdown";
 import { CommandPalette, useCommandPalette } from "./command-palette";
 import { useTabContext, type TabStatus } from "../contexts/tabs";
-import { usePRChecks } from "../contexts/data-store";
 
 // ============================================================================
 // Hook to sync PR check status with tab
@@ -179,6 +180,8 @@ export function PRReviewContent({
   number,
   tabId,
 }: PRReviewContentProps) {
+  const { ready: githubReady, error: githubError } = useGitHubReady();
+  const github = useGitHubSafe();
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [files, setFiles] = useState<PullRequestFile[]>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
@@ -189,30 +192,22 @@ export function PRReviewContent({
   useSyncTabStatus(tabId, owner, repo, number, pr);
 
   useEffect(() => {
+    if (!github) return;
+
     const fetchData = async () => {
       setLoading(true);
       setError(null);
 
       try {
-        const [prRes, filesRes, commentsRes] = await Promise.all([
-          fetch(`/api/pr/${owner}/${repo}/${number}`),
-          fetch(`/api/pr/${owner}/${repo}/${number}/files`),
-          fetch(`/api/pr/${owner}/${repo}/${number}/comments`),
-        ]);
-
-        if (!prRes.ok || !filesRes.ok || !commentsRes.ok) {
-          throw new Error("Failed to fetch PR data");
-        }
-
         const [prData, filesData, commentsData] = await Promise.all([
-          prRes.json(),
-          filesRes.json(),
-          commentsRes.json(),
+          github.getPR(owner, repo, number),
+          github.getPRFiles(owner, repo, number),
+          github.getPRComments(owner, repo, number),
         ]);
 
         setPr(prData);
         setFiles(filesData);
-        setComments(commentsData);
+        setComments(commentsData as ReviewComment[]);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Unknown error");
       } finally {
@@ -221,17 +216,25 @@ export function PRReviewContent({
     };
 
     fetchData();
-  }, [owner, repo, number]);
+  }, [github, owner, repo, number]);
+
+  // Show loading while GitHub client initializes
+  if (!githubReady) {
+    if (githubError) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="flex flex-col items-center gap-4">
+            <p className="text-destructive font-medium">Failed to connect to GitHub</p>
+            <p className="text-sm text-muted-foreground">{githubError}</p>
+          </div>
+        </div>
+      );
+    }
+    return <PRReviewSkeleton />;
+  }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Loading PR...</p>
-        </div>
-      </div>
-    );
+    return <PRReviewSkeleton />;
   }
 
   if (error || !pr) {
@@ -381,6 +384,7 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const hideViewed = usePRReviewSelector((s) => s.hideViewed);
+  const showOverview = usePRReviewSelector((s) => s.showOverview);
 
   const commentCounts = useCommentCountsByFile();
   const pendingCommentCounts = usePendingCommentCountsByFile();
@@ -424,6 +428,25 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
         </TooltipProvider>
       </div>
 
+      {/* Overview button */}
+      <button
+        onClick={store.selectOverview}
+        className={cn(
+          "mx-2 mb-1 flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
+          showOverview
+            ? "bg-muted text-foreground"
+            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+        )}
+      >
+        <BookOpen className="w-4 h-4" />
+        <span className="font-medium flex-1">Overview</span>
+        <kbd className="px-1.5 py-0.5 bg-muted/60 rounded text-[10px] font-mono text-muted-foreground">
+          o
+        </kbd>
+      </button>
+
+      <div className="border-t border-border/50 mt-1" />
+
       <FileTree
         files={files}
         selectedFile={selectedFile}
@@ -456,17 +479,47 @@ const DiffPanel = memo(function DiffPanel() {
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
+  const showOverview = usePRReviewSelector((s) => s.showOverview);
 
   const currentFile = useCurrentFile();
   const parsedDiff = useCurrentDiff();
   const isLoading = useIsCurrentFileLoading();
 
-  // Defer the diff to allow rapid navigation without blocking
-  const deferredDiff = useDeferredValue(parsedDiff);
-
   const currentIndex = selectedFile
     ? files.findIndex((f) => f.filename === selectedFile)
     : -1;
+
+  // Show overview panel
+  if (showOverview) {
+    return (
+      <main className="flex-1 overflow-hidden flex flex-col">
+        {/* Header bar matching the file view */}
+        <div className="shrink-0 border-b border-border bg-card/30 px-3 py-1.5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Pull Request Overview</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">
+              <span className="text-green-500">+{pr.additions}</span>{" "}
+              <span className="text-red-500">−{pr.deletions}</span>
+            </span>
+            <span className="text-muted-foreground">
+              <span className="text-green-500 font-medium">
+                {viewedFiles.size}
+              </span>
+              <span className="text-muted-foreground">
+                {" "}
+                / {files.length} reviewed
+              </span>
+            </span>
+            <SubmitReviewDropdown />
+          </div>
+        </div>
+        <PROverview />
+      </main>
+    );
+  }
 
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
@@ -540,13 +593,11 @@ const DiffPanel = memo(function DiffPanel() {
 
           {/* Scrollable diff content - DiffViewer handles its own virtualized scroll */}
           <div className="flex-1 min-h-0 flex flex-col">
-            {deferredDiff && deferredDiff.hunks.length > 0 ? (
-              <DiffViewer diff={deferredDiff} />
+            {parsedDiff && parsedDiff.hunks.length > 0 ? (
+              <DiffViewer diff={parsedDiff} />
             ) : isLoading || (currentFile.patch && !parsedDiff) ? (
-              // Show spinner if loading OR if file has patch but diff isn't loaded yet
-              <div className="flex items-center justify-center py-12 flex-1">
-                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-              </div>
+              // Show skeleton if loading OR if file has patch but diff isn't ready yet
+              <DiffSkeleton />
             ) : (
               <div className="p-4 text-sm text-muted-foreground text-center flex-1 flex items-center justify-center">
                 {!currentFile.patch
@@ -577,6 +628,7 @@ const DiffPanel = memo(function DiffPanel() {
 const KeybindsBar = memo(function KeybindsBar() {
   const gotoLineMode = usePRReviewSelector((s) => s.gotoLineMode);
   const gotoLineInput = usePRReviewSelector((s) => s.gotoLineInput);
+  const gotoLineSide = usePRReviewSelector((s) => s.gotoLineSide);
   const focusedLine = usePRReviewSelector((s) => s.focusedLine);
   const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
   const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
@@ -623,13 +675,23 @@ const KeybindsBar = memo(function KeybindsBar() {
                 <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
                   GOTO
                 </span>
+                <span className={cn(
+                  "px-1.5 py-0.5 rounded text-xs font-medium",
+                  gotoLineSide === "new" 
+                    ? "bg-green-500/20 text-green-400" 
+                    : "bg-orange-500/20 text-orange-400"
+                )}>
+                  {gotoLineSide === "new" ? "new" : "old"}
+                </span>
                 <span className="font-mono text-blue-400">
                   {gotoLineInput || "..."}
                 </span>
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                Type line number, then <Keycap keyName="Enter" size="xs" /> to
-                jump
+                <Keycap keyName="Tab" size="xs" /> toggle side
+              </span>
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <Keycap keyName="Enter" size="xs" /> jump
               </span>
             </>
           ) : commentingOnLine ? (
@@ -758,10 +820,12 @@ const KeybindsBar = memo(function KeybindsBar() {
 interface LineDragContextValue {
   isDragging: boolean;
   dragAnchor: number | null;
-  onDragStart: (lineNum: number, side: "old" | "new") => void;
+  onDragStart: (lineNum: number, side: "old" | "new", shiftKey?: boolean) => void;
   onDragEnter: (lineNum: number, side: "old" | "new") => void;
   onDragEnd: () => void;
   onClickFallback: (lineNum: number, side: "old" | "new") => void;
+  commentingRange: { start: number; end: number } | null;
+  commentRangeLookup: Set<number> | null;
 }
 
 const LineDragContext = React.createContext<LineDragContextValue | null>(null);
@@ -814,11 +878,23 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   const commentingOnLine = usePRReviewSelector((s) => s.commentingOnLine);
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
 
+  // Note: selectionState removed from context - rows subscribe directly to avoid re-renders
+  const commentingRange = useCommentingRange();
+  const commentRangeLookup = useCommentRangeLookup();
+
   // Subscribe to expanded skip blocks directly for re-render triggering
   const expandedSkipBlocks = usePRReviewSelector((s) => s.expandedSkipBlocks);
 
   // Skip block expansion
   const { expandSkipBlock, isExpanding } = useSkipBlockExpansion();
+
+  // Selectors lifted to parent level - only subscriptions here instead of per-row
+  const focusedSkipBlockIndex = usePRReviewSelector((s) => s.focusedSkipBlockIndex);
+  const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
+  const focusedPendingCommentId = usePRReviewSelector((s) => s.focusedPendingCommentId);
+  const editingCommentId = usePRReviewSelector((s) => s.editingCommentId);
+  const editingPendingCommentId = usePRReviewSelector((s) => s.editingPendingCommentId);
+  const replyingToCommentId = usePRReviewSelector((s) => s.replyingToCommentId);
 
   // Helper to get expanded lines for a skip block
   const getExpandedLines = useCallback(
@@ -915,8 +991,9 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     return startLines;
   }, [hunks]);
 
-  // Flatten hunks into virtual rows
-  const virtualRows = useMemo((): VirtualRowType[] => {
+  // Fix 5: Separate static rows (diff structure + comments) from dynamic overlays (comment form)
+  // Static rows only change when diff or comments change
+  const staticRows = useMemo((): VirtualRowType[] => {
     const rows: VirtualRowType[] = [];
     let index = 0;
     let skipIndex = 0;
@@ -954,16 +1031,6 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
           const lineNum = line.newLineNumber || line.oldLineNumber;
           rows.push({ type: "line", line, lineNum, index: index++ });
 
-          // Add comment form if commenting on this line
-          if (lineNum && commentingOnLine?.line === lineNum) {
-            rows.push({
-              type: "comment-form",
-              lineNum,
-              startLine: commentingOnLine.startLine,
-              index: index++,
-            });
-          }
-
           // Add pending comments for this line
           if (lineNum) {
             const linePending = pendingCommentsByLine.get(lineNum);
@@ -998,11 +1065,48 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   }, [
     hunks,
     skipBlockStartLines,
-    commentingOnLine,
     pendingCommentsByLine,
     threadsByLine,
     getExpandedLines,
   ]);
+
+  // Dynamic: Insert comment form into the correct position (only changes when commentingOnLine changes)
+  const virtualRows = useMemo((): VirtualRowType[] => {
+    if (!commentingOnLine) return staticRows;
+    
+    // Find where to insert the comment form
+    const targetLine = commentingOnLine.line;
+    const insertIndex = staticRows.findIndex((row, idx) => {
+      if (row.type === "line" && row.lineNum === targetLine) {
+        // Insert after this line (before any pending comments or threads on this line)
+        return true;
+      }
+      return false;
+    });
+
+    if (insertIndex === -1) return staticRows;
+
+    // Create new array with comment form inserted
+    const result: VirtualRowType[] = [];
+    let newIndex = 0;
+    
+    for (let i = 0; i < staticRows.length; i++) {
+      const row = staticRows[i];
+      result.push({ ...row, index: newIndex++ });
+      
+      // Insert comment form after the target line
+      if (i === insertIndex) {
+        result.push({
+          type: "comment-form",
+          lineNum: targetLine,
+          startLine: commentingOnLine.startLine,
+          index: newIndex++,
+        });
+      }
+    }
+
+    return result;
+  }, [staticRows, commentingOnLine]);
 
   // Create O(1) lookup map for line numbers -> row indices
   const lineNumToRowIndex = useMemo(() => {
@@ -1045,11 +1149,29 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     count: virtualRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize,
-    overscan: 50, // Render 50 extra rows above/below viewport to prevent scroll jitter
+    // High overscan for smooth navigation - rows pre-rendered above/below viewport
+    overscan: 100,
+    // Add padding at the end so we can scroll the last line to center
+    paddingEnd: 300,
   });
 
   const onDragStart = useCallback(
-    (lineNum: number, side: "old" | "new") => {
+    (lineNum: number, side: "old" | "new", shiftKey?: boolean) => {
+      const state = store.getSnapshot();
+      
+      // Shift+click: extend selection from current focus to clicked line
+      if (shiftKey && state.focusedLine !== null && state.focusedLineSide === side) {
+        // Keep the anchor at the original focused line, move focus to clicked line
+        if (state.selectionAnchor === null) {
+          // No existing anchor - use current focused line as anchor
+          store.setSelectionAnchor(state.focusedLine, side);
+        }
+        store.setFocusedLine(lineNum, side);
+        // Don't start drag mode for shift+click
+        return;
+      }
+      
+      // Normal click: start new selection
       isDraggingRef.current = true;
       dragAnchorRef.current = lineNum;
       dragSideRef.current = side;
@@ -1206,30 +1328,81 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
       onDragEnter,
       onDragEnd,
       onClickFallback,
+      commentingRange,
+      commentRangeLookup,
     }),
-    [isDraggingState, onDragStart, onDragEnter, onDragEnd, onClickFallback]
+    [isDraggingState, onDragStart, onDragEnter, onDragEnd, onClickFallback, commentingRange, commentRangeLookup]
   );
 
-  // Scroll to focused line (O(1) lookup instead of O(n) findIndex)
-  // Include virtualRows.length in deps to re-run when diff loads
+  // Selection state for CSS-based highlighting (no per-row subscriptions)
   const focusedLine = usePRReviewSelector((s) => s.focusedLine);
+  const focusedLineSide = usePRReviewSelector((s) => s.focusedLineSide);
+  const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
+  const selectionAnchorSide = usePRReviewSelector((s) => s.selectionAnchorSide);
+
+  // Combined scroll + selection effect using RAF to prevent jitter
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rafIdRef = useRef<number | null>(null);
+  
   useEffect(() => {
-    if (focusedLine && !isDraggingState) {
-      const rowIndex = lineNumToRowIndex.get(focusedLine);
-      if (rowIndex !== undefined) {
-        virtualizer.scrollToIndex(rowIndex, {
-          align: "center",
-          behavior: "auto",
-        });
-      }
+    // Cancel any pending RAF
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
     }
-  }, [
-    focusedLine,
-    isDraggingState,
-    lineNumToRowIndex,
-    virtualizer,
-    virtualRows.length,
-  ]);
+    
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      const container = containerRef.current;
+      
+      // 1. Update selection highlighting
+      if (container) {
+        // Clear previous selection
+        const prevSelected = container.querySelectorAll('[data-selected]');
+        prevSelected.forEach(el => {
+          el.removeAttribute('data-selected');
+          el.removeAttribute('data-sel-first');
+          el.removeAttribute('data-sel-last');
+        });
+
+        if (focusedLine && focusedLineSide) {
+          // Compute selection range
+          let selStart = focusedLine;
+          let selEnd = focusedLine;
+          if (selectionAnchor !== null && selectionAnchorSide === focusedLineSide) {
+            selStart = Math.min(focusedLine, selectionAnchor);
+            selEnd = Math.max(focusedLine, selectionAnchor);
+          }
+
+          // Mark selected rows
+          for (let lineNum = selStart; lineNum <= selEnd; lineNum++) {
+            const row = container.querySelector(`[data-line-num="${lineNum}"][data-line-side="${focusedLineSide}"]`);
+            if (row) {
+              row.setAttribute('data-selected', 'true');
+              if (lineNum === selStart) row.setAttribute('data-sel-first', 'true');
+              if (lineNum === selEnd) row.setAttribute('data-sel-last', 'true');
+            }
+          }
+        }
+      }
+      
+      // 2. Scroll to focused line (after selection update)
+      if (focusedLine && !isDraggingState) {
+        const rowIndex = lineNumToRowIndex.get(focusedLine);
+        if (rowIndex !== undefined) {
+          // Use "auto" alignment - only scrolls if needed, keeps row visible
+          virtualizer.scrollToIndex(rowIndex, {
+            align: "auto",
+          });
+        }
+      }
+    });
+    
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, [focusedLine, focusedLineSide, selectionAnchor, selectionAnchorSide, isDraggingState, lineNumToRowIndex, virtualizer]);
 
   return (
     <LineDragContext.Provider value={dragValue}>
@@ -1237,7 +1410,8 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
         <div className="p-4">
           <div className="border border-border rounded-lg overflow-hidden">
             <div
-              className="relative w-full font-mono text-[0.8rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)]"
+              ref={containerRef}
+              className="relative w-full font-mono text-[0.8rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container"
               style={{ height: `${virtualizer.getTotalSize()}px` }}
             >
               {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -1254,7 +1428,17 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
                     data-index={virtualRow.index}
                     ref={virtualizer.measureElement}
                   >
-                    <VirtualRowRenderer row={row} />
+                    <VirtualRowRenderer
+                      row={row}
+                      focusedSkipBlockIndex={focusedSkipBlockIndex}
+                      focusedCommentId={focusedCommentId}
+                      focusedPendingCommentId={focusedPendingCommentId}
+                      editingCommentId={editingCommentId}
+                      editingPendingCommentId={editingPendingCommentId}
+                      replyingToCommentId={replyingToCommentId}
+                      expandSkipBlock={expandSkipBlock}
+                      isExpanding={isExpanding}
+                    />
                   </div>
                 );
               })}
@@ -1270,25 +1454,30 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
 // Virtual Row Renderer
 // ============================================================================
 
+interface VirtualRowRendererProps {
+  row: VirtualRowType;
+  // Props passed from parent to avoid per-row selectors
+  focusedSkipBlockIndex: number | null;
+  focusedCommentId: number | null;
+  focusedPendingCommentId: string | null;
+  editingCommentId: number | null;
+  editingPendingCommentId: string | null;
+  replyingToCommentId: number | null;
+  expandSkipBlock: (skipIndex: number, startLine: number, count: number) => void;
+  isExpanding: (skipIndex: number) => boolean;
+}
+
 const VirtualRowRenderer = memo(function VirtualRowRenderer({
   row,
-}: {
-  row: VirtualRowType;
-}) {
-  const editingCommentId = usePRReviewSelector((s) => s.editingCommentId);
-  const replyingToCommentId = usePRReviewSelector((s) => s.replyingToCommentId);
-  const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
-  const focusedPendingCommentId = usePRReviewSelector(
-    (s) => s.focusedPendingCommentId
-  );
-  const editingPendingCommentId = usePRReviewSelector(
-    (s) => s.editingPendingCommentId
-  );
-  const focusedSkipBlockIndex = usePRReviewSelector(
-    (s) => s.focusedSkipBlockIndex
-  );
-  const { expandSkipBlock, isExpanding } = useSkipBlockExpansion();
-
+  focusedSkipBlockIndex,
+  focusedCommentId,
+  focusedPendingCommentId,
+  editingCommentId,
+  editingPendingCommentId,
+  replyingToCommentId,
+  expandSkipBlock,
+  isExpanding,
+}: VirtualRowRendererProps) {
   switch (row.type) {
     case "skip-spacer":
       return <div className="h-2" />;
@@ -1343,21 +1532,31 @@ const DiffLineRow = memo(function DiffLineRow({
   lineNum,
 }: DiffLineRowProps) {
   const store = usePRReviewStore();
-  const { onDragStart, onDragEnter, onDragEnd, onClickFallback } =
-    useLineDrag();
+  const { 
+    onDragStart, 
+    onDragEnter, 
+    onDragEnd, 
+    onClickFallback,
+    commentingRange,
+    commentRangeLookup,
+  } = useLineDrag();
 
   // Determine which side this line is on: 'old' for deletes, 'new' for insert/context
   const lineSide: "old" | "new" = line.type === "delete" ? "old" : "new";
 
-  // Fine-grained subscriptions - only re-render when THIS line's state changes
-  const { isFirst, isLast, isInSelection } = useSelectionBoundary(
-    lineNum ?? -1,
-    lineSide
-  );
-  const isInCommentingRange = useIsLineInCommentingRange(lineNum ?? -1);
+  // Selection highlighting is handled via CSS data attributes (no per-row subscription needed)
 
-  // Check if this line has comment range highlighting using optimized selector
-  const hasCommentRange = useIsLineInCommentRange(lineNum ?? -1);
+  // Compute commenting range state from lifted parent state (Fix 1)
+  const isInCommentingRange = useMemo(() => {
+    if (lineNum === undefined || !commentingRange) return false;
+    return lineNum >= commentingRange.start && lineNum <= commentingRange.end;
+  }, [lineNum, commentingRange]);
+
+  // O(1) lookup for comment range using pre-computed Set (Fix 3)
+  const hasCommentRange = useMemo(() => {
+    if (lineNum === undefined || !commentRangeLookup) return false;
+    return commentRangeLookup.has(lineNum);
+  }, [lineNum, commentRangeLookup]);
 
   const Tag =
     line.type === "insert" ? "ins" : line.type === "delete" ? "del" : "span";
@@ -1366,7 +1565,7 @@ const DiffLineRow = memo(function DiffLineRow({
     (e: React.MouseEvent) => {
       if (lineNum) {
         e.preventDefault();
-        onDragStart(lineNum, lineSide);
+        onDragStart(lineNum, lineSide, e.shiftKey);
       }
     },
     [lineNum, lineSide, onDragStart]
@@ -1388,9 +1587,29 @@ const DiffLineRow = memo(function DiffLineRow({
     }
   }, [lineNum, lineSide, onClickFallback]);
 
-  // Click on code content to focus line (but not if user is selecting text)
-  const handleContentClick = useCallback(() => {
+  // Handle mousedown on content to catch shift+click before browser text selection
+  const handleContentMouseDown = useCallback((e: React.MouseEvent) => {
     if (!lineNum) return;
+    
+    const state = store.getSnapshot();
+    
+    // Shift+click: extend selection from current focus to clicked line
+    if (e.shiftKey && state.focusedLine !== null) {
+      e.preventDefault(); // Prevent browser text selection
+      if (state.selectionAnchor === null) {
+        store.setSelectionAnchor(state.focusedLine, state.focusedLineSide ?? lineSide);
+      }
+      store.setFocusedLine(lineNum, lineSide);
+      return;
+    }
+  }, [lineNum, lineSide, store]);
+
+  // Click on code content to focus line (but not if user is selecting text)
+  const handleContentClick = useCallback((e: React.MouseEvent) => {
+    if (!lineNum) return;
+
+    // Shift+click is handled in mousedown
+    if (e.shiftKey) return;
 
     // Check if user has made a text selection
     const selection = window.getSelection();
@@ -1398,15 +1617,18 @@ const DiffLineRow = memo(function DiffLineRow({
       return; // Don't focus if user is selecting text
     }
 
+    // Normal click: focus the line (clear any selection)
     store.setFocusedLine(lineNum, lineSide);
+    store.setSelectionAnchor(null, null);
   }, [lineNum, lineSide, store]);
 
-  // Get combined styles - background with gap fix + selection border shadow
-  const getStyles = () => {
+  // Styles for non-selection highlighting (selection is handled via CSS data attributes)
+  const styles = useMemo(() => {
     let bgColor: string | undefined;
 
-    if (isInSelection || isInCommentingRange) {
-      bgColor = "#19273e"; // opaque blue
+    // Selection highlighting is now CSS-based via data-selected attribute
+    if (isInCommentingRange) {
+      bgColor = "#19273e"; // opaque blue for commenting range
     } else if (line.type === "insert") {
       bgColor = "#122218"; // opaque green
     } else if (line.type === "delete") {
@@ -1415,33 +1637,23 @@ const DiffLineRow = memo(function DiffLineRow({
       bgColor = "#1b1810"; // opaque yellow
     }
 
-    const styles: React.CSSProperties = {};
+    const result: React.CSSProperties = {};
 
     if (bgColor) {
-      // Use linear-gradient that extends 2px past the bottom to fill gaps
-      styles.background = `linear-gradient(${bgColor}, ${bgColor})`;
-      styles.backgroundSize = "100% calc(100% + 2px)";
-      styles.backgroundRepeat = "no-repeat";
+      result.background = `linear-gradient(${bgColor}, ${bgColor})`;
+      result.backgroundSize = "100% calc(100% + 2px)";
+      result.backgroundRepeat = "no-repeat";
     }
 
-    // Add selection border shadow
-    if (isInSelection) {
-      const shadows: string[] = [
-        "inset 2px 0 0 rgb(59,130,246)", // left
-        "inset -2px 0 0 rgb(59,130,246)", // right
-      ];
-      if (isFirst) shadows.push("inset 0 2px 0 rgb(59,130,246)"); // top
-      if (isLast) shadows.push("inset 0 -2px 0 rgb(59,130,246)"); // bottom
-      styles.boxShadow = shadows.join(", ");
-    }
-
-    return styles;
-  };
+    return result;
+  }, [isInCommentingRange, line.type, hasCommentRange]);
 
   return (
     <div
-      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout"
-      style={getStyles()}
+      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout diff-line-row"
+      style={styles}
+      data-line-num={lineNum}
+      data-line-side={lineSide}
     >
       {/* Left border indicator */}
       <div
@@ -1482,6 +1694,7 @@ const DiffLineRow = memo(function DiffLineRow({
       {/* Code content - click to focus line (unless selecting text) */}
       <div
         className="flex-1 whitespace-pre-wrap break-words pr-6 overflow-hidden pl-2 cursor-text"
+        onMouseDown={handleContentMouseDown}
         onClick={handleContentClick}
       >
         <Tag className="no-underline">
@@ -1605,11 +1818,6 @@ const InlineCommentForm = memo(function InlineCommentForm({
   const { addPendingComment } = useCommentActions();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (!text.trim()) return;
@@ -1641,11 +1849,10 @@ const InlineCommentForm = memo(function InlineCommentForm({
 
   return (
     <div className="border-l-2 border-green-500 bg-green-500/5 p-4 mx-4 my-2 rounded-r-lg">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-3">
         <span className="text-sm text-muted-foreground flex items-center gap-2">
           <MessageSquare className="w-4 h-4" />
           Comment on {lineLabel}
-          <span className="text-xs opacity-60">(⌘+Enter to submit)</span>
         </span>
         <button
           onClick={store.cancelCommenting}
@@ -1654,15 +1861,15 @@ const InlineCommentForm = memo(function InlineCommentForm({
           <X className="w-4 h-4" />
         </button>
       </div>
-      <textarea
-        ref={textareaRef}
+      <MarkdownEditor
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={setText}
         onKeyDown={handleKeyDown}
         placeholder="Leave a comment... (will be added to your pending review)"
-        className="w-full min-h-[100px] px-3 py-2 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring font-sans"
+        minHeight="80px"
+        autoFocus
       />
-      <div className="flex justify-end gap-2 mt-2">
+      <div className="flex justify-end gap-2 mt-3">
         <button
           onClick={store.cancelCommenting}
           className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
@@ -1871,15 +2078,15 @@ const CommentThread = memo(function CommentThread({
 
           {replyingTo && (
             <div className="px-4 py-3 border-t border-border/50">
-              <textarea
+              <MarkdownEditor
                 value={replyText}
-                onChange={(e) => setReplyText(e.target.value)}
+                onChange={setReplyText}
                 onKeyDown={handleKeyDown}
-                placeholder="Write a reply... (⌘+Enter to submit)"
-                className="w-full min-h-[80px] px-3 py-2 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring font-sans"
+                placeholder="Write a reply..."
+                minHeight="60px"
                 autoFocus
               />
-              <div className="flex justify-end gap-2 mt-2">
+              <div className="flex justify-end gap-2 mt-3">
                 <button
                   onClick={handleCancel}
                   className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
@@ -2012,14 +2219,15 @@ const CommentItem = memo(function CommentItem({
 
           {isEditing ? (
             <div className="mt-2">
-              <textarea
+              <MarkdownEditor
                 value={editText}
-                onChange={(e) => setEditText(e.target.value)}
+                onChange={setEditText}
                 onKeyDown={handleKeyDown}
-                className="w-full min-h-[80px] px-3 py-2 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Edit your comment..."
+                minHeight="60px"
                 autoFocus
               />
-              <div className="flex justify-end gap-2 mt-2">
+              <div className="flex justify-end gap-2 mt-3">
                 <button
                   onClick={store.cancelEditing}
                   className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
@@ -2201,14 +2409,15 @@ const PendingCommentItem = memo(function PendingCommentItem({
 
             {isEditing ? (
               <div className="mt-2">
-                <textarea
+                <MarkdownEditor
                   value={editText}
-                  onChange={(e) => setEditText(e.target.value)}
+                  onChange={setEditText}
                   onKeyDown={handleKeyDown}
-                  className="w-full min-h-[80px] px-3 py-2 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Edit your comment..."
+                  minHeight="60px"
                   autoFocus
                 />
-                <div className="flex justify-end gap-2 mt-2">
+                <div className="flex justify-end gap-2 mt-3">
                   <button
                     onClick={store.cancelEditingPendingComment}
                     className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
@@ -2524,3 +2733,114 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
     </DropdownMenu>
   );
 });
+
+// ============================================================================
+// Skeleton Components
+// ============================================================================
+
+function PRReviewSkeleton() {
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header skeleton */}
+      <div className="shrink-0 border-b border-border bg-card/30 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <Skeleton className="w-5 h-5 rounded-full" />
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-5 w-16" />
+          <div className="flex-1" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+        <div className="flex items-center gap-2 mt-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-24" />
+        </div>
+      </div>
+
+      <div className="flex flex-1 overflow-hidden min-h-0">
+        {/* File panel skeleton */}
+        <aside className="w-64 border-r border-border flex flex-col overflow-hidden shrink-0">
+          <div className="mx-2 my-2 flex items-center gap-1.5">
+            <Skeleton className="flex-1 h-8" />
+            <Skeleton className="w-8 h-8" />
+          </div>
+          <Skeleton className="mx-2 mb-1 h-8" />
+          <div className="border-t border-border/50 mt-1" />
+          <div className="flex-1 p-2 space-y-1">
+            {[70, 55, 80, 45, 65, 90, 50, 75, 60, 85, 40, 70].map((width, i) => (
+              <div key={i} className="flex items-center gap-2 px-2 py-1">
+                <Skeleton className="w-4 h-4" />
+                <Skeleton className="h-4" style={{ width: `${width}%` }} />
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* Diff panel skeleton */}
+        <main className="flex-1 overflow-hidden flex flex-col">
+          <div className="shrink-0 border-b border-border bg-card/30 px-3 py-1.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-6 w-16" />
+              <Skeleton className="h-4 w-12" />
+              <Skeleton className="h-6 w-16" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-8 w-28" />
+            </div>
+          </div>
+          <DiffSkeleton />
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// Deterministic widths for skeleton lines to avoid re-render flicker
+const SKELETON_LINE_WIDTHS = [65, 45, 80, 30, 55, 70, 40, 85, 50, 60, 75, 35, 90, 45, 55, 70, 25, 80, 60, 50];
+
+function DiffSkeleton() {
+  return (
+    <div className="flex-1 overflow-auto p-4">
+      <div className="border border-border rounded-lg overflow-hidden">
+        <div className="font-mono text-[0.8rem]">
+          {/* Hunk header skeleton */}
+          <div className="bg-muted/50 px-4 py-2 border-b border-border">
+            <Skeleton className="h-4 w-48" />
+          </div>
+          
+          {/* Diff lines skeleton */}
+          {SKELETON_LINE_WIDTHS.map((width, i) => (
+            <DiffLineSkeleton 
+              key={i} 
+              type={i % 7 === 3 ? 'add' : i % 7 === 5 ? 'remove' : 'normal'} 
+              width={width}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DiffLineSkeleton({ type = 'normal', width }: { type?: 'add' | 'remove' | 'normal'; width: number }) {
+  const bgClass = type === 'add' 
+    ? 'bg-green-500/5' 
+    : type === 'remove' 
+      ? 'bg-orange-500/5' 
+      : '';
+  
+  return (
+    <div className={cn("flex h-5 min-h-5", bgClass)}>
+      <div className="w-1 shrink-0" />
+      <div className="w-10 shrink-0 flex items-center justify-end pr-2">
+        <Skeleton className="h-3 w-6" />
+      </div>
+      <div className="w-10 shrink-0 border-r border-border/30 flex items-center justify-end pr-2">
+        <Skeleton className="h-3 w-6" />
+      </div>
+      <div className="flex-1 pl-2 flex items-center">
+        <Skeleton className="h-3" style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
+}

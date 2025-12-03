@@ -5,22 +5,71 @@ import { resolve } from "path";
 const isWatch = process.argv.includes("--watch");
 
 async function build() {
-  const result = await Bun.build({
+  // Build main app
+  const mainResult = await Bun.build({
     entrypoints: ["./src/browser/index.html"],
     outdir: "./dist/browser",
     plugins: [tailwind],
+    target: "browser",
+    format: "esm",
   });
 
-  if (!result.success) {
-    console.error("Build failed:");
-    for (const log of result.logs) {
+  if (!mainResult.success) {
+    console.error("Main build failed:");
+    for (const log of mainResult.logs) {
       console.error(log);
     }
     return false;
   }
 
-  console.log(`Bundled ${result.outputs.length} files`);
-  for (const output of result.outputs) {
+  // Build worker separately with document shim for Prism/refractor
+  const workerResult = await Bun.build({
+    entrypoints: ["./src/browser/lib/diff-worker.ts"],
+    outdir: "./dist/browser/lib",
+    target: "browser",
+    format: "esm",
+    banner: `// Worker shim for libraries that check for document (Prism/refractor)
+if (typeof document === 'undefined') {
+  globalThis.document = {
+    currentScript: null,
+    querySelectorAll: () => [],
+    querySelector: () => null,
+    getElementById: () => null,
+    getElementsByClassName: () => [],
+    getElementsByTagName: () => [],
+    createElement: () => ({
+      setAttribute: () => {},
+      getAttribute: () => null,
+      appendChild: () => {},
+      removeChild: () => {},
+      classList: { add: () => {}, remove: () => {}, contains: () => false },
+      style: {},
+      innerHTML: '',
+      textContent: '',
+    }),
+    createTextNode: () => ({ textContent: '' }),
+    createDocumentFragment: () => ({ appendChild: () => {}, childNodes: [] }),
+    head: { appendChild: () => {}, removeChild: () => {} },
+    body: { appendChild: () => {}, removeChild: () => {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+}
+`,
+  });
+
+  if (!workerResult.success) {
+    console.error("Worker build failed:");
+    for (const log of workerResult.logs) {
+      console.error(log);
+    }
+    return false;
+  }
+
+  const allOutputs = [...mainResult.outputs, ...workerResult.outputs];
+
+  console.log(`Bundled ${allOutputs.length} files`);
+  for (const output of allOutputs) {
     console.log(`  ${output.path}`);
   }
   return true;

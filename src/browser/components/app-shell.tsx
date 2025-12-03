@@ -61,30 +61,32 @@ export function AppShell() {
         </div>
       </div>
 
-      {/* Content Area - All tabs mounted, inactive ones use visibility:hidden to preserve virtualizer state */}
+      {/* Content Area - Only render active tab to avoid parallel data fetching */}
       <div className="flex-1 overflow-hidden relative">
-        {tabs.map((tab) => (
-          <div
-            key={tab.id}
-            className={cn(
-              "absolute inset-0",
-              tab.id !== activeTabId && "invisible pointer-events-none"
-            )}
-          >
-            {tab.type === "home" && <Home />}
-            {tab.type === "pr-review" &&
-              tab.owner &&
-              tab.repo &&
-              tab.number && (
-                <PRReviewContent
-                  owner={tab.owner}
-                  repo={tab.repo}
-                  number={tab.number}
-                  tabId={tab.id}
-                />
-              )}
-          </div>
-        ))}
+        {/* Home is always mounted (lightweight) */}
+        <div
+          className={cn(
+            "absolute inset-0",
+            activeTabId !== "home" && "invisible pointer-events-none"
+          )}
+        >
+          <Home />
+        </div>
+
+        {/* PR Review - only render active tab */}
+        {activeTab?.type === "pr-review" &&
+          activeTab.owner &&
+          activeTab.repo &&
+          activeTab.number && (
+            <div key={activeTab.id} className="absolute inset-0">
+              <PRReviewContent
+                owner={activeTab.owner}
+                repo={activeTab.repo}
+                number={activeTab.number}
+                tabId={activeTab.id}
+              />
+            </div>
+          )}
       </div>
     </div>
   );

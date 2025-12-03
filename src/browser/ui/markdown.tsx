@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -11,43 +11,13 @@ interface MarkdownProps {
   className?: string;
 }
 
+// GitHub-style markdown rendering
 export const Markdown = memo(function Markdown({
   children,
   className,
 }: MarkdownProps) {
   return (
-    <div
-      className={cn(
-        "prose prose-sm prose-invert max-w-none",
-        // Paragraphs
-        "prose-p:my-2 prose-p:leading-relaxed",
-        // Code blocks
-        "prose-pre:bg-muted prose-pre:rounded-md prose-pre:p-4 prose-pre:overflow-x-auto",
-        // Inline code
-        "prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-code:font-mono",
-        // Links
-        "prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline",
-        // Lists
-        "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
-        // Blockquotes
-        "prose-blockquote:border-l-4 prose-blockquote:border-muted-foreground/30 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-muted-foreground prose-blockquote:my-3",
-        // Headings
-        "prose-headings:my-3 prose-headings:font-semibold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
-        // Horizontal rule
-        "prose-hr:border-border prose-hr:my-4",
-        // Images
-        "prose-img:rounded-md prose-img:my-2",
-        // Tables
-        "prose-table:text-sm prose-table:border-collapse prose-table:w-full",
-        "prose-th:border prose-th:border-border prose-th:px-3 prose-th:py-2 prose-th:bg-muted prose-th:text-left prose-th:font-medium",
-        "prose-td:border prose-td:border-border prose-td:px-3 prose-td:py-2",
-        // Task lists (GFM)
-        "[&_input[type=checkbox]]:mr-2 [&_input[type=checkbox]]:accent-primary",
-        // Strikethrough
-        "prose-del:text-muted-foreground",
-        className
-      )}
-    >
+    <div className={cn("markdown-body", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[
@@ -70,38 +40,159 @@ export const Markdown = memo(function Markdown({
               </a>
             );
           },
-          // Better code block rendering
-          pre: ({ children, ...props }) => (
-            <pre
-              className="not-prose bg-muted rounded-md p-4 overflow-x-auto text-sm"
-              {...props}
-            >
-              {children}
-            </pre>
-          ),
-          code: ({ className, children, ...props }) => {
-            // Check if it's inline code (no className means inline)
-            const isInline = !className;
-            if (isInline) {
-              return (
-                <code
-                  className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono"
-                  {...props}
-                >
-                  {children}
-                </code>
-              );
-            }
-            return (
-              <code className={cn("font-mono text-sm", className)} {...props}>
-                {children}
-              </code>
-            );
-          },
         }}
       >
         {children}
       </ReactMarkdown>
+    </div>
+  );
+});
+
+// ============================================================================
+// Markdown Editor with Write/Preview tabs (GitHub-style)
+// ============================================================================
+
+interface MarkdownEditorProps {
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+  placeholder?: string;
+  minHeight?: string;
+  autoFocus?: boolean;
+  disabled?: boolean;
+}
+
+export const MarkdownEditor = memo(function MarkdownEditor({
+  value,
+  onChange,
+  onKeyDown,
+  placeholder = "Leave a comment...",
+  minHeight = "100px",
+  autoFocus = false,
+  disabled = false,
+}: MarkdownEditorProps) {
+  const [activeTab, setActiveTab] = useState<"write" | "preview">("write");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (autoFocus && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [autoFocus]);
+
+  // Switch back to write mode when content changes externally (like clearing)
+  useEffect(() => {
+    if (!value && activeTab === "preview") {
+      setActiveTab("write");
+    }
+  }, [value, activeTab]);
+
+  const handleTabChange = useCallback((tab: "write" | "preview") => {
+    setActiveTab(tab);
+    if (tab === "write") {
+      // Focus textarea when switching to write
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    }
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      // Handle Tab key for indentation
+      if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const textarea = textareaRef.current;
+        if (textarea) {
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          const newValue =
+            value.substring(0, start) + "  " + value.substring(end);
+          onChange(newValue);
+          // Restore cursor position after the spaces
+          setTimeout(() => {
+            textarea.selectionStart = textarea.selectionEnd = start + 2;
+          }, 0);
+        }
+      }
+
+      // Pass through other keyboard events
+      onKeyDown?.(e);
+    },
+    [value, onChange, onKeyDown]
+  );
+
+  return (
+    <div className="markdown-editor border border-border rounded-md overflow-hidden bg-background">
+      {/* Tab bar */}
+      <div className="flex items-center border-b border-border bg-muted/30">
+        <button
+          type="button"
+          onClick={() => handleTabChange("write")}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium transition-colors relative",
+            activeTab === "write"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Write
+          {activeTab === "write" && (
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t-full" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTabChange("preview")}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium transition-colors relative",
+            activeTab === "preview"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Preview
+          {activeTab === "preview" && (
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t-full" />
+          )}
+        </button>
+      </div>
+
+      {/* Content area */}
+      {activeTab === "write" ? (
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          disabled={disabled}
+          className={cn(
+            "w-full px-3 py-2 text-sm bg-transparent resize-none focus:outline-none",
+            "placeholder:text-muted-foreground",
+            disabled && "opacity-50 cursor-not-allowed"
+          )}
+          style={{ minHeight }}
+        />
+      ) : (
+        <div
+          className="px-3 py-2 overflow-auto"
+          style={{ minHeight }}
+        >
+          {value.trim() ? (
+            <Markdown className="text-sm">{value}</Markdown>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">
+              Nothing to preview
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Footer hint */}
+      <div className="px-3 py-1.5 border-t border-border bg-muted/20">
+        <p className="text-[10px] text-muted-foreground">
+          Supports Markdown. <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">⌘</kbd>+<kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">Enter</kbd> to submit
+        </p>
+      </div>
     </div>
   );
 });
