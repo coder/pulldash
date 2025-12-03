@@ -107,6 +107,9 @@ export const PROverview = memo(function PROverview() {
   } | null>(null);
   const [checksLastUpdated, setChecksLastUpdated] = useState<Date | null>(null);
   const [refreshingChecks, setRefreshingChecks] = useState(false);
+  const [workflowRunsAwaitingApproval, setWorkflowRunsAwaitingApproval] =
+    useState<Array<{ id: number; name: string; html_url: string }>>([]);
+  const [approvingWorkflows, setApprovingWorkflows] = useState(false);
   const [conversation, setConversation] = useState<IssueComment[]>([]);
   const [commits, setCommits] = useState<PRCommit[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -163,8 +166,12 @@ export const PROverview = memo(function PROverview() {
     left: 0,
   });
   const [loadingCollaborators, setLoadingCollaborators] = useState(false);
+  const [reviewerSearchQuery, setReviewerSearchQuery] = useState("");
+  const [assigneeSearchQuery, setAssigneeSearchQuery] = useState("");
   const reviewersButtonRef = useRef<HTMLButtonElement>(null);
   const assigneesButtonRef = useRef<HTMLButtonElement>(null);
+  const reviewerSearchInputRef = useRef<HTMLInputElement>(null);
+  const assigneeSearchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     document.title = `${pr.title} · Pull Request #${pr.number} · Pulldash`;
@@ -173,9 +180,8 @@ export const PROverview = memo(function PROverview() {
   // Fetch checks function (used for both initial load and refresh)
   const fetchChecks = useCallback(async () => {
     try {
-      const checksData = await github
-        .getPRChecks(owner, repo, pr.head.sha)
-        .catch(() => ({
+      const [checksData, workflowRunsData] = await Promise.all([
+        github.getPRChecks(owner, repo, pr.head.sha).catch(() => ({
           checkRuns: [] as CheckRun[],
           status: {
             state: "",
@@ -186,9 +192,26 @@ export const PROverview = memo(function PROverview() {
             commit_url: "",
             url: "",
           } as CombinedStatus,
-        }));
+        })),
+        github.getWorkflowRuns(owner, repo, pr.head.sha).catch(() => ({
+          workflow_runs: [],
+        })),
+      ]);
       setChecks(checksData);
       setChecksLastUpdated(new Date());
+
+      // Find workflow runs awaiting approval (fork PRs)
+      const awaitingApproval = workflowRunsData.workflow_runs
+        .filter(
+          (run: { conclusion: string | null }) =>
+            run.conclusion === "action_required"
+        )
+        .map((run: { id: number; name: string; html_url: string }) => ({
+          id: run.id,
+          name: run.name || "Workflow",
+          html_url: run.html_url,
+        }));
+      setWorkflowRunsAwaitingApproval(awaitingApproval);
     } catch {
       // Ignore errors on refresh
     }
@@ -208,6 +231,7 @@ export const PROverview = memo(function PROverview() {
         const [
           reviewsData,
           checksData,
+          workflowRunsData,
           conversationData,
           commitsData,
           timelineData,
@@ -228,6 +252,14 @@ export const PROverview = memo(function PROverview() {
               url: "",
             } as CombinedStatus,
           })),
+          github.getWorkflowRuns(owner, repo, pr.head.sha).catch(() => ({
+            workflow_runs: [] as Array<{
+              id: number;
+              name: string;
+              conclusion: string | null;
+              html_url: string;
+            }>,
+          })),
           github
             .getPRConversation(owner, repo, pr.number)
             .catch(() => [] as IssueComment[]),
@@ -246,6 +278,17 @@ export const PROverview = memo(function PROverview() {
         setReviews(reviewsData);
         setChecks(checksData);
         setChecksLastUpdated(new Date());
+
+        // Find workflow runs awaiting approval (fork PRs)
+        const awaitingApproval = workflowRunsData.workflow_runs
+          .filter((run) => run.conclusion === "action_required")
+          .map((run) => ({
+            id: run.id,
+            name: run.name || "Workflow",
+            html_url: run.html_url,
+          }));
+        setWorkflowRunsAwaitingApproval(awaitingApproval);
+
         setConversation(conversationData);
         setCommits(commitsData);
         setTimeline(timelineData);
@@ -305,6 +348,26 @@ export const PROverview = memo(function PROverview() {
     }
   }, [github, owner, repo, pr.number, mergeMethod, track]);
 
+  const handleApproveWorkflows = useCallback(async () => {
+    setApprovingWorkflows(true);
+    try {
+      // Approve all workflow runs awaiting approval
+      await Promise.all(
+        workflowRunsAwaitingApproval.map((run) =>
+          github.approveWorkflowRun(owner, repo, run.id)
+        )
+      );
+      // Clear the list after approving
+      setWorkflowRunsAwaitingApproval([]);
+      // Refresh checks to get updated status
+      await fetchChecks();
+    } catch (e) {
+      console.error("Failed to approve workflows:", e);
+    } finally {
+      setApprovingWorkflows(false);
+    }
+  }, [github, owner, repo, workflowRunsAwaitingApproval, fetchChecks]);
+
   const handleAddComment = useCallback(async () => {
     if (!commentText.trim()) return;
 
@@ -356,6 +419,9 @@ export const PROverview = memo(function PROverview() {
         left: Math.min(rect.left, window.innerWidth - 280),
       });
       fetchCollaborators();
+      setReviewerSearchQuery("");
+      // Focus the search input after a short delay to allow the picker to render
+      setTimeout(() => reviewerSearchInputRef.current?.focus(), 50);
     }
     setShowReviewersPicker(!showReviewersPicker);
     setShowAssigneesPicker(false);
@@ -369,6 +435,9 @@ export const PROverview = memo(function PROverview() {
         left: Math.min(rect.left, window.innerWidth - 280),
       });
       fetchCollaborators();
+      setAssigneeSearchQuery("");
+      // Focus the search input after a short delay to allow the picker to render
+      setTimeout(() => assigneeSearchInputRef.current?.focus(), 50);
     }
     setShowAssigneesPicker(!showAssigneesPicker);
     setShowReviewersPicker(false);
@@ -682,7 +751,7 @@ export const PROverview = memo(function PROverview() {
   );
 
   // Calculate check status
-  const checkStatus = calculateCheckStatus(checks);
+  const checkStatus = calculateCheckStatus(checks, workflowRunsAwaitingApproval);
   const latestReviews = getLatestReviewsByUser(reviews);
   const canMergePR = canMerge(pr, checkStatus);
 
@@ -967,6 +1036,10 @@ export const PROverview = memo(function PROverview() {
                       onUpdateBranch={handleUpdateBranch}
                       markingReady={markingReady}
                       onMarkReadyForReview={handleMarkReadyForReview}
+                      workflowRunsAwaitingApproval={workflowRunsAwaitingApproval}
+                      approvingWorkflows={approvingWorkflows}
+                      onApproveWorkflows={handleApproveWorkflows}
+                      canBypassBranchProtections={viewerPermission === "ADMIN"}
                     />
                     {/* Still in progress - only show if NOT a draft and user can merge */}
                     {canMergeRepo && !pr.draft && (
@@ -1226,61 +1299,74 @@ export const PROverview = memo(function PROverview() {
               }
             >
               {pr.requested_reviewers && pr.requested_reviewers.length > 0 ? (
-                <div className="space-y-2">
-                  {pr.requested_reviewers.map((reviewer) => (
-                    <div
-                      key={reviewer.login}
-                      className="flex items-center gap-2 group"
-                    >
-                      <UserHoverCard login={reviewer.login}>
-                        <img
-                          src={reviewer.avatar_url}
-                          alt={reviewer.login}
-                          className="w-5 h-5 rounded-full cursor-pointer"
-                        />
-                      </UserHoverCard>
-                      <UserHoverCard login={reviewer.login}>
-                        <span className="text-sm flex-1 hover:text-blue-400 hover:underline cursor-pointer">
-                          {reviewer.login}
-                        </span>
-                      </UserHoverCard>
-                      <Clock className="w-3.5 h-3.5 text-yellow-500" />
-                      {canMergeRepo && !pr.merged && (
-                        <button
-                          onClick={() => handleRemoveReviewer(reviewer.login)}
-                          className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove reviewer"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : latestReviews.length > 0 ? (
-                <div className="space-y-2">
-                  {latestReviews.map((review) => (
-                    <div key={review.id} className="flex items-center gap-2">
-                      {review.user && (
-                        <UserHoverCard login={review.user.login}>
+                <TooltipProvider delayDuration={200}>
+                  <div className="space-y-2">
+                    {pr.requested_reviewers.map((reviewer) => (
+                      <div
+                        key={reviewer.login}
+                        className="flex items-center gap-2 group"
+                      >
+                        <UserHoverCard login={reviewer.login}>
                           <img
-                            src={review.user.avatar_url}
-                            alt={review.user.login}
+                            src={reviewer.avatar_url}
+                            alt={reviewer.login}
                             className="w-5 h-5 rounded-full cursor-pointer"
                           />
                         </UserHoverCard>
-                      )}
-                      {review.user && (
-                        <UserHoverCard login={review.user.login}>
-                          <span className="text-sm hover:text-blue-400 hover:underline cursor-pointer">
-                            {review.user.login}
+                        <UserHoverCard login={reviewer.login}>
+                          <span className="text-sm flex-1 hover:text-blue-400 hover:underline cursor-pointer">
+                            {reviewer.login}
                           </span>
                         </UserHoverCard>
-                      )}
-                      <ReviewStateIcon state={review.state} />
-                    </div>
-                  ))}
-                </div>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="ml-auto cursor-default">
+                              <Clock className="w-3.5 h-3.5 text-yellow-500" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Awaiting review from this user
+                          </TooltipContent>
+                        </Tooltip>
+                        {canMergeRepo && !pr.merged && (
+                          <button
+                            onClick={() => handleRemoveReviewer(reviewer.login)}
+                            className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Remove reviewer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </TooltipProvider>
+              ) : latestReviews.length > 0 ? (
+                <TooltipProvider delayDuration={200}>
+                  <div className="space-y-2">
+                    {latestReviews.map((review) => (
+                      <div key={review.id} className="flex items-center gap-2">
+                        {review.user && (
+                          <UserHoverCard login={review.user.login}>
+                            <img
+                              src={review.user.avatar_url}
+                              alt={review.user.login}
+                              className="w-5 h-5 rounded-full cursor-pointer"
+                            />
+                          </UserHoverCard>
+                        )}
+                        {review.user && (
+                          <UserHoverCard login={review.user.login}>
+                            <span className="text-sm hover:text-blue-400 hover:underline cursor-pointer">
+                              {review.user.login}
+                            </span>
+                          </UserHoverCard>
+                        )}
+                        <ReviewStateIcon state={review.state} showTooltip />
+                      </div>
+                    ))}
+                  </div>
+                </TooltipProvider>
               ) : (
                 <span className="text-sm text-muted-foreground">
                   No reviews yet
@@ -1311,8 +1397,16 @@ export const PROverview = memo(function PROverview() {
                     left: reviewersPickerPosition.left,
                   }}
                 >
-                  <div className="px-3 py-2 border-b border-border">
+                  <div className="px-3 py-2 border-b border-border space-y-2">
                     <p className="text-sm font-medium">Request reviewers</p>
+                    <input
+                      ref={reviewerSearchInputRef}
+                      type="text"
+                      placeholder="Search users..."
+                      value={reviewerSearchQuery}
+                      onChange={(e) => setReviewerSearchQuery(e.target.value)}
+                      className="w-full px-2 py-1.5 text-sm bg-muted border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
                   </div>
                   <div className="max-h-[300px] overflow-auto">
                     {loadingCollaborators ? (
@@ -1326,7 +1420,8 @@ export const PROverview = memo(function PROverview() {
                             c.login !== pr.user?.login &&
                             !pr.requested_reviewers?.some(
                               (r) => r.login === c.login
-                            )
+                            ) &&
+                            c.login.toLowerCase().includes(reviewerSearchQuery.toLowerCase())
                         )
                         .map((collaborator) => (
                           <button
@@ -1430,8 +1525,16 @@ export const PROverview = memo(function PROverview() {
                     left: assigneesPickerPosition.left,
                   }}
                 >
-                  <div className="px-3 py-2 border-b border-border">
+                  <div className="px-3 py-2 border-b border-border space-y-2">
                     <p className="text-sm font-medium">Assign people</p>
+                    <input
+                      ref={assigneeSearchInputRef}
+                      type="text"
+                      placeholder="Search users..."
+                      value={assigneeSearchQuery}
+                      onChange={(e) => setAssigneeSearchQuery(e.target.value)}
+                      className="w-full px-2 py-1.5 text-sm bg-muted border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
                   </div>
                   <div className="max-h-[300px] overflow-auto">
                     {loadingCollaborators ? (
@@ -1441,7 +1544,8 @@ export const PROverview = memo(function PROverview() {
                     ) : (
                       collaborators
                         .filter(
-                          (c) => !pr.assignees?.some((a) => a.login === c.login)
+                          (c) => !pr.assignees?.some((a) => a.login === c.login) &&
+                            c.login.toLowerCase().includes(assigneeSearchQuery.toLowerCase())
                         )
                         .map((collaborator) => (
                           <button
@@ -1903,19 +2007,59 @@ function ReviewBox({ review }: { review: Review }) {
 // Review State Icon
 // ============================================================================
 
-function ReviewStateIcon({ state }: { state: string }) {
-  switch (state) {
-    case "APPROVED":
-      return <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto" />;
-    case "CHANGES_REQUESTED":
-      return <XCircle className="w-4 h-4 text-red-500 ml-auto" />;
-    case "COMMENTED":
-      return <Eye className="w-4 h-4 text-blue-500 ml-auto" />;
-    case "DISMISSED":
-      return <MinusCircle className="w-4 h-4 text-muted-foreground ml-auto" />;
-    default:
-      return <Circle className="w-4 h-4 text-muted-foreground ml-auto" />;
+function ReviewStateIcon({
+  state,
+  showTooltip = false,
+}: {
+  state: string;
+  showTooltip?: boolean;
+}) {
+  const getIconAndTooltip = () => {
+    switch (state) {
+      case "APPROVED":
+        return {
+          icon: <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto" />,
+          tooltip: "Approved this pull request",
+        };
+      case "CHANGES_REQUESTED":
+        return {
+          icon: <XCircle className="w-4 h-4 text-red-500 ml-auto" />,
+          tooltip: "Requested changes to this pull request",
+        };
+      case "COMMENTED":
+        return {
+          icon: <Eye className="w-4 h-4 text-blue-500 ml-auto" />,
+          tooltip: "Left review comments",
+        };
+      case "DISMISSED":
+        return {
+          icon: (
+            <MinusCircle className="w-4 h-4 text-muted-foreground ml-auto" />
+          ),
+          tooltip: "Review was dismissed",
+        };
+      default:
+        return {
+          icon: <Circle className="w-4 h-4 text-muted-foreground ml-auto" />,
+          tooltip: "Pending review",
+        };
+    }
+  };
+
+  const { icon, tooltip } = getIconAndTooltip();
+
+  if (!showTooltip) {
+    return icon;
   }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="ml-auto cursor-default">{icon}</span>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 // ============================================================================
@@ -2136,14 +2280,19 @@ function MergeSection({
   onUpdateBranch,
   markingReady,
   onMarkReadyForReview,
+  workflowRunsAwaitingApproval,
+  approvingWorkflows,
+  onApproveWorkflows,
+  canBypassBranchProtections,
 }: {
   pr: {
     draft?: boolean;
     state: string;
     mergeable: boolean | null;
+    mergeable_state?: string;
     requested_reviewers?: Array<{ login: string; avatar_url: string }> | null;
   };
-  checkStatus: "success" | "failure" | "pending";
+  checkStatus: "success" | "failure" | "pending" | "action_required";
   checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null;
   canMerge: boolean;
   canMergeRepo: boolean;
@@ -2158,6 +2307,14 @@ function MergeSection({
   onUpdateBranch: () => void;
   markingReady?: boolean;
   onMarkReadyForReview?: () => void;
+  workflowRunsAwaitingApproval?: Array<{
+    id: number;
+    name: string;
+    html_url: string;
+  }>;
+  approvingWorkflows?: boolean;
+  onApproveWorkflows?: () => void;
+  canBypassBranchProtections?: boolean;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({
@@ -2347,23 +2504,68 @@ function MergeSection({
             )}
             {/* Individual reviewers */}
             {latestReviews.length > 0 && (
-              <div className="pt-2 border-t border-border/50">
-                {latestReviews.map((review) => (
-                  <div key={review.id} className="flex items-center gap-2 py-2">
-                    <img
-                      src={review.user?.avatar_url}
-                      alt={review.user?.login}
-                      className="w-5 h-5 rounded-full"
-                    />
-                    <span className="text-sm">{review.user?.login}</span>
-                    <ReviewStateIcon state={review.state} />
-                  </div>
-                ))}
-              </div>
+              <TooltipProvider delayDuration={200}>
+                <div className="pt-2 border-t border-border/50">
+                  {latestReviews.map((review) => (
+                    <div
+                      key={review.id}
+                      className="flex items-center gap-2 py-2"
+                    >
+                      <img
+                        src={review.user?.avatar_url}
+                        alt={review.user?.login}
+                        className="w-5 h-5 rounded-full"
+                      />
+                      <span className="text-sm">{review.user?.login}</span>
+                      <ReviewStateIcon state={review.state} showTooltip />
+                    </div>
+                  ))}
+                </div>
+              </TooltipProvider>
             )}
           </div>
         )}
       </div>
+
+      {/* Workflow Approval Section - shows when fork PR needs workflow approval */}
+      {workflowRunsAwaitingApproval && workflowRunsAwaitingApproval.length > 0 && (
+        <div className="border-b border-border">
+          <div className="flex items-center gap-3 p-4">
+            <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0" />
+            <div className="flex-1">
+              <p className="font-medium text-sm">
+                {workflowRunsAwaitingApproval.length} workflow
+                {workflowRunsAwaitingApproval.length !== 1 ? "s" : ""} awaiting
+                approval
+              </p>
+              <p className="text-xs text-muted-foreground">
+                This workflow requires approval from a maintainer.{" "}
+                <a
+                  href="https://docs.github.com/en/actions/managing-workflow-runs/approving-workflow-runs-from-public-forks"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:underline"
+                >
+                  Learn more about approving workflows.
+                </a>
+              </p>
+            </div>
+            {onApproveWorkflows && (
+              <button
+                onClick={onApproveWorkflows}
+                disabled={approvingWorkflows}
+                className="px-3 py-1.5 text-sm font-medium border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                {approvingWorkflows ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Approve workflows to run"
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Checks Section */}
       <div className="border-b border-border">
@@ -2375,6 +2577,8 @@ function MergeSection({
             <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
           ) : checkStatus === "failure" ? (
             <XCircle className="w-5 h-5 text-red-500 shrink-0" />
+          ) : checkStatus === "action_required" ? (
+            <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0" />
           ) : (
             <Clock className="w-5 h-5 text-yellow-500 shrink-0" />
           )}
@@ -2384,19 +2588,24 @@ function MergeSection({
                 ? "All checks have passed"
                 : checkStatus === "failure"
                   ? "Some checks have failed"
-                  : "Some checks haven't completed yet"}
+                  : checkStatus === "action_required"
+                    ? "Workflow approval required"
+                    : "Some checks haven't completed yet"}
             </p>
             <p className="text-xs text-muted-foreground">
-              {[
-                queuedChecks > 0 && `${queuedChecks} queued`,
-                skippedChecks > 0 && `${skippedChecks} skipped`,
-                successfulChecks > 0 && `${successfulChecks} successful`,
-                failedChecks > 0 && `${failedChecks} failed`,
-                inProgressChecks > 0 && `${inProgressChecks} in progress`,
-              ]
-                .filter(Boolean)
-                .join(", ")}{" "}
-              {totalChecks === 1 ? "check" : "checks"}
+              {checkStatus === "action_required" && totalChecks === 0
+                ? "Approve workflows to run checks"
+                : [
+                    queuedChecks > 0 && `${queuedChecks} queued`,
+                    skippedChecks > 0 && `${skippedChecks} skipped`,
+                    successfulChecks > 0 && `${successfulChecks} successful`,
+                    failedChecks > 0 && `${failedChecks} failed`,
+                    inProgressChecks > 0 && `${inProgressChecks} in progress`,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") +
+                  " " +
+                  (totalChecks === 1 ? "check" : "checks")}
             </p>
           </div>
           <ChevronDown
@@ -2516,7 +2725,8 @@ function MergeSection({
               )}
             </p>
           </div>
-          {conflictStatus === "success" && (
+          {/* Only show Update branch when the branch is behind the base */}
+          {conflictStatus === "success" && pr.mergeable_state === "behind" && (
             <button
               onClick={handleUpdateBranch}
               disabled={updatingBranch}
@@ -2574,17 +2784,19 @@ function MergeSection({
             <p className="text-sm text-destructive">{mergeError}</p>
           )}
 
-          {/* Bypass rules checkbox */}
-          <label className="flex items-start gap-2 cursor-pointer group">
-            <Checkbox
-              checked={bypassRules}
-              onCheckedChange={(checked) => setBypassRules(checked === true)}
-              className="mt-0.5"
-            />
-            <span className="text-sm text-yellow-500 group-hover:text-yellow-400">
-              Merge without waiting for requirements to be met (bypass rules)
-            </span>
-          </label>
+          {/* Bypass rules checkbox - only show for users who can bypass branch protections */}
+          {canBypassBranchProtections && (
+            <label className="flex items-start gap-2 cursor-pointer group">
+              <Checkbox
+                checked={bypassRules}
+                onCheckedChange={(checked) => setBypassRules(checked === true)}
+                className="mt-0.5"
+              />
+              <span className="text-sm text-yellow-500 group-hover:text-yellow-400">
+                Merge without waiting for requirements to be met (bypass rules)
+              </span>
+            </label>
+          )}
 
           {/* Merge button with dropdown */}
           <div className="flex items-center gap-0.5">
@@ -2593,7 +2805,7 @@ function MergeSection({
               onClick={onMerge}
               disabled={merging || (!canMergePR && !bypassRules)}
               className={cn(
-                "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
+                "flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
                 canMergePR || bypassRules
                   ? "bg-green-600 text-white hover:bg-green-700"
                   : "bg-muted text-muted-foreground cursor-not-allowed"
@@ -2601,10 +2813,8 @@ function MergeSection({
             >
               {merging ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
-              ) : bypassRules ? (
-                <>Bypass rules and merge ({mergeMethod})</>
               ) : (
-                <>Merge when ready</>
+                <>{getMergeButtonText(mergeMethod)}</>
               )}
             </button>
 
@@ -2914,7 +3124,7 @@ function CheckStatusIcon({
   status,
   size = "md",
 }: {
-  status: "success" | "failure" | "pending";
+  status: "success" | "failure" | "pending" | "action_required";
   size?: "sm" | "md";
 }) {
   const sizeClass = size === "sm" ? "w-4 h-4" : "w-5 h-5";
@@ -2924,6 +3134,8 @@ function CheckStatusIcon({
       return <CheckCircle2 className={cn(sizeClass, "text-green-500")} />;
     case "failure":
       return <XCircle className={cn(sizeClass, "text-red-500")} />;
+    case "action_required":
+      return <AlertCircle className={cn(sizeClass, "text-orange-500")} />;
     default:
       return <Clock className={cn(sizeClass, "text-yellow-500")} />;
   }
@@ -3129,8 +3341,33 @@ function EmojiReactions({
 // ============================================================================
 
 function calculateCheckStatus(
-  checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null
-): "success" | "failure" | "pending" {
+  checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null,
+  workflowRunsAwaitingApproval?: Array<{ id: number }>
+): "success" | "failure" | "pending" | "action_required" {
+  // If there are workflow runs awaiting approval
+  if (workflowRunsAwaitingApproval && workflowRunsAwaitingApproval.length > 0) {
+    // If no checks data, show action_required
+    if (!checks) return "action_required";
+
+    const allChecks = [
+      ...checks.checkRuns.map((c) =>
+        c.status === "completed" ? c.conclusion : "pending"
+      ),
+      ...checks.status.statuses.map((s) => s.state),
+    ];
+
+    // If no checks at all, show action_required
+    if (allChecks.length === 0) return "action_required";
+
+    // If there are checks, evaluate them first
+    if (allChecks.some((c) => c === "failure" || c === "error"))
+      return "failure";
+    if (allChecks.some((c) => c === "pending" || c === null)) return "pending";
+
+    // All checks passed but workflows still need approval
+    return "action_required";
+  }
+
   if (!checks) return "success";
 
   const allChecks = [
@@ -3156,18 +3393,18 @@ function getLatestReviewsByUser(reviews: Review[]): Review[] {
         new Date(b.submitted_at!).getTime()
     );
 
+  // Only include actual reviews (APPROVED or CHANGES_REQUESTED)
+  // COMMENTED is not a review decision - it's just leaving comments
   for (const review of sorted) {
     if (
-      review.state !== "COMMENTED" &&
-      review.state !== "PENDING" &&
+      (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED") &&
       review.user
     ) {
       byUser.set(review.user.login, review);
     }
   }
 
-  const commented = sorted.filter((r) => r.state === "COMMENTED");
-  return [...byUser.values(), ...commented];
+  return [...byUser.values()];
 }
 
 interface PRData {
@@ -3178,7 +3415,7 @@ interface PRData {
 
 function canMerge(
   pr: PRData,
-  checkStatus: "success" | "failure" | "pending"
+  checkStatus: "success" | "failure" | "pending" | "action_required"
 ): boolean {
   if (pr.draft) return false;
   if (pr.state !== "open") return false;
@@ -3188,7 +3425,7 @@ function canMerge(
 
 function getMergeStatusText(
   pr: PRData,
-  checkStatus: "success" | "failure" | "pending"
+  checkStatus: "success" | "failure" | "pending" | "action_required"
 ): string {
   if (pr.draft) return "This pull request is still a draft";
   if (pr.mergeable === false)

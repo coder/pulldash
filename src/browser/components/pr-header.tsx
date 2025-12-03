@@ -6,7 +6,7 @@ import {
   Check,
   Menu,
 } from "lucide-react";
-import { memo, useState, useCallback } from "react";
+import { memo, useState, useCallback, type ReactNode } from "react";
 import { cn } from "../cn";
 import { UserHoverCard } from "../ui/user-hover-card";
 import type { PullRequest } from "@/api/types";
@@ -16,6 +16,7 @@ interface PRHeaderProps {
   owner: string;
   repo: string;
   onToggleSidebar?: () => void;
+  rightContent?: ReactNode;
 }
 
 export const PRHeader = memo(function PRHeader({
@@ -23,6 +24,7 @@ export const PRHeader = memo(function PRHeader({
   owner,
   repo,
   onToggleSidebar,
+  rightContent,
 }: PRHeaderProps) {
   const stateIcon = pr.merged ? (
     <GitMerge className="w-3.5 h-3.5" />
@@ -88,6 +90,16 @@ export const PRHeader = memo(function PRHeader({
           <span>{pr.title}</span>
           <span className="text-muted-foreground ml-1.5">#{pr.number}</span>
         </span>
+        {/* External Link - moved here next to title */}
+        <a
+          href={`https://github.com/${owner}/${repo}/pull/${pr.number}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-muted-foreground hover:text-blue-400 transition-colors shrink-0"
+          title="View on GitHub"
+        >
+          <ExternalLink className="w-4 h-4" />
+        </a>
         {/* Author */}
         <UserHoverCard login={pr.user.login}>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors shrink-0">
@@ -115,16 +127,8 @@ export const PRHeader = memo(function PRHeader({
           <span className="text-red-500">−{pr.deletions}</span>
         </span>
 
-        {/* External Link */}
-        <a
-          href={`https://github.com/${owner}/${repo}/pull/${pr.number}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-muted-foreground hover:text-blue-400 transition-colors"
-          title="View on GitHub"
-        >
-          <ExternalLink className="w-4 h-4" />
-        </a>
+        {/* Right content slot (e.g., Submit Review button) */}
+        {rightContent}
       </div>
     </header>
   );

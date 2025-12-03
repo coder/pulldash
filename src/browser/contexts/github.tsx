@@ -68,7 +68,7 @@ export interface PRSearchResult {
   viewerLastReviewAt?: string | null;
   hasNewChanges?: boolean;
   // CI status
-  ciStatus?: "pending" | "success" | "failure" | "none";
+  ciStatus?: "pending" | "success" | "failure" | "none" | "action_required";
   ciSummary?: string; // e.g. "2/3 checks passed" or "Build failed"
   ciChecks?: Array<{
     name: string;
@@ -76,10 +76,17 @@ export interface PRSearchResult {
   }>;
 }
 
+export interface WorkflowRunAwaitingApproval {
+  id: number;
+  name: string;
+  html_url: string;
+}
+
 export interface CheckStatus {
-  checks: "pending" | "success" | "failure" | "none";
+  checks: "pending" | "success" | "failure" | "none" | "action_required";
   state: "open" | "closed" | "merged" | "draft";
   mergeable: boolean | null;
+  workflowRunsAwaitingApproval?: WorkflowRunAwaitingApproval[];
 }
 
 export interface PREnrichment {
@@ -89,7 +96,7 @@ export interface PREnrichment {
   lastCommitAt: string | null;
   viewerLastReviewAt: string | null;
   hasNewChanges: boolean;
-  ciStatus: "pending" | "success" | "failure" | "none";
+  ciStatus: "pending" | "success" | "failure" | "none" | "action_required";
   ciSummary: string;
   ciChecks: Array<{
     name: string;
@@ -746,13 +753,51 @@ function createGitHubStore() {
 
     try {
       const prData = await getPR(owner, repo, number);
-      const checksData = await getPRChecksForSha(owner, repo, prData.head.sha);
+      const [checksData, workflowRunsData] = await Promise.all([
+        getPRChecksForSha(owner, repo, prData.head.sha),
+        getWorkflowRunsForSha(owner, repo, prData.head.sha).catch(() => ({
+          workflow_runs: [],
+        })),
+      ]);
 
       const checkRuns = checksData.checkRuns || [];
       const statuses = checksData.status?.statuses || [];
 
+      // Check for workflow runs awaiting approval (fork PRs)
+      const workflowRunsAwaitingApproval = workflowRunsData.workflow_runs
+        .filter((run) => run.conclusion === "action_required")
+        .map((run) => ({
+          id: run.id,
+          name: run.name || "Workflow",
+          html_url: run.html_url,
+        }));
+
       let checks: CheckStatus["checks"] = "none";
-      if (checkRuns.length > 0 || statuses.length > 0) {
+
+      // If there are workflow runs awaiting approval and no other checks, show action_required
+      if (workflowRunsAwaitingApproval.length > 0) {
+        // Check if there are any other actual check runs or statuses
+        if (checkRuns.length === 0 && statuses.length === 0) {
+          checks = "action_required";
+        } else {
+          // There are other checks, evaluate them first
+          const allChecks = [
+            ...checkRuns.map((c) =>
+              c.status === "completed" ? c.conclusion : "pending"
+            ),
+            ...statuses.map((s) => s.state),
+          ];
+
+          if (allChecks.some((c) => c === "failure" || c === "error")) {
+            checks = "failure";
+          } else if (allChecks.some((c) => c === "pending" || c === null)) {
+            checks = "pending";
+          } else {
+            // All checks passed but there are workflows awaiting approval
+            checks = "action_required";
+          }
+        }
+      } else if (checkRuns.length > 0 || statuses.length > 0) {
         const allChecks = [
           ...checkRuns.map((c) =>
             c.status === "completed" ? c.conclusion : "pending"
@@ -780,7 +825,15 @@ function createGitHubStore() {
       setState((s) => {
         const newChecks = new Map(s.prChecks);
         newChecks.set(key, {
-          status: { checks, state: prState, mergeable: prData.mergeable },
+          status: {
+            checks,
+            state: prState,
+            mergeable: prData.mergeable,
+            workflowRunsAwaitingApproval:
+              workflowRunsAwaitingApproval.length > 0
+                ? workflowRunsAwaitingApproval
+                : undefined,
+          },
           loading: false,
           lastFetchedAt: Date.now(),
         });
@@ -1228,6 +1281,71 @@ function createGitHubStore() {
 
     cache.setPending(cacheKey, promise);
     return promise;
+  }
+
+  async function getWorkflowRunsForSha(
+    owner: string,
+    repo: string,
+    sha: string
+  ) {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `workflow-runs:${owner}/${repo}/${sha}`;
+
+    type WorkflowRunsResult = {
+      workflow_runs: Array<{
+        id: number;
+        name: string;
+        status: string;
+        conclusion: string | null;
+        html_url: string;
+        head_sha: string;
+      }>;
+    };
+
+    const cached = cache.get<WorkflowRunsResult>(cacheKey, 15_000);
+    if (cached) return cached;
+
+    const pending = cache.getPending<WorkflowRunsResult>(cacheKey);
+    if (pending) return pending;
+
+    const promise = octokit
+      .request("GET /repos/{owner}/{repo}/actions/runs", {
+        owner,
+        repo,
+        head_sha: sha,
+        per_page: 50,
+      })
+      .then((res) => {
+        const result = {
+          workflow_runs: res.data.workflow_runs,
+        };
+        cache.set(cacheKey, result);
+        return result;
+      });
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  async function approveWorkflowRun(
+    owner: string,
+    repo: string,
+    runId: number
+  ) {
+    if (!octokit) throw new Error("Not initialized");
+
+    await octokit.request(
+      "POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve",
+      {
+        owner,
+        repo,
+        run_id: runId,
+      }
+    );
+
+    // Invalidate workflow runs cache for this repo
+    cache.invalidate(`workflow-runs:${owner}/${repo}`);
   }
 
   async function mergePR(
@@ -2355,6 +2473,8 @@ function createGitHubStore() {
     submitPRReview,
     deletePRReview,
     getPRChecks: getPRChecksForSha,
+    getWorkflowRuns: getWorkflowRunsForSha,
+    approveWorkflowRun,
     mergePR,
     getPRCommits,
     getPRConversation,

@@ -14,7 +14,7 @@ import { useNavigate } from "react-router-dom";
 
 export type TabStatus = {
   // CI status
-  checks: "pending" | "success" | "failure" | "none";
+  checks: "pending" | "success" | "failure" | "none" | "action_required";
   // PR state
   state: "open" | "closed" | "merged" | "draft";
   // Mergeable

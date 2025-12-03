@@ -18,6 +18,7 @@ import {
   Circle,
   CheckCircle2,
   XCircle,
+  AlertCircle,
   MessageSquare,
 } from "lucide-react";
 import { cn } from "../cn";
@@ -611,13 +612,22 @@ export function Home() {
                   setOpenRepoDropdown(null);
                 }}
                 className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 rounded-md border transition-colors text-xs",
-                  showAddRepo
-                    ? "bg-muted border-border text-foreground"
-                    : "border-dashed border-border hover:bg-muted/50 hover:border-solid text-muted-foreground hover:text-foreground"
+                  "group relative flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200",
+                  "bg-gradient-to-r from-emerald-500/10 via-green-500/10 to-teal-500/10",
+                  "border border-emerald-500/20 hover:border-emerald-500/40",
+                  "text-emerald-400 hover:text-emerald-300",
+                  "hover:shadow-[0_0_20px_rgba(16,185,129,0.15)]",
+                  "hover:from-emerald-500/15 hover:via-green-500/15 hover:to-teal-500/15",
+                  showAddRepo && "border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)] from-emerald-500/20 via-green-500/20 to-teal-500/20"
                 )}
               >
-                <Plus className="w-3.5 h-3.5" />
+                <span className={cn(
+                  "flex items-center justify-center w-4 h-4 rounded-md transition-all duration-200",
+                  "bg-emerald-500/20 group-hover:bg-emerald-500/30 group-hover:scale-110",
+                  showAddRepo && "bg-emerald-500/30 rotate-45"
+                )}>
+                  <Plus className="w-3 h-3" />
+                </span>
                 <span>Add Repo</span>
               </button>
 
@@ -938,7 +948,9 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
         ? "Passed"
         : pr.ciStatus === "failure"
           ? "Failed"
-          : "Running");
+          : pr.ciStatus === "action_required"
+            ? "Approval needed"
+            : "Running");
 
     switch (pr.ciStatus) {
       case "success":
@@ -993,6 +1005,18 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
             className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-yellow-500/15 text-yellow-500 border border-yellow-500/30"
           >
             <Circle className="w-3 h-3 animate-pulse" />
+            <span className="hidden sm:inline max-w-[100px] truncate">
+              {summary}
+            </span>
+          </span>
+        );
+      case "action_required":
+        return (
+          <span
+            title="Workflow approval required from a maintainer"
+            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-yellow-500/15 text-yellow-500 border border-yellow-500/30"
+          >
+            <AlertCircle className="w-3 h-3" />
             <span className="hidden sm:inline max-w-[100px] truncate">
               {summary}
             </span>

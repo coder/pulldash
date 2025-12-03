@@ -402,6 +402,8 @@ function PRReviewLayout() {
     }
   }, [selectedFile, pr.number, owner, repo, track]);
 
+  const canWrite = useCanWrite();
+
   return (
     <div className="flex flex-col h-full">
       <PRHeader
@@ -409,6 +411,7 @@ function PRReviewLayout() {
         owner={owner}
         repo={repo}
         onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+        rightContent={canWrite ? <SubmitReviewDropdown /> : undefined}
       />
 
       <div className="flex flex-1 overflow-hidden min-h-0">
@@ -488,6 +491,34 @@ const FilePanel = memo(function FilePanel({
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )}
     >
+      {/* Mobile close button */}
+      <div className="flex items-center justify-between px-2 py-2 border-b border-border md:hidden">
+        <span className="text-sm font-medium">Files</span>
+        <button
+          onClick={onMobileClose}
+          className="p-1 rounded hover:bg-muted transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Overview button - now above search */}
+      <button
+        onClick={handleSelectOverview}
+        className={cn(
+          "mx-2 mt-2 flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
+          showOverview
+            ? "bg-muted text-foreground"
+            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+        )}
+      >
+        <BookOpen className="w-4 h-4" />
+        <span className="font-medium flex-1 text-left">Overview</span>
+        <kbd className="px-1.5 py-0.5 bg-muted/60 rounded text-[10px] font-mono text-muted-foreground hidden sm:inline-block">
+          o
+        </kbd>
+      </button>
+
       {/* Search button with hide-viewed toggle */}
       <div className="mx-2 my-2 flex items-center gap-1.5">
         <button
@@ -524,35 +555,7 @@ const FilePanel = memo(function FilePanel({
         </TooltipProvider>
       </div>
 
-      {/* Mobile close button */}
-      <div className="flex items-center justify-between px-2 py-2 border-b border-border md:hidden">
-        <span className="text-sm font-medium">Files</span>
-        <button
-          onClick={onMobileClose}
-          className="p-1 rounded hover:bg-muted transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Overview button */}
-      <button
-        onClick={handleSelectOverview}
-        className={cn(
-          "mx-2 mb-1 flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
-          showOverview
-            ? "bg-muted text-foreground"
-            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-        )}
-      >
-        <BookOpen className="w-4 h-4" />
-        <span className="font-medium flex-1">Overview</span>
-        <kbd className="px-1.5 py-0.5 bg-muted/60 rounded text-[10px] font-mono text-muted-foreground hidden sm:inline-block">
-          o
-        </kbd>
-      </button>
-
-      <div className="border-t border-border/50 mt-1" />
+      <div className="border-t border-border/50" />
 
       <FileTree
         files={files}
@@ -632,27 +635,6 @@ const DiffPanel = memo(function DiffPanel() {
   if (showOverview) {
     return (
       <main className="flex-1 overflow-hidden flex flex-col">
-        {/* Header bar matching the file view */}
-        <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
-            <span className="text-sm font-medium">Overview</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
-            {viewedFiles.size > 0 && (
-              <span className="text-muted-foreground hidden sm:inline">
-                <span className="text-green-500 font-medium">
-                  {viewedFiles.size}
-                </span>
-                <span className="text-muted-foreground">
-                  {" / "}
-                  {files.length} files reviewed
-                </span>
-              </span>
-            )}
-            {canWrite && <SubmitReviewDropdown />}
-          </div>
-        </div>
         <ReadOnlyBanner />
         <PROverview />
       </main>
@@ -661,72 +643,21 @@ const DiffPanel = memo(function DiffPanel() {
 
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
-      {/* File navigation bar */}
-      <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-1">
-        <div className="flex items-center gap-1 sm:gap-2">
-          <button
-            onClick={() => store.navigateToPrevUnviewedFile()}
-            className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
-            title="Previous unreviewed file (k)"
-          >
-            <ChevronLeft className="w-3.5 h-3.5" />
-            <span className="hidden xs:inline">Prev</span>
-            <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
-              k
-            </kbd>
-          </button>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {currentIndex + 1}/{files.length}
-          </span>
-          <button
-            onClick={() => store.navigateToNextUnviewedFile()}
-            className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
-            title="Next unreviewed file (j)"
-          >
-            <span className="hidden xs:inline">Next</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-            <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
-              j
-            </kbd>
-          </button>
-        </div>
-        <div className="flex items-center gap-1 sm:gap-2 text-xs">
-          {viewedFiles.size > 0 && (
-            <span className="text-muted-foreground hidden sm:inline">
-              <span className="text-green-500 font-medium">
-                {viewedFiles.size}
-              </span>
-              <span className="text-muted-foreground">
-                {" / "}
-                {files.length} files reviewed
-              </span>
-            </span>
-          )}
-          {files.length - viewedFiles.size > 0 && (
-            <span className="text-yellow-500 hidden md:inline">
-              {files.length - viewedFiles.size} left
-            </span>
-          )}
-          {selectedFiles.size > 0 && (
-            <span className="text-blue-400 hidden md:inline">
-              {selectedFiles.size} selected
-            </span>
-          )}
-          {canWrite && <SubmitReviewDropdown />}
-        </div>
-      </div>
-
       <ReadOnlyBanner />
 
       {currentFile ? (
         <div className="flex flex-col flex-1 min-h-0">
-          {/* Sticky file header */}
+          {/* Sticky file header with navigation */}
           <div className="shrink-0 border-b border-border bg-muted/50 backdrop-blur-sm z-20">
             <div className="px-3 py-1.5">
               <FileHeader
                 file={currentFile}
                 isViewed={viewedFiles.has(currentFile.filename)}
                 onToggleViewed={() => store.toggleViewed(currentFile.filename)}
+                currentIndex={currentIndex}
+                totalFiles={files.length}
+                onPrevFile={() => store.navigateToPrevUnviewedFile()}
+                onNextFile={() => store.navigateToNextUnviewedFile()}
               />
             </div>
           </div>
