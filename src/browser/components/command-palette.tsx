@@ -13,6 +13,7 @@ import {
 } from "react";
 import { File, FileCode, Search } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useLocation } from "react-router-dom";
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
 import { Keycap, KeycapGroup } from "../ui/keycap";
@@ -33,6 +34,12 @@ const CommandPaletteContext = createContext<CommandPaletteContextValue | null>(
 
 export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const location = useLocation();
+
+  // Close command palette when route changes
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

@@ -1811,6 +1811,79 @@ function createGitHubStore() {
     cache.invalidate(`reactions:comment:${owner}/${repo}/${commentId}`);
   }
 
+  // Pull Request Review Comment Reactions (different from issue comments)
+  async function getReviewCommentReactions(
+    owner: string,
+    repo: string,
+    commentId: number
+  ) {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `reactions:review-comment:${owner}/${repo}/${commentId}`;
+
+    const cached = cache.get<components["schemas"]["reaction"][]>(
+      cacheKey,
+      30_000
+    );
+    if (cached) return cached;
+
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+        per_page: 100,
+      }
+    );
+
+    cache.set(cacheKey, data);
+    return data;
+  }
+
+  async function addReviewCommentReaction(
+    owner: string,
+    repo: string,
+    commentId: number,
+    content: ReactionContent
+  ) {
+    if (!octokit) throw new Error("Not initialized");
+
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+        content,
+      }
+    );
+
+    cache.invalidate(`reactions:review-comment:${owner}/${repo}/${commentId}`);
+    return data;
+  }
+
+  async function deleteReviewCommentReaction(
+    owner: string,
+    repo: string,
+    commentId: number,
+    reactionId: number
+  ) {
+    if (!octokit) throw new Error("Not initialized");
+
+    await octokit.request(
+      "DELETE /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions/{reaction_id}",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+        reaction_id: reactionId,
+      }
+    );
+
+    cache.invalidate(`reactions:review-comment:${owner}/${repo}/${commentId}`);
+  }
+
   async function closePR(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
 
@@ -2503,6 +2576,10 @@ function createGitHubStore() {
     getCommentReactions,
     addCommentReaction,
     deleteCommentReaction,
+    // Review comment reactions
+    getReviewCommentReactions,
+    addReviewCommentReaction,
+    deleteReviewCommentReaction,
     // GraphQL
     graphql,
     getPREnrichment,

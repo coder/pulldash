@@ -32,7 +32,9 @@ import {
   Search,
   ExternalLink,
   BookOpen,
+  Smile,
 } from "lucide-react";
+import type { Reaction, ReactionContent } from "../contexts/github";
 import { Skeleton } from "../ui/skeleton";
 import { PROverview } from "./pr-overview";
 import {
@@ -52,6 +54,7 @@ import {
   useGitHubReady,
   useGitHubSelector,
   usePRChecks,
+  useCurrentUser,
 } from "../contexts/github";
 import { useCanWrite, useAuth } from "../contexts/auth";
 import { useTelemetry } from "../contexts/telemetry";
@@ -1944,6 +1947,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
 }: InlineCommentFormProps) {
   const store = usePRReviewStore();
   const canWrite = useCanWrite();
+  const currentUser = useCurrentUser();
   const { startDeviceAuth } = useAuth();
   const { addPendingComment } = useCommentActions();
   const [text, setText] = useState("");
@@ -1980,28 +1984,26 @@ const InlineCommentForm = memo(function InlineCommentForm({
   // Show sign-in prompt for read-only users
   if (!canWrite) {
     return (
-      <div className="border-l-2 border-amber-500 bg-amber-500/5 p-4 mx-4 my-2 rounded-r-lg">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm">
-            <MessageSquare className="w-4 h-4 text-amber-500" />
-            <span className="text-muted-foreground">
-              Comment on {lineLabel}
-            </span>
+      <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/5 overflow-hidden shadow-sm">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-amber-500/20">
+          <div className="flex items-center gap-2.5 text-sm font-medium text-amber-200">
+            <MessageSquare className="w-4 h-4 text-amber-400" />
+            <span>Comment on {lineLabel}</span>
           </div>
           <button
             onClick={store.cancelCommenting}
-            className="text-muted-foreground hover:text-foreground transition-colors"
+            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted/50"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="mt-3 flex items-center gap-3">
+        <div className="p-4 flex items-center gap-3">
           <span className="text-sm text-muted-foreground">
             Sign in to leave comments
           </span>
           <button
             onClick={startDeviceAuth}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors"
           >
             Sign in with GitHub
           </button>
@@ -2011,40 +2013,65 @@ const InlineCommentForm = memo(function InlineCommentForm({
   }
 
   return (
-    <div className="border-l-2 border-green-500 bg-green-500/5 p-4 mx-4 my-2 rounded-r-lg">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm text-muted-foreground flex items-center gap-2">
-          <MessageSquare className="w-4 h-4" />
-          Comment on {lineLabel}
-        </span>
+    <div className="mx-4 my-3 rounded-lg border border-border bg-card overflow-hidden shadow-sm" style={{ fontFamily: 'var(--font-sans)' }}>
+      {/* Header with avatar and title */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+        <div className="flex items-center gap-3">
+          {currentUser?.avatar_url ? (
+            <img
+              src={currentUser.avatar_url}
+              alt={currentUser.login}
+              className="w-6 h-6 rounded-full ring-1 ring-border"
+            />
+          ) : (
+            <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center">
+              <MessageSquare className="w-3 h-3 text-muted-foreground" />
+            </div>
+          )}
+          <span className="text-sm font-medium text-foreground">
+            Add comment on {lineLabel}
+          </span>
+        </div>
         <button
           onClick={store.cancelCommenting}
-          className="text-muted-foreground hover:text-foreground transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted/50"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
-      <MarkdownEditor
-        value={text}
-        onChange={setText}
-        onKeyDown={handleKeyDown}
-        placeholder="Leave a comment... (will be added to your pending review)"
-        minHeight="80px"
-        autoFocus
-      />
-      <div className="flex justify-end gap-2 mt-3">
+
+      {/* Editor area */}
+      <div className="p-3">
+        <MarkdownEditor
+          value={text}
+          onChange={setText}
+          onKeyDown={handleKeyDown}
+          placeholder="Leave a comment..."
+          minHeight="100px"
+          autoFocus
+        />
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/20" style={{ fontFamily: 'var(--font-sans)' }}>
         <button
           onClick={store.cancelCommenting}
-          className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-md border border-border bg-background hover:bg-muted transition-colors"
+          style={{ fontFamily: 'var(--font-sans)' }}
         >
           Cancel
         </button>
         <button
           onClick={handleSubmit}
           disabled={!text.trim() || submitting}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ fontFamily: 'var(--font-sans)' }}
         >
-          <Send className="w-3.5 h-3.5" />
+          {submitting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Send className="w-4 h-4" />
+          )}
           Add to review
         </button>
       </div>
@@ -2071,6 +2098,8 @@ const CommentThread = memo(function CommentThread({
 }: CommentThreadProps) {
   const store = usePRReviewStore();
   const canWrite = useCanWrite();
+  const owner = usePRReviewSelector((s) => s.owner);
+  const repo = usePRReviewSelector((s) => s.repo);
   const { replyToComment, updateComment, deleteComment } = useCommentActions();
   const { resolveThread, unresolveThread } = useThreadActions();
   const [replyText, setReplyText] = useState("");
@@ -2237,6 +2266,8 @@ const CommentThread = memo(function CommentThread({
               isResolved={isResolved}
               onUpdate={updateComment}
               onDelete={deleteComment}
+              owner={owner}
+              repo={repo}
             />
           ))}
 
@@ -2286,6 +2317,8 @@ interface CommentItemProps {
   isResolved?: boolean;
   onUpdate: (commentId: number, body: string) => Promise<void>;
   onDelete: (commentId: number) => Promise<void>;
+  owner: string;
+  repo: string;
 }
 
 const CommentItem = memo(function CommentItem({
@@ -2296,10 +2329,63 @@ const CommentItem = memo(function CommentItem({
   isResolved,
   onUpdate,
   onDelete,
+  owner,
+  repo,
 }: CommentItemProps) {
   const store = usePRReviewStore();
+  const github = useGitHubStore();
   const currentUser = usePRReviewSelector((s) => s.currentUser);
+  const canWrite = useCanWrite();
   const isOwnComment = currentUser === comment.user.login;
+
+  // Reactions state
+  const [reactions, setReactions] = useState<Reaction[]>([]);
+  const [loadingReactions, setLoadingReactions] = useState(false);
+
+  // Fetch reactions on mount
+  useEffect(() => {
+    const fetchReactions = async () => {
+      setLoadingReactions(true);
+      try {
+        const data = await github.getReviewCommentReactions(owner, repo, comment.id);
+        setReactions(data);
+      } catch (error) {
+        console.error("Failed to fetch reactions:", error);
+      } finally {
+        setLoadingReactions(false);
+      }
+    };
+    fetchReactions();
+  }, [github, owner, repo, comment.id]);
+
+  const handleAddReaction = useCallback(
+    async (content: ReactionContent) => {
+      try {
+        const newReaction = await github.addReviewCommentReaction(
+          owner,
+          repo,
+          comment.id,
+          content
+        );
+        setReactions((prev) => [...prev, newReaction]);
+      } catch (error) {
+        console.error("Failed to add reaction:", error);
+      }
+    },
+    [github, owner, repo, comment.id]
+  );
+
+  const handleRemoveReaction = useCallback(
+    async (reactionId: number) => {
+      try {
+        await github.deleteReviewCommentReaction(owner, repo, comment.id, reactionId);
+        setReactions((prev) => prev.filter((r) => r.id !== reactionId));
+      } catch (error) {
+        console.error("Failed to remove reaction:", error);
+      }
+    },
+    [github, owner, repo, comment.id]
+  );
   const timeAgo = useMemo(
     () => getTimeAgo(new Date(comment.created_at)),
     [comment.created_at]
@@ -2413,6 +2499,17 @@ const CommentItem = memo(function CommentItem({
               <div className="mt-1 text-sm text-foreground/90">
                 <Markdown>{comment.body}</Markdown>
               </div>
+
+              {/* Reactions */}
+              <div className="mt-2">
+                <EmojiReactions
+                  reactions={reactions}
+                  onAddReaction={canWrite ? handleAddReaction : undefined}
+                  onRemoveReaction={canWrite ? handleRemoveReaction : undefined}
+                  currentUser={currentUser}
+                />
+              </div>
+
               <div className="flex items-center gap-3 mt-2">
                 <button
                   onClick={() => store.startReplying(comment.id)}
@@ -2465,6 +2562,204 @@ const CommentItem = memo(function CommentItem({
     </div>
   );
 });
+
+// ============================================================================
+// Emoji Reactions Component
+// ============================================================================
+
+const REACTION_EMOJIS: Record<ReactionContent, string> = {
+  "+1": "👍",
+  "-1": "👎",
+  laugh: "😄",
+  hooray: "🎉",
+  confused: "😕",
+  heart: "❤️",
+  rocket: "🚀",
+  eyes: "👀",
+};
+
+const REACTION_ORDER: ReactionContent[] = [
+  "+1",
+  "-1",
+  "laugh",
+  "hooray",
+  "confused",
+  "heart",
+  "rocket",
+  "eyes",
+];
+
+function EmojiReactions({
+  reactions,
+  onAddReaction,
+  onRemoveReaction,
+  currentUser,
+}: {
+  reactions: Reaction[];
+  onAddReaction?: (content: ReactionContent) => void;
+  onRemoveReaction?: (reactionId: number) => void;
+  currentUser?: string | null;
+}) {
+  const [showPicker, setShowPicker] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [pickerPosition, setPickerPosition] = useState({ top: 0, left: 0 });
+
+  // Group reactions by content
+  const groupedReactions = useMemo(() => {
+    const groups: Record<
+      string,
+      { count: number; users: string[]; userReactionId?: number }
+    > = {};
+
+    for (const reaction of reactions) {
+      const content = reaction.content as ReactionContent;
+      if (!groups[content]) {
+        groups[content] = { count: 0, users: [] };
+      }
+      groups[content].count++;
+      if (reaction.user?.login) {
+        groups[content].users.push(reaction.user.login);
+        if (reaction.user.login === currentUser) {
+          groups[content].userReactionId = reaction.id;
+        }
+      }
+    }
+
+    return groups;
+  }, [reactions, currentUser]);
+
+  const handleReactionClick = useCallback(
+    (content: ReactionContent) => {
+      const group = groupedReactions[content];
+      if (group?.userReactionId && onRemoveReaction) {
+        // User already reacted, remove it
+        onRemoveReaction(group.userReactionId);
+      } else if (onAddReaction) {
+        // Add new reaction
+        onAddReaction(content);
+      }
+      setShowPicker(false);
+    },
+    [groupedReactions, onAddReaction, onRemoveReaction]
+  );
+
+  const handleTogglePicker = useCallback(() => {
+    if (!showPicker && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setPickerPosition({
+        top: rect.bottom + 4,
+        left: rect.left,
+      });
+    }
+    setShowPicker(!showPicker);
+  }, [showPicker]);
+
+  // Sort reactions to show in consistent order
+  const sortedReactions = useMemo(() => {
+    return REACTION_ORDER.filter(
+      (content) => groupedReactions[content]?.count > 0
+    );
+  }, [groupedReactions]);
+
+  // Format users list for tooltip
+  const formatUsersTooltip = (users: string[], emoji: string) => {
+    if (users.length === 0) return "";
+    if (users.length === 1) return `${users[0]} reacted with ${emoji}`;
+    if (users.length === 2)
+      return `${users[0]} and ${users[1]} reacted with ${emoji}`;
+    if (users.length === 3)
+      return `${users[0]}, ${users[1]}, and ${users[2]} reacted with ${emoji}`;
+    return `${users[0]}, ${users[1]}, and ${users.length - 2} others reacted with ${emoji}`;
+  };
+
+  // Don't render if no reactions and no ability to add
+  if (!onAddReaction && sortedReactions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap" style={{ fontFamily: 'var(--font-sans)' }}>
+      {/* Add reaction button */}
+      {onAddReaction && (
+        <>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  ref={buttonRef}
+                  onClick={handleTogglePicker}
+                  className="inline-flex items-center justify-center w-6 h-6 text-xs rounded-full border border-border hover:border-blue-500/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  <Smile className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Add reaction</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          {/* Emoji picker dropdown */}
+          {showPicker && (
+            <>
+              <div
+                className="fixed inset-0 z-[100]"
+                onClick={() => setShowPicker(false)}
+              />
+              <div
+                className="fixed p-2 bg-card border border-border rounded-lg shadow-xl z-[101] flex gap-1"
+                style={{ top: pickerPosition.top, left: pickerPosition.left }}
+              >
+                {REACTION_ORDER.map((content) => (
+                  <button
+                    key={content}
+                    onClick={() => handleReactionClick(content)}
+                    className={cn(
+                      "w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-muted transition-colors",
+                      groupedReactions[content]?.userReactionId &&
+                        "bg-blue-500/20"
+                    )}
+                    title={content}
+                  >
+                    {REACTION_EMOJIS[content]}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* Existing reactions */}
+      <TooltipProvider delayDuration={200}>
+        {sortedReactions.map((content) => {
+          const group = groupedReactions[content];
+          const isUserReaction = !!group.userReactionId;
+
+          return (
+            <Tooltip key={content}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => handleReactionClick(content)}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border transition-colors",
+                    isUserReaction
+                      ? "bg-blue-500/20 border-blue-500/50 text-blue-400"
+                      : "bg-muted/50 border-border hover:border-blue-500/50"
+                  )}
+                >
+                  <span>{REACTION_EMOJIS[content]}</span>
+                  <span>{group.count}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {formatUsersTooltip(group.users, REACTION_EMOJIS[content])}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </TooltipProvider>
+    </div>
+  );
+}
 
 // ============================================================================
 // Pending Comment Item

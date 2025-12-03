@@ -20,7 +20,18 @@ import { isMac } from "./keycap";
 import { Popover, PopoverContent, PopoverAnchor } from "./popover";
 import { useGitHubStore, useGitHubSelector } from "../contexts/github";
 import { UserHoverCard } from "./user-hover-card";
-import { Loader2 } from "lucide-react";
+import {
+  Loader2,
+  Bold,
+  Italic,
+  Code,
+  Link,
+  List,
+  ListOrdered,
+  Quote,
+  Heading2,
+} from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 
 interface MarkdownProps {
   children: string;
@@ -544,40 +555,219 @@ export const MarkdownEditor = memo(function MarkdownEditor({
     mentionQuery !== null &&
     (mentionUsers.length > 0 || mentionLoading || suggestedUsers.length > 0);
 
+  // Formatting toolbar actions
+  const wrapSelection = useCallback(
+    (before: string, after: string) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const selectedText = value.substring(start, end);
+
+      const newValue =
+        value.substring(0, start) +
+        before +
+        selectedText +
+        after +
+        value.substring(end);
+
+      onChange(newValue);
+
+      // Set cursor position after the inserted text
+      setTimeout(() => {
+        const newCursorPos = selectedText
+          ? start + before.length + selectedText.length + after.length
+          : start + before.length;
+        textarea.focus();
+        textarea.setSelectionRange(
+          selectedText ? start + before.length : newCursorPos,
+          selectedText ? start + before.length + selectedText.length : newCursorPos
+        );
+      }, 0);
+    },
+    [value, onChange]
+  );
+
+  const insertAtLineStart = useCallback(
+    (prefix: string) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const start = textarea.selectionStart;
+      // Find the start of the current line
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+
+      const newValue =
+        value.substring(0, lineStart) + prefix + value.substring(lineStart);
+
+      onChange(newValue);
+
+      setTimeout(() => {
+        const newCursorPos = start + prefix.length;
+        textarea.focus();
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      }, 0);
+    },
+    [value, onChange]
+  );
+
+  const insertLink = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = value.substring(start, end);
+
+    if (selectedText) {
+      // Wrap selected text as link text
+      const newValue =
+        value.substring(0, start) + `[${selectedText}](url)` + value.substring(end);
+      onChange(newValue);
+      setTimeout(() => {
+        textarea.focus();
+        // Select "url" for easy replacement
+        const urlStart = start + selectedText.length + 3;
+        textarea.setSelectionRange(urlStart, urlStart + 3);
+      }, 0);
+    } else {
+      // Insert placeholder
+      const newValue = value.substring(0, start) + "[text](url)" + value.substring(end);
+      onChange(newValue);
+      setTimeout(() => {
+        textarea.focus();
+        // Select "text" for easy replacement
+        textarea.setSelectionRange(start + 1, start + 5);
+      }, 0);
+    }
+  }, [value, onChange]);
+
+  const toolbarButtons = [
+    {
+      icon: Heading2,
+      label: "Heading",
+      shortcut: undefined,
+      action: () => insertAtLineStart("## "),
+    },
+    {
+      icon: Bold,
+      label: "Bold",
+      shortcut: `${isMac ? "⌘" : "Ctrl"}+B`,
+      action: () => wrapSelection("**", "**"),
+    },
+    {
+      icon: Italic,
+      label: "Italic",
+      shortcut: `${isMac ? "⌘" : "Ctrl"}+I`,
+      action: () => wrapSelection("_", "_"),
+    },
+    { type: "separator" as const },
+    {
+      icon: Code,
+      label: "Code",
+      shortcut: undefined,
+      action: () => wrapSelection("`", "`"),
+    },
+    {
+      icon: Link,
+      label: "Link",
+      shortcut: `${isMac ? "⌘" : "Ctrl"}+K`,
+      action: insertLink,
+    },
+    { type: "separator" as const },
+    {
+      icon: List,
+      label: "Bulleted list",
+      shortcut: undefined,
+      action: () => insertAtLineStart("- "),
+    },
+    {
+      icon: ListOrdered,
+      label: "Numbered list",
+      shortcut: undefined,
+      action: () => insertAtLineStart("1. "),
+    },
+    {
+      icon: Quote,
+      label: "Quote",
+      shortcut: undefined,
+      action: () => insertAtLineStart("> "),
+    },
+  ];
+
   return (
-    <div className="markdown-editor border border-border rounded-md overflow-hidden bg-background font-sans">
-      {/* Tab bar */}
-      <div className="flex items-center border-b border-border bg-muted/30">
-        <button
-          type="button"
-          onClick={() => handleTabChange("write")}
-          className={cn(
-            "px-3 py-1.5 text-sm font-medium transition-colors relative",
-            activeTab === "write"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          Write
-          {activeTab === "write" && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t-full" />
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => handleTabChange("preview")}
-          className={cn(
-            "px-3 py-1.5 text-sm font-medium transition-colors relative",
-            activeTab === "preview"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          Preview
-          {activeTab === "preview" && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t-full" />
-          )}
-        </button>
+    <div className="markdown-editor rounded-lg overflow-hidden bg-background border border-border focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30 transition-all" style={{ fontFamily: 'var(--font-sans)' }}>
+      {/* Tab bar with toolbar */}
+      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-1">
+        <div className="flex items-center">
+          <button
+            type="button"
+            onClick={() => handleTabChange("write")}
+            className={cn(
+              "px-3 py-2 text-sm font-medium transition-colors relative",
+              activeTab === "write"
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            style={{ fontFamily: 'var(--font-sans)' }}
+          >
+            Write
+            {activeTab === "write" && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500 rounded-t-full" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabChange("preview")}
+            className={cn(
+              "px-3 py-2 text-sm font-medium transition-colors relative",
+              activeTab === "preview"
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            style={{ fontFamily: 'var(--font-sans)' }}
+          >
+            Preview
+            {activeTab === "preview" && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500 rounded-t-full" />
+            )}
+          </button>
+        </div>
+
+        {/* Formatting toolbar - only visible in write mode */}
+        {activeTab === "write" && (
+          <div className="flex items-center gap-0.5 pr-1">
+            {toolbarButtons.map((btn, idx) =>
+              btn.type === "separator" ? (
+                <div
+                  key={idx}
+                  className="w-px h-4 bg-border mx-1"
+                />
+              ) : (
+                <Tooltip key={idx}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={btn.action}
+                      className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                    >
+                      <btn.icon className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">
+                    {btn.label}
+                    {btn.shortcut && (
+                      <span className="ml-2 text-muted-foreground">
+                        {btn.shortcut}
+                      </span>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              )
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content area */}
@@ -672,17 +862,21 @@ export const MarkdownEditor = memo(function MarkdownEditor({
       )}
 
       {/* Footer hint */}
-      <div className="px-3 py-1.5 border-t border-border bg-muted/20">
-        <p className="text-[10px] text-muted-foreground">
-          Supports Markdown. Type @ to mention users.{" "}
-          <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">
-            {isMac ? "⌘" : "Ctrl"}
-          </kbd>
-          +
-          <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">
-            Enter
-          </kbd>{" "}
-          to submit
+      <div className="px-3 py-2 border-t border-border bg-muted/20" style={{ fontFamily: 'var(--font-sans)' }}>
+        <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+          <span>Supports Markdown</span>
+          <span className="text-border">·</span>
+          <span>Type <span className="text-foreground/70">@</span> to mention</span>
+          <span className="text-border">·</span>
+          <span className="inline-flex items-center gap-0.5">
+            <kbd className="px-1 py-0.5 bg-muted border border-border/50 rounded text-[10px]" style={{ fontFamily: 'var(--font-mono)' }}>
+              {isMac ? "⌘" : "Ctrl"}
+            </kbd>
+            <kbd className="px-1 py-0.5 bg-muted border border-border/50 rounded text-[10px]" style={{ fontFamily: 'var(--font-mono)' }}>
+              ↵
+            </kbd>
+            <span className="ml-0.5">to submit</span>
+          </span>
         </p>
       </div>
     </div>
