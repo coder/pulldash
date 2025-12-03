@@ -388,7 +388,10 @@ export function Home() {
 
   // Track which repo dropdown is open
   const [openRepoDropdown, setOpenRepoDropdown] = useState<string | null>(null);
+  const [repoDropdownPosition, setRepoDropdownPosition] = useState({ top: 0, left: 0 });
   const [showAddRepo, setShowAddRepo] = useState(false);
+  const [addRepoButtonRef, setAddRepoButtonRef] = useState<HTMLButtonElement | null>(null);
+  const [addRepoDropdownPosition, setAddRepoDropdownPosition] = useState({ top: 0, right: 0 });
 
   // Show loading/error state while GitHub client initializes
   if (!githubReady) {
@@ -457,13 +460,25 @@ export function Home() {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => {
+                    onClick={(e) => {
+                      if (!isOpen) {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setRepoDropdownPosition({
+                          top: rect.bottom + 4,
+                          left: rect.left,
+                        });
+                      }
                       setOpenRepoDropdown(isOpen ? null : repo.name);
                       setShowAddRepo(false);
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setRepoDropdownPosition({
+                          top: rect.bottom + 4,
+                          left: rect.left,
+                        });
                         setOpenRepoDropdown(isOpen ? null : repo.name);
                         setShowAddRepo(false);
                       }
@@ -499,34 +514,47 @@ export function Home() {
                   </div>
 
                   {isOpen && (
-                    <div className="absolute top-full left-0 mt-1 w-56 bg-card border border-border rounded-lg shadow-xl z-30 overflow-hidden max-w-[calc(100vw-1rem)] sm:max-w-none">
-                      {availableModes.map((option) => (
-                        <button
-                          key={option.value}
-                          onClick={() => {
-                            handleRepoModeChange(repo.name, option.value);
-                            setOpenRepoDropdown(null);
-                          }}
-                          className={cn(
-                            "w-full flex items-start gap-2.5 px-3 py-2 hover:bg-muted/50 transition-colors text-left",
-                            repo.mode === option.value && "bg-muted/50"
-                          )}
-                        >
-                          <option.icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-xs">
-                              {option.label}
+                    <>
+                      {/* Backdrop to close dropdown when clicking outside */}
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setOpenRepoDropdown(null)}
+                      />
+                      <div
+                        className="fixed w-56 bg-card border border-border rounded-lg shadow-xl z-50 max-w-[calc(100vw-1rem)] sm:max-w-none"
+                        style={{
+                          top: repoDropdownPosition.top,
+                          left: repoDropdownPosition.left,
+                        }}
+                      >
+                        {availableModes.map((option) => (
+                          <button
+                            key={option.value}
+                            onClick={() => {
+                              handleRepoModeChange(repo.name, option.value);
+                              setOpenRepoDropdown(null);
+                            }}
+                            className={cn(
+                              "w-full flex items-start gap-2.5 px-3 py-2 hover:bg-muted/50 transition-colors text-left",
+                              repo.mode === option.value && "bg-muted/50"
+                            )}
+                          >
+                            <option.icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-xs">
+                                {option.label}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {option.description}
+                              </div>
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
-                              {option.description}
-                            </div>
-                          </div>
-                          {repo.mode === option.value && (
-                            <Check className="w-3.5 h-3.5 text-primary mt-0.5" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
+                            {repo.mode === option.value && (
+                              <Check className="w-3.5 h-3.5 text-primary mt-0.5" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
               );
@@ -550,7 +578,15 @@ export function Home() {
             {/* Add Repo Button */}
             <div className="relative shrink-0">
               <button
+                ref={setAddRepoButtonRef}
                 onClick={() => {
+                  if (!showAddRepo && addRepoButtonRef) {
+                    const rect = addRepoButtonRef.getBoundingClientRect();
+                    setAddRepoDropdownPosition({
+                      top: rect.bottom + 4,
+                      right: window.innerWidth - rect.right,
+                    });
+                  }
                   setShowAddRepo(!showAddRepo);
                   setOpenRepoDropdown(null);
                 }}
@@ -567,31 +603,40 @@ export function Home() {
 
               {/* Search Dropdown */}
               {showAddRepo && (
-                <div className="absolute top-full right-0 mt-1 w-72 max-w-[calc(100vw-1rem)] bg-card border border-border rounded-lg shadow-xl overflow-hidden z-30">
-                  <div className="p-2 border-b border-border">
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onBlur={(e) => {
-                          // Close dropdown if not clicking inside it
-                          if (!e.relatedTarget?.closest(".add-repo-dropdown")) {
-                            setTimeout(() => setShowAddRepo(false), 150);
-                          }
-                        }}
-                        placeholder="Search repositories..."
-                        className="w-full h-7 pl-7 pr-3 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-                        autoFocus
-                      />
-                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                      {searching && (
-                        <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 animate-spin text-muted-foreground" />
-                      )}
+                <>
+                  {/* Backdrop to close dropdown when clicking outside */}
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => {
+                      setShowAddRepo(false);
+                      setSearchQuery("");
+                    }}
+                  />
+                  <div
+                    className="fixed w-72 max-w-[calc(100vw-1rem)] bg-card border border-border rounded-lg shadow-xl z-50"
+                    style={{
+                      top: addRepoDropdownPosition.top,
+                      right: addRepoDropdownPosition.right,
+                    }}
+                  >
+                    <div className="p-2 border-b border-border">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder="Search repositories..."
+                          className="w-full h-7 pl-7 pr-3 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                          autoFocus
+                        />
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                        {searching && (
+                          <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 animate-spin text-muted-foreground" />
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="add-repo-dropdown max-h-64 overflow-auto">
+                    <div className="add-repo-dropdown max-h-64 overflow-auto">
                     {/* All Repos option - always shown at top when not already added */}
                     {!config.repos.some(isAllReposFilter) && !searchQuery && (
                       <button
@@ -650,6 +695,7 @@ export function Home() {
                     )}
                   </div>
                 </div>
+                </>
               )}
             </div>
           </div>
