@@ -2839,7 +2839,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
               e.stopPropagation();
               handleSubmit();
             }}
-            disabled={submitting || (pendingCount === 0 && !reviewBody.trim())}
+            disabled={submitting || (reviewType === "COMMENT" && pendingCount === 0 && !reviewBody.trim())}
             className={cn(
               "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50",
               reviewType === "APPROVE" &&
