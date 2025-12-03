@@ -570,7 +570,7 @@ export function Home() {
                       )}
                     />
                     <span className={isAllRepos ? "font-medium" : "font-mono"}>
-                      {isAllRepos ? "All Repos" : repo.name}
+                      {isAllRepos ? modeOption.label : repo.name}
                     </span>
                     {repo.mode === "authored-by" && repo.authoredBy && (
                       <span className="text-muted-foreground">

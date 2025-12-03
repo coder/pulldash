@@ -849,7 +849,7 @@ const KeybindsBar = memo(function KeybindsBar() {
                 <KeycapGroup keys={["up", "down"]} size="xs" /> select range
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <KeycapGroup keys={["cmd", "up"]} size="xs" /> jump 10
+                <KeycapGroup keys={["cmd", "up", "down"]} size="xs" /> jump 10
               </span>
             </>
           ) : (
@@ -861,7 +861,7 @@ const KeybindsBar = memo(function KeybindsBar() {
                 <KeycapGroup keys={["up", "down"]} size="xs" /> select line
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <KeycapGroup keys={["cmd", "up"]} size="xs" /> jump 10
+                <KeycapGroup keys={["cmd", "up", "down"]} size="xs" /> jump 10
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Keycap keyName="g" size="xs" /> goto line
