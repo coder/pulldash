@@ -1348,19 +1348,18 @@ function createGitHubStore() {
     if (pending) return pending;
 
     const promise = octokit
-      .paginate("GET /repos/{owner}/{repo}/labels", {
+      .request("GET /repos/{owner}/{repo}/labels", {
         owner,
         repo,
         per_page: 100,
       })
-      .then((labels) => {
-        const result = labels.map((l) => ({
+      .then(({ data: labels }) => {
+        const result = labels.map((l: { name: string; color: string; description: string | null }) => ({
           name: l.name,
           color: l.color,
           description: l.description ?? null,
         }));
         cache.set(cacheKey, result);
-        cache.clearPending(cacheKey);
         return result;
       });
 

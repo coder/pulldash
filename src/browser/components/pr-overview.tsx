@@ -711,7 +711,7 @@ export const PROverview = memo(function PROverview() {
                           key={`comment-${comment.id}`}
                           user={comment.user}
                           createdAt={comment.created_at}
-                          body={comment.body}
+                          body={comment.body ?? null}
                           reactions={reactions[`comment-${comment.id}`]}
                           onAddReaction={(content) =>
                             handleAddCommentReaction(comment.id, content)
@@ -747,7 +747,10 @@ export const PROverview = memo(function PROverview() {
                 {canWrite && pr.state === "open" && !pr.merged && (
                   <>
                     <MergeSection
-                      pr={pr}
+                      pr={{
+                        ...pr,
+                        requested_reviewers: pr.requested_reviewers ?? undefined,
+                      }}
                       checkStatus={checkStatus}
                       checks={checks}
                       canMerge={canMergePR}

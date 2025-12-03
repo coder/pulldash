@@ -110,10 +110,10 @@ function UserHoverCardContent({
           </a>
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <span>{profile.login}</span>
-            {profile.pronouns && (
+            {(profile as UserProfile & { pronouns?: string }).pronouns && (
               <>
                 <span>·</span>
-                <span>{profile.pronouns}</span>
+                <span>{(profile as UserProfile & { pronouns?: string }).pronouns}</span>
               </>
             )}
           </div>
