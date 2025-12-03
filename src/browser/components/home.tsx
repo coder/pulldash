@@ -411,238 +411,243 @@ export function Home() {
   return (
     <div className="h-full bg-background flex flex-col overflow-hidden">
       {/* Filter Bar */}
-      <div className="border-b border-border px-4 py-2 shrink-0 flex items-center gap-3 bg-card/30">
-        {/* State Toggle */}
-        <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-muted/50">
-          {STATE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => handleStateChange(option.value)}
-              className={cn(
-                "px-2 py-1 text-xs font-medium rounded transition-colors",
-                config.state === option.value
-                  ? "bg-background shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+      <div className="border-b border-border px-2 sm:px-4 py-2 shrink-0 bg-card/30">
+        {/* Mobile: horizontal scroll, Desktop: wrap */}
+        <div className="flex items-center gap-2 sm:gap-3 overflow-x-auto hide-scrollbar">
+          {/* State Toggle */}
+          <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-muted/50 shrink-0">
+            {STATE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => handleStateChange(option.value)}
+                className={cn(
+                  "px-2 py-1 text-xs font-medium rounded transition-colors",
+                  config.state === option.value
+                    ? "bg-background shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
 
-        {/* Repo Chips with Mode Dropdowns */}
-        <div className="flex items-center gap-1.5 flex-wrap flex-1">
-          {config.repos.length === 0 && (
-            <span className="text-xs text-muted-foreground">
-              Add a filter to get started →
-            </span>
-          )}
-          {config.repos.map((repo) => {
-            const isAllRepos = isAllReposFilter(repo);
-            const modeOption = MODE_OPTIONS.find((m) => m.value === repo.mode)!;
-            const isOpen = openRepoDropdown === repo.name;
-            // For "All Repos", exclude the "All PRs" mode since it would be too broad
-            const availableModes = isAllRepos
-              ? MODE_OPTIONS.filter((m) => m.value !== "all")
-              : MODE_OPTIONS;
+          {/* Repo Chips with Mode Dropdowns */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {config.repos.length === 0 && (
+              <span className="text-xs text-muted-foreground">
+                Add a filter to get started →
+              </span>
+            )}
+            {config.repos.map((repo) => {
+              const isAllRepos = isAllReposFilter(repo);
+              const modeOption = MODE_OPTIONS.find(
+                (m) => m.value === repo.mode
+              )!;
+              const isOpen = openRepoDropdown === repo.name;
+              // For "All Repos", exclude the "All PRs" mode since it would be too broad
+              const availableModes = isAllRepos
+                ? MODE_OPTIONS.filter((m) => m.value !== "all")
+                : MODE_OPTIONS;
 
-            return (
-              <div key={repo.name} className="relative">
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setOpenRepoDropdown(isOpen ? null : repo.name);
-                    setShowAddRepo(false);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
+              return (
+                <div key={repo.name} className="relative">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
                       setOpenRepoDropdown(isOpen ? null : repo.name);
                       setShowAddRepo(false);
-                    }
-                  }}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-xs transition-colors border cursor-pointer",
-                    isOpen
-                      ? "bg-muted border-border"
-                      : isAllRepos
-                        ? "bg-primary/10 border-primary/30 hover:bg-primary/20 hover:border-primary/50"
-                        : "bg-muted/50 border-transparent hover:bg-muted hover:border-border"
-                  )}
-                >
-                  <modeOption.icon
-                    className={cn(
-                      "w-3 h-3",
-                      isAllRepos ? "text-primary" : "text-muted-foreground"
-                    )}
-                  />
-                  <span className={isAllRepos ? "font-medium" : "font-mono"}>
-                    {isAllRepos ? "All Repos" : repo.name}
-                  </span>
-                  <ChevronDown className="w-3 h-3 text-muted-foreground" />
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleRemoveRepo(repo.name);
                     }}
-                    className="p-0.5 rounded hover:bg-destructive/20 hover:text-destructive transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-
-                {isOpen && (
-                  <div className="absolute top-full left-0 mt-1 w-56 bg-card border border-border rounded-lg shadow-xl z-30 overflow-hidden">
-                    {availableModes.map((option) => (
-                      <button
-                        key={option.value}
-                        onClick={() => {
-                          handleRepoModeChange(repo.name, option.value);
-                          setOpenRepoDropdown(null);
-                        }}
-                        className={cn(
-                          "w-full flex items-start gap-2.5 px-3 py-2 hover:bg-muted/50 transition-colors text-left",
-                          repo.mode === option.value && "bg-muted/50"
-                        )}
-                      >
-                        <option.icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-xs">
-                            {option.label}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">
-                            {option.description}
-                          </div>
-                        </div>
-                        {repo.mode === option.value && (
-                          <Check className="w-3.5 h-3.5 text-primary mt-0.5" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Query Preview */}
-        {searchQueries.length > 0 && (
-          <div
-            className="text-xs text-muted-foreground font-mono truncate max-w-xs hidden lg:block"
-            title={searchQueries.join("\n")}
-          >
-            {searchQueries.length === 1
-              ? searchQueries[0]
-              : `${searchQueries.length} queries`}
-          </div>
-        )}
-
-        {/* Add Repo Button */}
-        <div className="relative shrink-0">
-          <button
-            onClick={() => {
-              setShowAddRepo(!showAddRepo);
-              setOpenRepoDropdown(null);
-            }}
-            className={cn(
-              "flex items-center gap-1.5 px-2 py-1 rounded-md border transition-colors text-xs",
-              showAddRepo
-                ? "bg-muted border-border text-foreground"
-                : "border-dashed border-border hover:bg-muted/50 hover:border-solid text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Repo</span>
-          </button>
-
-          {/* Search Dropdown */}
-          {showAddRepo && (
-            <div className="absolute top-full right-0 mt-1 w-72 bg-card border border-border rounded-lg shadow-xl overflow-hidden z-30">
-              <div className="p-2 border-b border-border">
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onBlur={(e) => {
-                      // Close dropdown if not clicking inside it
-                      if (!e.relatedTarget?.closest(".add-repo-dropdown")) {
-                        setTimeout(() => setShowAddRepo(false), 150);
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setOpenRepoDropdown(isOpen ? null : repo.name);
+                        setShowAddRepo(false);
                       }
                     }}
-                    placeholder="Search repositories..."
-                    className="w-full h-7 pl-7 pr-3 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-                    autoFocus
-                  />
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  {searching && (
-                    <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 animate-spin text-muted-foreground" />
+                    className={cn(
+                      "inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-xs transition-colors border cursor-pointer",
+                      isOpen
+                        ? "bg-muted border-border"
+                        : isAllRepos
+                          ? "bg-primary/10 border-primary/30 hover:bg-primary/20 hover:border-primary/50"
+                          : "bg-muted/50 border-transparent hover:bg-muted hover:border-border"
+                    )}
+                  >
+                    <modeOption.icon
+                      className={cn(
+                        "w-3 h-3",
+                        isAllRepos ? "text-primary" : "text-muted-foreground"
+                      )}
+                    />
+                    <span className={isAllRepos ? "font-medium" : "font-mono"}>
+                      {isAllRepos ? "All Repos" : repo.name}
+                    </span>
+                    <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveRepo(repo.name);
+                      }}
+                      className="p-0.5 rounded hover:bg-destructive/20 hover:text-destructive transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  {isOpen && (
+                    <div className="absolute top-full left-0 mt-1 w-56 bg-card border border-border rounded-lg shadow-xl z-30 overflow-hidden max-w-[calc(100vw-1rem)] sm:max-w-none">
+                      {availableModes.map((option) => (
+                        <button
+                          key={option.value}
+                          onClick={() => {
+                            handleRepoModeChange(repo.name, option.value);
+                            setOpenRepoDropdown(null);
+                          }}
+                          className={cn(
+                            "w-full flex items-start gap-2.5 px-3 py-2 hover:bg-muted/50 transition-colors text-left",
+                            repo.mode === option.value && "bg-muted/50"
+                          )}
+                        >
+                          <option.icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-xs">
+                              {option.label}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {option.description}
+                            </div>
+                          </div>
+                          {repo.mode === option.value && (
+                            <Check className="w-3.5 h-3.5 text-primary mt-0.5" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Query Preview */}
+          {searchQueries.length > 0 && (
+            <div
+              className="text-xs text-muted-foreground font-mono truncate max-w-xs hidden lg:block shrink-0"
+              title={searchQueries.join("\n")}
+            >
+              {searchQueries.length === 1
+                ? searchQueries[0]
+                : `${searchQueries.length} queries`}
+            </div>
+          )}
+
+          {/* Add Repo Button */}
+          <div className="relative shrink-0">
+            <button
+              onClick={() => {
+                setShowAddRepo(!showAddRepo);
+                setOpenRepoDropdown(null);
+              }}
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1 rounded-md border transition-colors text-xs",
+                showAddRepo
+                  ? "bg-muted border-border text-foreground"
+                  : "border-dashed border-border hover:bg-muted/50 hover:border-solid text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Repo</span>
+            </button>
+
+            {/* Search Dropdown */}
+            {showAddRepo && (
+              <div className="absolute top-full right-0 mt-1 w-72 max-w-[calc(100vw-1rem)] bg-card border border-border rounded-lg shadow-xl overflow-hidden z-30">
+                <div className="p-2 border-b border-border">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onBlur={(e) => {
+                        // Close dropdown if not clicking inside it
+                        if (!e.relatedTarget?.closest(".add-repo-dropdown")) {
+                          setTimeout(() => setShowAddRepo(false), 150);
+                        }
+                      }}
+                      placeholder="Search repositories..."
+                      className="w-full h-7 pl-7 pr-3 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                      autoFocus
+                    />
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                    {searching && (
+                      <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+
+                <div className="add-repo-dropdown max-h-64 overflow-auto">
+                  {/* All Repos option - always shown at top when not already added */}
+                  {!config.repos.some(isAllReposFilter) && !searchQuery && (
+                    <button
+                      onMouseDown={() => {
+                        handleAddRepo(ALL_REPOS_KEY);
+                        setShowAddRepo(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-primary/10 transition-colors text-left border-b border-border bg-primary/5"
+                    >
+                      <div className="w-4 h-4 rounded bg-primary/20 flex items-center justify-center shrink-0">
+                        <Users className="w-3 h-3 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-medium text-xs">All Repos</span>
+                        <span className="text-[10px] text-muted-foreground ml-1.5">
+                          PRs across all repositories
+                        </span>
+                      </div>
+                    </button>
+                  )}
+                  {searchResults.length > 0 ? (
+                    searchResults.map((repo) => (
+                      <button
+                        key={repo.id}
+                        onMouseDown={() => {
+                          handleAddRepo(repo.full_name);
+                          setShowAddRepo(false);
+                          setSearchQuery("");
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
+                      >
+                        {repo.owner && (
+                          <img
+                            src={repo.owner.avatar_url}
+                            alt={repo.owner.login}
+                            className="w-4 h-4 rounded shrink-0"
+                          />
+                        )}
+                        <span className="font-medium text-xs truncate flex-1">
+                          {repo.full_name}
+                        </span>
+                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <Star className="w-3 h-3" />
+                          {(repo.stargazers_count ?? 0).toLocaleString()}
+                        </span>
+                      </button>
+                    ))
+                  ) : searchQuery ? (
+                    <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                      {searching ? "Searching..." : "No repositories found"}
+                    </div>
+                  ) : (
+                    <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                      Type to search for repositories
+                    </div>
                   )}
                 </div>
               </div>
-
-              <div className="add-repo-dropdown max-h-64 overflow-auto">
-                {/* All Repos option - always shown at top when not already added */}
-                {!config.repos.some(isAllReposFilter) && !searchQuery && (
-                  <button
-                    onMouseDown={() => {
-                      handleAddRepo(ALL_REPOS_KEY);
-                      setShowAddRepo(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-primary/10 transition-colors text-left border-b border-border bg-primary/5"
-                  >
-                    <div className="w-4 h-4 rounded bg-primary/20 flex items-center justify-center shrink-0">
-                      <Users className="w-3 h-3 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span className="font-medium text-xs">All Repos</span>
-                      <span className="text-[10px] text-muted-foreground ml-1.5">
-                        PRs across all repositories
-                      </span>
-                    </div>
-                  </button>
-                )}
-                {searchResults.length > 0 ? (
-                  searchResults.map((repo) => (
-                    <button
-                      key={repo.id}
-                      onMouseDown={() => {
-                        handleAddRepo(repo.full_name);
-                        setShowAddRepo(false);
-                        setSearchQuery("");
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
-                    >
-                      {repo.owner && (
-                        <img
-                          src={repo.owner.avatar_url}
-                          alt={repo.owner.login}
-                          className="w-4 h-4 rounded shrink-0"
-                        />
-                      )}
-                      <span className="font-medium text-xs truncate flex-1">
-                        {repo.full_name}
-                      </span>
-                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <Star className="w-3 h-3" />
-                        {(repo.stargazers_count ?? 0).toLocaleString()}
-                      </span>
-                    </button>
-                  ))
-                ) : searchQuery ? (
-                  <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                    {searching ? "Searching..." : "No repositories found"}
-                  </div>
-                ) : (
-                  <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                    Type to search for repositories
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
@@ -853,7 +858,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
   return (
     <button
       onClick={handleClick}
-      className="w-full flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left"
+      className="w-full flex items-start gap-2 sm:gap-3 px-2 sm:px-4 py-3 hover:bg-muted/50 transition-colors text-left"
     >
       {/* PR Icon */}
       {isMerged ? (
@@ -872,16 +877,19 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium hover:text-blue-400">{pr.title}</span>
+          <span className="font-medium hover:text-blue-400 break-words">
+            {pr.title}
+          </span>
           {pr.hasNewChanges && (
-            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
+            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
               NEW
             </span>
           )}
+          {/* Labels - hide on mobile to save space */}
           {pr.labels.slice(0, 3).map((label) => (
             <span
               key={label.name}
-              className="px-2 py-0.5 text-[11px] font-medium rounded-full"
+              className="px-2 py-0.5 text-[11px] font-medium rounded-full hidden sm:inline-block"
               style={{
                 backgroundColor: `#${label.color}20`,
                 color: `#${label.color}`,
@@ -892,23 +900,25 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
             </span>
           ))}
         </div>
-        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5">
+        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5 flex-wrap">
           {repoInfo && (
             <>
-              <span className="font-mono">
+              <span className="font-mono truncate max-w-[120px] sm:max-w-none">
                 {repoInfo.owner}/{repoInfo.repo}
               </span>
               <span>•</span>
             </>
           )}
           <span>#{pr.number}</span>
-          <span>•</span>
-          <span>{getTimeAgo(new Date(pr.updated_at))}</span>
+          <span className="hidden xs:inline">•</span>
+          <span className="hidden xs:inline">
+            {getTimeAgo(new Date(pr.updated_at))}
+          </span>
           {pr.user && (
             <>
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
               <UserHoverCard login={pr.user.login}>
-                <span className="hover:text-blue-400 hover:underline cursor-pointer">
+                <span className="hover:text-blue-400 hover:underline cursor-pointer hidden sm:inline">
                   {pr.user.login}
                 </span>
               </UserHoverCard>
@@ -916,8 +926,8 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
           )}
           {pr.changedFiles !== undefined && (
             <>
-              <span>•</span>
-              <span className="flex items-center gap-1">
+              <span className="hidden sm:inline">•</span>
+              <span className="hidden sm:flex items-center gap-1">
                 <FileCode className="w-3 h-3" />
                 {pr.changedFiles}
               </span>
@@ -925,8 +935,8 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
           )}
           {(pr.additions !== undefined || pr.deletions !== undefined) && (
             <>
-              <span>•</span>
-              <span>
+              <span className="hidden sm:inline">•</span>
+              <span className="hidden sm:inline">
                 <span className="text-green-500">+{pr.additions || 0}</span>{" "}
                 <span className="text-red-500">−{pr.deletions || 0}</span>
               </span>

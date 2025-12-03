@@ -290,12 +290,18 @@ function PRReviewLayout() {
   const { track } = useTelemetry();
   const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
     useCommandPalette();
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Expose for button click
   const openCommandPalette = useCallback(
     () => setCommandPaletteOpen(true),
     [setCommandPaletteOpen]
   );
+
+  // Close mobile sidebar when a file is selected
+  const handleMobileFileSelect = useCallback(() => {
+    setMobileSidebarOpen(false);
+  }, []);
 
   // Initialize hooks that load data
   useKeyboardNavigation();
@@ -390,10 +396,27 @@ function PRReviewLayout() {
 
   return (
     <div className="flex flex-col h-full">
-      <PRHeader pr={pr} owner={owner} repo={repo} />
+      <PRHeader
+        pr={pr}
+        owner={owner}
+        repo={repo}
+        onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+      />
 
       <div className="flex flex-1 overflow-hidden min-h-0">
-        <FilePanel onOpenSearch={openCommandPalette} />
+        {/* Mobile sidebar overlay */}
+        {mobileSidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setMobileSidebarOpen(false)}
+          />
+        )}
+        <FilePanel
+          onOpenSearch={openCommandPalette}
+          mobileOpen={mobileSidebarOpen}
+          onMobileClose={() => setMobileSidebarOpen(false)}
+          onFileSelect={handleMobileFileSelect}
+        />
         <DiffPanel />
       </div>
 
@@ -411,9 +434,17 @@ function PRReviewLayout() {
 
 interface FilePanelProps {
   onOpenSearch: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+  onFileSelect?: () => void;
 }
 
-const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
+const FilePanel = memo(function FilePanel({
+  onOpenSearch,
+  mobileOpen,
+  onMobileClose,
+  onFileSelect,
+}: FilePanelProps) {
   const store = usePRReviewStore();
   const files = usePRReviewSelector((s) => s.files);
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
@@ -426,8 +457,29 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
   const pendingCommentCounts = usePendingCommentCountsByFile();
   const { copyDiff, copyFile, copyMainVersion } = useFileCopyActions();
 
+  // Wrap file selection to close mobile sidebar
+  const handleSelectFile = useCallback(
+    (filename: string) => {
+      store.selectFile(filename);
+      onFileSelect?.();
+    },
+    [store, onFileSelect]
+  );
+
+  const handleSelectOverview = useCallback(() => {
+    store.selectOverview();
+    onFileSelect?.();
+  }, [store, onFileSelect]);
+
   return (
-    <aside className="w-64 border-r border-border flex flex-col overflow-hidden shrink-0">
+    <aside
+      className={cn(
+        "w-64 border-r border-border flex flex-col overflow-hidden shrink-0 bg-background",
+        // Mobile: absolute positioned drawer
+        "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-in-out md:relative md:translate-x-0",
+        mobileOpen ? "translate-x-0" : "-translate-x-full"
+      )}
+    >
       {/* Search button with hide-viewed toggle */}
       <div className="mx-2 my-2 flex items-center gap-1.5">
         <button
@@ -464,9 +516,20 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
         </TooltipProvider>
       </div>
 
+      {/* Mobile close button */}
+      <div className="flex items-center justify-between px-2 py-2 border-b border-border md:hidden">
+        <span className="text-sm font-medium">Files</span>
+        <button
+          onClick={onMobileClose}
+          className="p-1 rounded hover:bg-muted transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
       {/* Overview button */}
       <button
-        onClick={store.selectOverview}
+        onClick={handleSelectOverview}
         className={cn(
           "mx-2 mb-1 flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
           showOverview
@@ -476,7 +539,7 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
       >
         <BookOpen className="w-4 h-4" />
         <span className="font-medium flex-1">Overview</span>
-        <kbd className="px-1.5 py-0.5 bg-muted/60 rounded text-[10px] font-mono text-muted-foreground">
+        <kbd className="px-1.5 py-0.5 bg-muted/60 rounded text-[10px] font-mono text-muted-foreground hidden sm:inline-block">
           o
         </kbd>
       </button>
@@ -491,7 +554,7 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
         hideViewed={hideViewed}
         commentCounts={commentCounts}
         pendingCommentCounts={pendingCommentCounts}
-        onSelectFile={store.selectFile}
+        onSelectFile={handleSelectFile}
         onToggleFileSelection={store.toggleFileSelection}
         onToggleViewed={store.toggleViewed}
         onToggleViewedMultiple={store.toggleViewedMultiple}
@@ -562,17 +625,17 @@ const DiffPanel = memo(function DiffPanel() {
     return (
       <main className="flex-1 overflow-hidden flex flex-col">
         {/* Header bar matching the file view */}
-        <div className="shrink-0 border-b border-border bg-card/30 px-3 py-1.5 flex items-center justify-between">
+        <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-muted-foreground" />
+            <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
             <span className="text-sm font-medium">Overview</span>
           </div>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
             <span className="text-muted-foreground">
               <span className="text-green-500">+{pr.additions}</span>{" "}
               <span className="text-red-500">−{pr.deletions}</span>
             </span>
-            <span className="text-muted-foreground">
+            <span className="text-muted-foreground hidden sm:inline">
               <span className="text-green-500 font-medium">
                 {viewedFiles.size}
               </span>
@@ -593,40 +656,40 @@ const DiffPanel = memo(function DiffPanel() {
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
       {/* File navigation bar */}
-      <div className="shrink-0 border-b border-border bg-card/30 px-3 py-1.5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-1">
+        <div className="flex items-center gap-1 sm:gap-2">
           <button
             onClick={() => store.navigateToPrevUnviewedFile()}
-            className="flex items-center gap-1 px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
+            className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
             title="Previous unreviewed file (j)"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
-            <span>Prev</span>
+            <span className="hidden xs:inline">Prev</span>
             <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
               j
             </kbd>
           </button>
           <span className="text-xs text-muted-foreground tabular-nums">
-            {currentIndex + 1} / {files.length}
+            {currentIndex + 1}/{files.length}
           </span>
           <button
             onClick={() => store.navigateToNextUnviewedFile()}
-            className="flex items-center gap-1 px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
+            className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
             title="Next unreviewed file (k)"
           >
-            <span>Next</span>
+            <span className="hidden xs:inline">Next</span>
             <ChevronRight className="w-3.5 h-3.5" />
             <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
               k
             </kbd>
           </button>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-muted-foreground">
+        <div className="flex items-center gap-1 sm:gap-2 text-xs">
+          <span className="text-muted-foreground hidden xs:inline">
             <span className="text-green-500">+{pr.additions}</span>{" "}
             <span className="text-red-500">−{pr.deletions}</span>
           </span>
-          <span className="text-muted-foreground">
+          <span className="text-muted-foreground hidden sm:inline">
             <span className="text-green-500 font-medium">
               {viewedFiles.size}
             </span>
@@ -636,12 +699,14 @@ const DiffPanel = memo(function DiffPanel() {
             </span>
           </span>
           {files.length - viewedFiles.size > 0 && (
-            <span className="text-yellow-500">
+            <span className="text-yellow-500 hidden md:inline">
               {files.length - viewedFiles.size} left
             </span>
           )}
           {selectedFiles.size > 0 && (
-            <span className="text-blue-400">{selectedFiles.size} selected</span>
+            <span className="text-blue-400 hidden md:inline">
+              {selectedFiles.size} selected
+            </span>
           )}
           {canWrite && <SubmitReviewDropdown />}
         </div>

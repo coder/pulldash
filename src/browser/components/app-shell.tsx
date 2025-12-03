@@ -174,8 +174,10 @@ export function AppShell() {
         </div>
 
         {/* PR URL input & User menu */}
-        <div className="h-full flex items-center gap-2 pr-3 app-no-drag">
-          <PRUrlInput />
+        <div className="h-full flex items-center gap-2 pr-2 sm:pr-3 app-no-drag">
+          <div className="hidden sm:block">
+            <PRUrlInput />
+          </div>
           <UserMenuButton />
         </div>
       </div>

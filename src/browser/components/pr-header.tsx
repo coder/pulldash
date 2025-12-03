@@ -4,6 +4,7 @@ import {
   ExternalLink,
   Copy,
   Check,
+  Menu,
 } from "lucide-react";
 import { memo, useState, useCallback } from "react";
 import { cn } from "../cn";
@@ -14,12 +15,14 @@ interface PRHeaderProps {
   pr: PullRequest;
   owner: string;
   repo: string;
+  onToggleSidebar?: () => void;
 }
 
 export const PRHeader = memo(function PRHeader({
   pr,
   owner,
   repo,
+  onToggleSidebar,
 }: PRHeaderProps) {
   const stateIcon = pr.merged ? (
     <GitMerge className="w-3.5 h-3.5" />
@@ -46,7 +49,18 @@ export const PRHeader = memo(function PRHeader({
       : "bg-red-600";
 
   return (
-    <header className="border-b border-border px-4 py-2 flex items-center gap-3 shrink-0 bg-card/30">
+    <header className="border-b border-border px-2 sm:px-4 py-2 flex items-center gap-2 sm:gap-3 shrink-0 bg-card/30">
+      {/* Mobile menu button */}
+      {onToggleSidebar && (
+        <button
+          onClick={onToggleSidebar}
+          className="p-1.5 rounded-md hover:bg-muted transition-colors md:hidden shrink-0"
+          title="Toggle file list"
+        >
+          <Menu className="w-4 h-4" />
+        </button>
+      )}
+
       {/* State Badge */}
       <span
         className={cn(
@@ -55,15 +69,15 @@ export const PRHeader = memo(function PRHeader({
         )}
       >
         {stateIcon}
-        {stateLabel}
+        <span className="hidden xs:inline">{stateLabel}</span>
       </span>
 
-      {/* Repo Link */}
+      {/* Repo Link - hidden on smallest screens */}
       <a
         href={`https://github.com/${owner}/${repo}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-xs text-muted-foreground hover:text-blue-400 transition-colors font-mono shrink-0"
+        className="text-xs text-muted-foreground hover:text-blue-400 transition-colors font-mono shrink-0 hidden sm:inline"
       >
         {owner}/{repo}
       </a>
@@ -75,9 +89,9 @@ export const PRHeader = memo(function PRHeader({
       </h1>
 
       {/* Right side info */}
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Branch info */}
-        <div className="text-[11px] text-muted-foreground font-mono hidden sm:flex items-center gap-1">
+        <div className="text-[11px] text-muted-foreground font-mono hidden lg:flex items-center gap-1">
           <BranchBadge branch={pr.base.ref} />
           <span>←</span>
           <BranchBadge branch={pr.head.ref} />

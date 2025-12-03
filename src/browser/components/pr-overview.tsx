@@ -229,12 +229,10 @@ export const PROverview = memo(function PROverview() {
           github
             .getPRTimeline(owner, repo, pr.number)
             .catch(() => [] as TimelineEvent[]),
-          github
-            .getReviewThreads(owner, repo, pr.number)
-            .catch(() => ({
-              threads: [] as ReviewThread[],
-              viewerPermission: null,
-            })),
+          github.getReviewThreads(owner, repo, pr.number).catch(() => ({
+            threads: [] as ReviewThread[],
+            viewerPermission: null,
+          })),
         ]);
 
         setReviews(reviewsData);
@@ -678,8 +676,8 @@ export const PROverview = memo(function PROverview() {
   return (
     <div className="flex-1 overflow-auto themed-scrollbar bg-background">
       {/* Tabs */}
-      <div className="border-b border-border">
-        <div className="max-w-[1280px] mx-auto px-6">
+      <div className="border-b border-border overflow-x-auto">
+        <div className="max-w-[1280px] mx-auto px-2 sm:px-6">
           <div className="flex items-center gap-0 py-0">
             <TabButton
               active={activeTab === "conversation"}
@@ -707,10 +705,10 @@ export const PROverview = memo(function PROverview() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-[1280px] mx-auto px-6 py-6">
-        <div className="flex gap-6">
+      <div className="max-w-[1280px] mx-auto px-3 sm:px-6 py-4 sm:py-6">
+        <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
           {/* Left Column - Main Content */}
-          <div className="flex-1 min-w-0 space-y-4">
+          <div className="flex-1 min-w-0 space-y-4 order-2 lg:order-1">
             {activeTab === "conversation" && (
               <>
                 {/* PR Description */}
@@ -1057,7 +1055,7 @@ export const PROverview = memo(function PROverview() {
           </div>
 
           {/* Right Column - Sidebar */}
-          <div className="w-[296px] shrink-0 space-y-4">
+          <div className="w-full lg:w-[296px] shrink-0 space-y-4 order-1 lg:order-2">
             {/* Reviewers */}
             <SidebarSection
               title="Reviewers"
@@ -1403,14 +1401,14 @@ function TabButton({
     <button
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors",
+        "flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
         active
           ? "border-orange-500 text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
       )}
     >
       {icon}
-      <span>{label}</span>
+      <span className="hidden xs:inline sm:inline">{label}</span>
       {count !== undefined && count > 0 && (
         <span
           className={cn(

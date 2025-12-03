@@ -2,6 +2,51 @@
 @import "tw-animate-css";
 @import "./ui/diff/theme.css";
 
+/* Custom xs breakpoint for extra small screens (between 0 and sm) */
+@custom-media --xs-screen (min-width: 420px);
+
+@layer utilities {
+  @media (--xs-screen) {
+    .xs\:inline {
+      display: inline !important;
+    }
+    .xs\:inline-block {
+      display: inline-block !important;
+    }
+    .xs\:flex {
+      display: flex !important;
+    }
+    .xs\:hidden {
+      display: none !important;
+    }
+    .hidden.xs\:inline {
+      display: none;
+    }
+    .hidden.xs\:inline-block {
+      display: none;
+    }
+    .hidden.xs\:flex {
+      display: none;
+    }
+  }
+}
+
+/* Extra small screen utilities */
+@media (min-width: 420px) {
+  .xs\:inline {
+    display: inline !important;
+  }
+  .xs\:inline-block {
+    display: inline-block !important;
+  }
+  .xs\:flex {
+    display: flex !important;
+  }
+  .xs\:hidden {
+    display: none !important;
+  }
+}
+
 /* Geist Font Declarations */
 @font-face {
   font-family: "Geist";
