@@ -20,7 +20,9 @@ import {
   XCircle,
   AlertCircle,
   MessageSquare,
+  Clock,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../cn";
 import { Skeleton } from "../ui/skeleton";
 import { UserHoverCard } from "../ui/user-hover-card";
@@ -875,10 +877,8 @@ export function Home() {
               )}
             </span>
             <div className="flex items-center gap-2">
-              {prList.lastFetchedAt && (
-                <span className="text-[10px] text-muted-foreground">
-                  Updated {getTimeAgo(new Date(prList.lastFetchedAt))}
-                </span>
+              {prList.lastFetchedAt && !loadingPrs && (
+                <RefreshCountdown lastFetchedAt={prList.lastFetchedAt} />
               )}
               <button
                 onClick={refreshPRList}
@@ -887,7 +887,7 @@ export function Home() {
                   "p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground",
                   loadingPrs && "opacity-50"
                 )}
-                title="Refresh (auto-refreshes every 60s)"
+                title="Refresh"
               >
                 <RefreshCw
                   className={cn("w-3.5 h-3.5", loadingPrs && "animate-spin")}
@@ -1071,75 +1071,178 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
             ? "Approval needed"
             : "Running");
 
+    // Group checks by state for tooltip display
+    const checks = pr.ciChecks || [];
+    const successChecks = checks.filter((c) => c.state === "success");
+    const failureChecks = checks.filter((c) => c.state === "failure");
+    const pendingChecks = checks.filter(
+      (c) => c.state !== "success" && c.state !== "failure"
+    );
+
+    const TooltipChecks = () => (
+      <div className="min-w-[200px] max-w-[300px]">
+        <div className="font-medium text-xs mb-2 pb-1.5 border-b border-border flex items-center gap-2">
+          {pr.ciStatus === "success" && (
+            <>
+              <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+              <span>All checks passed</span>
+            </>
+          )}
+          {pr.ciStatus === "failure" && (
+            <>
+              <XCircle className="w-3.5 h-3.5 text-red-500" />
+              <span>Some checks failed</span>
+            </>
+          )}
+          {pr.ciStatus === "pending" && (
+            <>
+              <Clock className="w-3.5 h-3.5 text-yellow-500" />
+              <span>Checks in progress</span>
+            </>
+          )}
+          {pr.ciStatus === "action_required" && (
+            <>
+              <AlertCircle className="w-3.5 h-3.5 text-yellow-500" />
+              <span>Action required</span>
+            </>
+          )}
+        </div>
+        {checks.length > 0 ? (
+          <div className="space-y-2">
+            {/* Failed checks first */}
+            {failureChecks.length > 0 && (
+              <div className="space-y-1">
+                {failureChecks.map((c) => (
+                  <div
+                    key={c.name}
+                    className="flex items-center gap-2 text-[11px]"
+                  >
+                    <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                    <span className="truncate text-red-400">{c.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Pending checks */}
+            {pendingChecks.length > 0 && (
+              <div className="space-y-1">
+                {pendingChecks.map((c) => (
+                  <div
+                    key={c.name}
+                    className="flex items-center gap-2 text-[11px]"
+                  >
+                    <Circle className="w-3 h-3 text-yellow-500 shrink-0" />
+                    <span className="truncate text-muted-foreground">
+                      {c.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Successful checks (collapsed if many) */}
+            {successChecks.length > 0 && (
+              <div className="space-y-1">
+                {successChecks.length <= 5 ? (
+                  successChecks.map((c) => (
+                    <div
+                      key={c.name}
+                      className="flex items-center gap-2 text-[11px]"
+                    >
+                      <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                      <span className="truncate text-muted-foreground">
+                        {c.name}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                    <span>{successChecks.length} checks passed</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-[11px] text-muted-foreground">
+            {pr.ciStatus === "action_required"
+              ? "Workflow approval required from a maintainer"
+              : "No detailed check information available"}
+          </div>
+        )}
+      </div>
+    );
+
+    const badgeContent = (className: string, icon: React.ReactNode) => (
+      <span
+        className={cn(
+          "shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border cursor-default",
+          className
+        )}
+      >
+        {icon}
+        <span className="hidden sm:inline max-w-[100px] truncate">
+          {summary}
+        </span>
+      </span>
+    );
+
     switch (pr.ciStatus) {
       case "success":
         return (
-          <span
-            title={
-              pr.ciChecks
-                ?.map(
-                  (c) =>
-                    `${c.state === "success" ? "✓" : c.state === "failure" ? "✗" : "○"} ${c.name}`
-                )
-                .join("\n") || "CI passed"
-            }
-            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-green-500/15 text-green-500 border border-green-500/30"
-          >
-            <CheckCircle2 className="w-3 h-3" />
-            <span className="hidden sm:inline max-w-[100px] truncate">
-              {summary}
-            </span>
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {badgeContent(
+                "bg-green-500/15 text-green-500 border-green-500/30",
+                <CheckCircle2 className="w-3 h-3" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start">
+              <TooltipChecks />
+            </TooltipContent>
+          </Tooltip>
         );
       case "failure":
         return (
-          <span
-            title={
-              pr.ciChecks
-                ?.map(
-                  (c) =>
-                    `${c.state === "success" ? "✓" : c.state === "failure" ? "✗" : "○"} ${c.name}`
-                )
-                .join("\n") || "CI failed"
-            }
-            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-red-500/15 text-red-500 border border-red-500/30"
-          >
-            <XCircle className="w-3 h-3" />
-            <span className="hidden sm:inline max-w-[100px] truncate">
-              {summary}
-            </span>
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {badgeContent(
+                "bg-red-500/15 text-red-500 border-red-500/30",
+                <XCircle className="w-3 h-3" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start">
+              <TooltipChecks />
+            </TooltipContent>
+          </Tooltip>
         );
       case "pending":
         return (
-          <span
-            title={
-              pr.ciChecks
-                ?.map(
-                  (c) =>
-                    `${c.state === "success" ? "✓" : c.state === "failure" ? "✗" : "○"} ${c.name}`
-                )
-                .join("\n") || "CI running"
-            }
-            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-yellow-500/15 text-yellow-500 border border-yellow-500/30"
-          >
-            <Circle className="w-3 h-3 animate-pulse" />
-            <span className="hidden sm:inline max-w-[100px] truncate">
-              {summary}
-            </span>
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {badgeContent(
+                "bg-yellow-500/15 text-yellow-500 border-yellow-500/30",
+                <Circle className="w-3 h-3 animate-pulse" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start">
+              <TooltipChecks />
+            </TooltipContent>
+          </Tooltip>
         );
       case "action_required":
         return (
-          <span
-            title="Workflow approval required from a maintainer"
-            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-yellow-500/15 text-yellow-500 border border-yellow-500/30"
-          >
-            <AlertCircle className="w-3 h-3" />
-            <span className="hidden sm:inline max-w-[100px] truncate">
-              {summary}
-            </span>
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {badgeContent(
+                "bg-yellow-500/15 text-yellow-500 border-yellow-500/30",
+                <AlertCircle className="w-3 h-3" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start">
+              <TooltipChecks />
+            </TooltipContent>
+          </Tooltip>
         );
       default:
         return null;
@@ -1237,6 +1340,39 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
         </div>
       </div>
     </button>
+  );
+}
+
+// ============================================================================
+// Refresh Countdown
+// ============================================================================
+
+const REFRESH_INTERVAL_SECONDS = 60;
+
+function RefreshCountdown({ lastFetchedAt }: { lastFetchedAt: number }) {
+  const [secondsRemaining, setSecondsRemaining] = useState(() => {
+    const elapsed = Math.floor((Date.now() - lastFetchedAt) / 1000);
+    return Math.max(0, REFRESH_INTERVAL_SECONDS - elapsed);
+  });
+
+  useEffect(() => {
+    // Recalculate on mount or when lastFetchedAt changes
+    const elapsed = Math.floor((Date.now() - lastFetchedAt) / 1000);
+    setSecondsRemaining(Math.max(0, REFRESH_INTERVAL_SECONDS - elapsed));
+
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - lastFetchedAt) / 1000);
+      const remaining = Math.max(0, REFRESH_INTERVAL_SECONDS - elapsed);
+      setSecondsRemaining(remaining);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [lastFetchedAt]);
+
+  return (
+    <span className="text-[10px] text-muted-foreground tabular-nums">
+      Refreshing in {secondsRemaining}s
+    </span>
   );
 }
 

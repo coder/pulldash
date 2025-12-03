@@ -30,6 +30,7 @@ import {
   ListOrdered,
   Quote,
   Heading2,
+  Smile,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 
@@ -280,6 +281,26 @@ interface MarkdownEditorProps {
   disabled?: boolean;
 }
 
+// GitHub-supported emoji reactions
+const EMOJI_LIST = [
+  { emoji: "😄", name: "smile" },
+  { emoji: "😕", name: "confused" },
+  { emoji: "❤️", name: "heart" },
+  { emoji: "👀", name: "eyes" },
+  { emoji: "🚀", name: "rocket" },
+  { emoji: "👍", name: "+1" },
+  { emoji: "👎", name: "-1" },
+  { emoji: "🎉", name: "hooray" },
+  { emoji: "🔥", name: "fire" },
+  { emoji: "💯", name: "100" },
+  { emoji: "✨", name: "sparkles" },
+  { emoji: "⚡", name: "zap" },
+  { emoji: "🐛", name: "bug" },
+  { emoji: "🔧", name: "wrench" },
+  { emoji: "📝", name: "memo" },
+  { emoji: "✅", name: "check" },
+];
+
 export const MarkdownEditor = memo(function MarkdownEditor({
   value,
   onChange,
@@ -292,6 +313,14 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   const [activeTab, setActiveTab] = useState<"write" | "preview">("write");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const anchorRef = useRef<HTMLSpanElement>(null);
+
+  // Emoji picker state
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
+  const [emojiPickerPosition, setEmojiPickerPosition] = useState({
+    top: 0,
+    left: 0,
+  });
 
   // Mention autocomplete state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -648,6 +677,40 @@ export const MarkdownEditor = memo(function MarkdownEditor({
     }
   }, [value, onChange]);
 
+  // Insert emoji at cursor position
+  const insertEmoji = useCallback(
+    (emoji: string) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+
+      const newValue = value.substring(0, start) + emoji + value.substring(end);
+      onChange(newValue);
+
+      setShowEmojiPicker(false);
+
+      setTimeout(() => {
+        const newCursorPos = start + emoji.length;
+        textarea.focus();
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      }, 0);
+    },
+    [value, onChange]
+  );
+
+  const handleToggleEmojiPicker = useCallback(() => {
+    if (!showEmojiPicker && emojiButtonRef.current) {
+      const rect = emojiButtonRef.current.getBoundingClientRect();
+      setEmojiPickerPosition({
+        top: rect.bottom + 4,
+        left: Math.max(8, rect.right - 200), // Align right edge, with min left margin
+      });
+    }
+    setShowEmojiPicker(!showEmojiPicker);
+  }, [showEmojiPicker]);
+
   const toolbarButtons = [
     {
       icon: Heading2,
@@ -770,6 +833,52 @@ export const MarkdownEditor = memo(function MarkdownEditor({
                   </TooltipContent>
                 </Tooltip>
               )
+            )}
+            {/* Emoji picker button */}
+            <div className="w-px h-4 bg-border mx-1" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  ref={emojiButtonRef}
+                  type="button"
+                  onClick={handleToggleEmojiPicker}
+                  className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  <Smile className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
+                Insert emoji
+              </TooltipContent>
+            </Tooltip>
+
+            {/* Emoji picker dropdown */}
+            {showEmojiPicker && (
+              <>
+                <div
+                  className="fixed inset-0 z-[100]"
+                  onClick={() => setShowEmojiPicker(false)}
+                />
+                <div
+                  className="fixed p-2 bg-card border border-border rounded-lg shadow-xl z-[101] grid grid-cols-8 gap-1"
+                  style={{
+                    top: emojiPickerPosition.top,
+                    left: emojiPickerPosition.left,
+                  }}
+                >
+                  {EMOJI_LIST.map(({ emoji, name }) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => insertEmoji(emoji)}
+                      className="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-muted transition-colors"
+                      title={name}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         )}

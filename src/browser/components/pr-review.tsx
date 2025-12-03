@@ -2526,20 +2526,22 @@ const CommentItem = memo(function CommentItem({
               </div>
 
               <div className="flex items-center gap-3 mt-2">
-                <button
-                  onClick={() => store.startReplying(comment.id)}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  title="Reply (r)"
-                >
-                  <Reply className="w-3 h-3" />
-                  Reply
-                  {isFocused && (
-                    <kbd className="ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono">
-                      r
-                    </kbd>
-                  )}
-                </button>
-                {isOwnComment && (
+                {canWrite && (
+                  <button
+                    onClick={() => store.startReplying(comment.id)}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    title="Reply (r)"
+                  >
+                    <Reply className="w-3 h-3" />
+                    Reply
+                    {isFocused && (
+                      <kbd className="ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono">
+                        r
+                      </kbd>
+                    )}
+                  </button>
+                )}
+                {isOwnComment && canWrite && (
                   <>
                     <button
                       onClick={() => store.startEditing(comment.id)}

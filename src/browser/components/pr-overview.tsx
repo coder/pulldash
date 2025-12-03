@@ -750,6 +750,53 @@ export const PROverview = memo(function PROverview() {
     [github, owner, repo]
   );
 
+  // Thread actions (reply, resolve, unresolve)
+  const handleReplyToThread = useCallback(
+    async (threadId: string, commentId: number, body: string) => {
+      try {
+        await github.createPRComment(owner, repo, pr.number, body, {
+          reply_to_id: commentId,
+        });
+        // Refresh threads to show new comment
+        const result = await github.getReviewThreads(owner, repo, pr.number);
+        setReviewThreads(result.threads);
+      } catch (error) {
+        console.error("Failed to reply to thread:", error);
+      }
+    },
+    [github, owner, repo, pr.number]
+  );
+
+  const handleResolveThread = useCallback(
+    async (threadId: string) => {
+      try {
+        await github.resolveThread(threadId);
+        // Update local state
+        setReviewThreads((prev) =>
+          prev.map((t) => (t.id === threadId ? { ...t, isResolved: true } : t))
+        );
+      } catch (error) {
+        console.error("Failed to resolve thread:", error);
+      }
+    },
+    [github]
+  );
+
+  const handleUnresolveThread = useCallback(
+    async (threadId: string) => {
+      try {
+        await github.unresolveThread(threadId);
+        // Update local state
+        setReviewThreads((prev) =>
+          prev.map((t) => (t.id === threadId ? { ...t, isResolved: false } : t))
+        );
+      } catch (error) {
+        console.error("Failed to unresolve thread:", error);
+      }
+    },
+    [github]
+  );
+
   // Calculate check status
   const checkStatus = calculateCheckStatus(
     checks,
@@ -859,8 +906,10 @@ export const PROverview = memo(function PROverview() {
                   body={pr.body}
                   isAuthor
                   reactions={reactions.issue}
-                  onAddReaction={handleAddPRReaction}
-                  onRemoveReaction={handleRemovePRReaction}
+                  onAddReaction={canWrite ? handleAddPRReaction : undefined}
+                  onRemoveReaction={
+                    canWrite ? handleRemovePRReaction : undefined
+                  }
                   currentUser={currentUser}
                 />
 
@@ -966,11 +1015,20 @@ export const PROverview = memo(function PROverview() {
                           createdAt={comment.created_at}
                           body={comment.body}
                           reactions={reactions[`comment-${comment.id}`]}
-                          onAddReaction={(content) =>
-                            handleAddCommentReaction(comment.id, content)
+                          onAddReaction={
+                            canWrite
+                              ? (content) =>
+                                  handleAddCommentReaction(comment.id, content)
+                              : undefined
                           }
-                          onRemoveReaction={(reactionId) =>
-                            handleRemoveCommentReaction(comment.id, reactionId)
+                          onRemoveReaction={
+                            canWrite
+                              ? (reactionId) =>
+                                  handleRemoveCommentReaction(
+                                    comment.id,
+                                    reactionId
+                                  )
+                              : undefined
                           }
                           currentUser={currentUser}
                         />
@@ -1000,6 +1058,11 @@ export const PROverview = memo(function PROverview() {
                           thread={entry.data}
                           owner={owner}
                           repo={repo}
+                          onReply={handleReplyToThread}
+                          onResolve={handleResolveThread}
+                          onUnresolve={handleUnresolveThread}
+                          canWrite={canWrite}
+                          currentUser={currentUser}
                         />
                       );
                     }
@@ -2099,17 +2162,60 @@ function ReviewThreadBox({
   thread,
   owner,
   repo,
+  onReply,
+  onResolve,
+  onUnresolve,
+  canWrite,
+  currentUser,
 }: {
   thread: ReviewThread;
   owner: string;
   repo: string;
+  onReply?: (
+    threadId: string,
+    commentId: number,
+    body: string
+  ) => Promise<void>;
+  onResolve?: (threadId: string) => Promise<void>;
+  onUnresolve?: (threadId: string) => Promise<void>;
+  canWrite?: boolean;
+  currentUser?: string | null;
 }) {
+  const [replyText, setReplyText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [showReplyBox, setShowReplyBox] = useState(false);
   const comments = thread.comments.nodes;
   if (comments.length === 0) return null;
 
   const firstComment = comments[0];
   const filePath = firstComment.path;
   const diffHunk = firstComment.diffHunk;
+
+  const handleSubmitReply = async () => {
+    if (!onReply || submitting || !replyText.trim()) return;
+    setSubmitting(true);
+    try {
+      const lastComment = comments[comments.length - 1];
+      await onReply(thread.id, lastComment.databaseId, replyText.trim());
+      setReplyText("");
+      setShowReplyBox(false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      handleSubmitReply();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setShowReplyBox(false);
+      setReplyText("");
+    }
+  };
 
   // Parse diff hunk to get line numbers and content
   const parseDiffHunk = (hunk: string | null) => {
@@ -2128,7 +2234,6 @@ function ReviewThreadBox({
 
     for (const line of lines) {
       if (line.startsWith("@@")) {
-        // Parse hunk header like "@@ -20,4 +20,4 @@"
         const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
         if (match) {
           oldLine = parseInt(match[1], 10);
@@ -2142,7 +2247,6 @@ function ReviewThreadBox({
         result.push({ type: "deletion", content: line.slice(1), oldLine });
         oldLine++;
       } else {
-        // Context line (starts with space or is empty)
         const content = line.startsWith(" ") ? line.slice(1) : line;
         result.push({ type: "context", content, oldLine, newLine });
         oldLine++;
@@ -2158,7 +2262,7 @@ function ReviewThreadBox({
   return (
     <div
       className={cn(
-        "border rounded-md overflow-hidden",
+        "border rounded-md overflow-hidden ml-8", // Indented to show as nested under review
         thread.isResolved ? "border-muted opacity-60" : "border-border"
       )}
     >
@@ -2235,10 +2339,16 @@ function ReviewThreadBox({
         </div>
       )}
 
-      {/* Comments in thread */}
-      <div className="divide-y divide-border">
-        {comments.map((comment) => (
-          <div key={comment.id} className="p-4">
+      {/* All comments in thread (no nesting - all at same level) */}
+      <div>
+        {comments.map((comment, idx) => (
+          <div
+            key={comment.id}
+            className={cn(
+              "p-4",
+              idx < comments.length - 1 && "border-b border-border"
+            )}
+          >
             <div className="flex items-center gap-2 mb-2 text-sm">
               {comment.author && (
                 <>
@@ -2246,7 +2356,7 @@ function ReviewThreadBox({
                     <img
                       src={comment.author.avatarUrl}
                       alt={comment.author.login}
-                      className="w-5 h-5 rounded-full cursor-pointer"
+                      className="w-6 h-6 rounded-full cursor-pointer"
                     />
                   </UserHoverCard>
                   <UserHoverCard login={comment.author.login}>
@@ -2260,30 +2370,152 @@ function ReviewThreadBox({
                 {getTimeAgo(new Date(comment.createdAt))}
               </span>
             </div>
-            <div className="pl-7">
+            <div className="mt-2">
               <Markdown>{comment.body}</Markdown>
+            </div>
+            {/* Emoji reactions placeholder */}
+            <div className="mt-3">
+              <button className="inline-flex items-center justify-center w-7 h-7 text-xs rounded-full border border-border hover:border-blue-500/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                <Smile className="w-4 h-4" />
+              </button>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Reply section placeholder */}
-      <div className="flex items-center gap-2 px-4 py-2 bg-card/30 border-t border-border">
-        <input
-          type="text"
-          placeholder="Reply..."
-          className="flex-1 bg-transparent text-sm text-muted-foreground placeholder:text-muted-foreground/50 outline-none cursor-not-allowed"
-          disabled
-        />
-        {!thread.isResolved && (
-          <button
-            className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded border border-border hover:bg-muted cursor-not-allowed"
-            disabled
-          >
-            Resolve conversation
-          </button>
-        )}
-      </div>
+      {/* Reply box and actions */}
+      {canWrite && (
+        <div className="p-4 bg-card/30 border-t border-border">
+          {showReplyBox ? (
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                {currentUser && (
+                  <img
+                    src={`https://github.com/${currentUser}.png`}
+                    alt={currentUser}
+                    className="w-6 h-6 rounded-full shrink-0 mt-1"
+                  />
+                )}
+                <div className="flex-1">
+                  <MarkdownEditor
+                    value={replyText}
+                    onChange={setReplyText}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Write a reply..."
+                    minHeight="80px"
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {!thread.isResolved && (
+                    <button
+                      onClick={async () => {
+                        if (!onResolve || resolving) return;
+                        setResolving(true);
+                        try {
+                          await onResolve(thread.id);
+                        } finally {
+                          setResolving(false);
+                        }
+                      }}
+                      disabled={resolving}
+                      className="text-xs text-muted-foreground hover:text-foreground px-2 py-1.5 rounded border border-border hover:bg-muted disabled:opacity-50"
+                    >
+                      {resolving ? "..." : "Resolve conversation"}
+                    </button>
+                  )}
+                  {thread.isResolved && (
+                    <button
+                      onClick={async () => {
+                        if (!onUnresolve || resolving) return;
+                        setResolving(true);
+                        try {
+                          await onUnresolve(thread.id);
+                        } finally {
+                          setResolving(false);
+                        }
+                      }}
+                      disabled={resolving}
+                      className="text-xs text-muted-foreground hover:text-foreground px-2 py-1.5 rounded border border-border hover:bg-muted disabled:opacity-50"
+                    >
+                      {resolving ? "..." : "Unresolve"}
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setShowReplyBox(false);
+                      setReplyText("");
+                    }}
+                    className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSubmitReply}
+                    disabled={!replyText.trim() || submitting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                  >
+                    {submitting ? "Sending..." : "Reply"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              {currentUser && (
+                <img
+                  src={`https://github.com/${currentUser}.png`}
+                  alt={currentUser}
+                  className="w-6 h-6 rounded-full shrink-0"
+                />
+              )}
+              <button
+                onClick={() => setShowReplyBox(true)}
+                className="flex-1 text-left px-3 py-2 text-sm text-muted-foreground bg-background border border-border rounded-md hover:border-blue-500/50 transition-colors"
+              >
+                Reply...
+              </button>
+              {!thread.isResolved ? (
+                <button
+                  onClick={async () => {
+                    if (!onResolve || resolving) return;
+                    setResolving(true);
+                    try {
+                      await onResolve(thread.id);
+                    } finally {
+                      setResolving(false);
+                    }
+                  }}
+                  disabled={resolving}
+                  className="text-xs px-3 py-2 rounded-md border border-border hover:bg-muted disabled:opacity-50 transition-colors"
+                >
+                  {resolving ? "..." : "Resolve conversation"}
+                </button>
+              ) : (
+                <button
+                  onClick={async () => {
+                    if (!onUnresolve || resolving) return;
+                    setResolving(true);
+                    try {
+                      await onUnresolve(thread.id);
+                    } finally {
+                      setResolving(false);
+                    }
+                  }}
+                  disabled={resolving}
+                  className="text-xs px-3 py-2 rounded-md border border-border hover:bg-muted disabled:opacity-50 transition-colors"
+                >
+                  {resolving ? "..." : "Unresolve"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
