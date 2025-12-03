@@ -1,13 +1,13 @@
 <h1>
   <img src="src/browser/logo.svg" alt="pulldash logo" width="32" height="32" align="center">
-  pulldash
+  Pulldash
 </h1>
 
-The fastest way to review pull requests—a native desktop app that makes massive PRs feel instant.
+The fastest way to review pull requests that makes massive PRs feel instant.
 
-- Keyboard-driven workflow: navigate, comment, and approve without touching your mouse
-- Handles giant diffs smoothly: virtualized rendering keeps you at 60fps even on 10k+ line changes
-- Uses your GitHub credentials: no app install on GitHub
+- Keybord-driven: navigate, comment, and approve without touching your mouse
+- Performant: giant diffs render smoothly, virtualized rendering keeps you at 60fps even on 10k+ line changes
+- Local or hosted: download the desktop app to avoid sending your credentials anywhere
 
 ## Try It
 
@@ -15,9 +15,17 @@ Head to [pulldash.com](https://pulldash.com) to explore pull-requests (no auth r
 
 [Download for Desktop](https://github.com/coder/pulldash/releases).
 
+## Features
+
+- Customize your PR list with search queries:
+
 ## Why Not GitHub's Web UI?
 
-GitHub's PR interface works, but it wasn't built for speed:
+- Lack of native PR tracking
+
+GitHub's PR interface is slow, especially for large PRs.
+
+GitHub's PR interface is slow, especially for large PRs.
 
 | Issue                   | GitHub Web                    | Pulldash                            |
 | ----------------------- | ----------------------------- | ----------------------------------- |
@@ -25,6 +33,8 @@ GitHub's PR interface works, but it wasn't built for speed:
 | **Keyboard navigation** | Limited shortcuts             | ✓ Full keyboard-driven workflow     |
 | **Multi-file review**   | Constant page loads           | ✓ Instant tab switching             |
 | **Context switching**   | Browser tabs everywhere       | ✓ Dedicated app, focused experience |
+
+GitHub supports [CORS](https://docs.github.com/en/rest/using-the-rest-api/using-cors-and-jsonp-to-make-cross-origin-requests) on their API, making Pulldash a simple UI.
 
 ## Keyboard Shortcuts
 

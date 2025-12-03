@@ -67,6 +67,13 @@ export interface PRSearchResult {
   lastCommitAt?: string | null;
   viewerLastReviewAt?: string | null;
   hasNewChanges?: boolean;
+  // CI status
+  ciStatus?: "pending" | "success" | "failure" | "none";
+  ciSummary?: string; // e.g. "2/3 checks passed" or "Build failed"
+  ciChecks?: Array<{
+    name: string;
+    state: "pending" | "success" | "failure";
+  }>;
 }
 
 export interface CheckStatus {
@@ -82,6 +89,12 @@ export interface PREnrichment {
   lastCommitAt: string | null;
   viewerLastReviewAt: string | null;
   hasNewChanges: boolean;
+  ciStatus: "pending" | "success" | "failure" | "none";
+  ciSummary: string;
+  ciChecks: Array<{
+    name: string;
+    state: "pending" | "success" | "failure";
+  }>;
 }
 
 export interface ReviewThread {
@@ -1901,6 +1914,23 @@ function createGitHubStore() {
             nodes {
               commit {
                 committedDate
+                statusCheckRollup {
+                  state
+                  contexts(first: 50) {
+                    nodes {
+                      __typename
+                      ... on CheckRun {
+                        name
+                        conclusion
+                        status
+                      }
+                      ... on StatusContext {
+                        context
+                        state
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -1913,6 +1943,19 @@ function createGitHubStore() {
       )
       .join("\n");
 
+    type CheckContext =
+      | {
+          __typename: "CheckRun";
+          name: string;
+          conclusion: string | null;
+          status: string;
+        }
+      | {
+          __typename: "StatusContext";
+          context: string;
+          state: string;
+        };
+
     const data = await batcher.query<
       Record<
         string,
@@ -1922,7 +1965,24 @@ function createGitHubStore() {
             changedFiles: number;
             additions: number;
             deletions: number;
-            commits: { nodes: Array<{ commit: { committedDate: string } }> };
+            commits: {
+              nodes: Array<{
+                commit: {
+                  committedDate: string;
+                  statusCheckRollup: {
+                    state:
+                      | "EXPECTED"
+                      | "ERROR"
+                      | "FAILURE"
+                      | "PENDING"
+                      | "SUCCESS";
+                    contexts: {
+                      nodes: CheckContext[];
+                    };
+                  } | null;
+                };
+              }>;
+            };
             viewerLatestReview: { submittedAt: string } | null;
           } | null;
         }
@@ -1934,13 +1994,65 @@ function createGitHubStore() {
     prs.forEach((pr, idx) => {
       const result = data[`pr${idx}`]?.pullRequest;
       if (result) {
-        const lastCommitAt =
-          result.commits.nodes[0]?.commit.committedDate || null;
+        const lastCommit = result.commits.nodes[0]?.commit;
+        const lastCommitAt = lastCommit?.committedDate || null;
         const viewerLastReviewAt =
           result.viewerLatestReview?.submittedAt || null;
         let hasNewChanges = false;
         if (viewerLastReviewAt && lastCommitAt) {
           hasNewChanges = new Date(lastCommitAt) > new Date(viewerLastReviewAt);
+        }
+
+        // Map GraphQL status to our CI status
+        const statusState = lastCommit?.statusCheckRollup?.state;
+        let ciStatus: PREnrichment["ciStatus"] = "none";
+        if (statusState) {
+          if (statusState === "SUCCESS") {
+            ciStatus = "success";
+          } else if (statusState === "FAILURE" || statusState === "ERROR") {
+            ciStatus = "failure";
+          } else if (statusState === "PENDING" || statusState === "EXPECTED") {
+            ciStatus = "pending";
+          }
+        }
+
+        // Parse check contexts for detailed info
+        const contexts = lastCommit?.statusCheckRollup?.contexts?.nodes || [];
+        const ciChecks: PREnrichment["ciChecks"] = contexts.map((ctx) => {
+          if (ctx.__typename === "CheckRun") {
+            let state: "pending" | "success" | "failure" = "pending";
+            if (ctx.status === "COMPLETED") {
+              state = ctx.conclusion === "SUCCESS" ? "success" : "failure";
+            }
+            return { name: ctx.name, state };
+          } else {
+            // StatusContext
+            const state =
+              ctx.state === "SUCCESS"
+                ? "success"
+                : ctx.state === "FAILURE" || ctx.state === "ERROR"
+                  ? "failure"
+                  : "pending";
+            return { name: ctx.context, state };
+          }
+        });
+
+        // Build summary
+        let ciSummary = "";
+        if (ciChecks.length > 0) {
+          const passed = ciChecks.filter((c) => c.state === "success").length;
+          const failed = ciChecks.filter((c) => c.state === "failure").length;
+          const pending = ciChecks.filter((c) => c.state === "pending").length;
+
+          if (failed > 0) {
+            const failedCheck = ciChecks.find((c) => c.state === "failure");
+            ciSummary = failedCheck ? failedCheck.name : `${failed} failed`;
+          } else if (pending > 0) {
+            const pendingCheck = ciChecks.find((c) => c.state === "pending");
+            ciSummary = pendingCheck ? pendingCheck.name : `${pending} running`;
+          } else {
+            ciSummary = `${passed}/${ciChecks.length} passed`;
+          }
         }
 
         enrichmentMap.set(`${pr.owner}/${pr.repo}/${pr.number}`, {
@@ -1950,6 +2062,9 @@ function createGitHubStore() {
           lastCommitAt,
           viewerLastReviewAt,
           hasNewChanges,
+          ciStatus,
+          ciSummary,
+          ciChecks,
         });
       }
     });

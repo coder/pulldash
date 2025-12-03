@@ -15,6 +15,10 @@ import {
   Users,
   RefreshCw,
   Github,
+  Circle,
+  CheckCircle2,
+  XCircle,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "../cn";
 import { Skeleton } from "../ui/skeleton";
@@ -55,7 +59,12 @@ interface SearchResult {
 }
 
 // Filter mode type
-type FilterMode = "review-requested" | "authored" | "involves" | "all";
+type FilterMode =
+  | "review-requested"
+  | "reviewed"
+  | "authored"
+  | "involves"
+  | "all";
 
 // Special constant for "All Repos" global filter
 const ALL_REPOS_KEY = "__all_repos__";
@@ -130,6 +139,8 @@ function getModeFilter(mode: FilterMode): string {
   switch (mode) {
     case "review-requested":
       return "review-requested:@me";
+    case "reviewed":
+      return "reviewed-by:@me";
     case "authored":
       return "author:@me";
     case "involves":
@@ -235,6 +246,12 @@ const MODE_OPTIONS = [
     description: "PRs where you're requested as reviewer",
   },
   {
+    value: "reviewed",
+    label: "Reviewed",
+    icon: MessageSquare,
+    description: "PRs you've already reviewed",
+  },
+  {
     value: "authored",
     label: "My PRs",
     icon: User,
@@ -301,7 +318,15 @@ export function Home() {
     if (githubReady && !(isAnonymous && queriesRequireAuth)) {
       fetchPRList(searchQueries, page, perPage);
     }
-  }, [fetchPRList, searchQueries, page, perPage, githubReady, isAnonymous, queriesRequireAuth]);
+  }, [
+    fetchPRList,
+    searchQueries,
+    page,
+    perPage,
+    githubReady,
+    isAnonymous,
+    queriesRequireAuth,
+  ]);
 
   // Reset page when config changes
   useEffect(() => {
@@ -388,10 +413,17 @@ export function Home() {
 
   // Track which repo dropdown is open
   const [openRepoDropdown, setOpenRepoDropdown] = useState<string | null>(null);
-  const [repoDropdownPosition, setRepoDropdownPosition] = useState({ top: 0, left: 0 });
+  const [repoDropdownPosition, setRepoDropdownPosition] = useState({
+    top: 0,
+    left: 0,
+  });
   const [showAddRepo, setShowAddRepo] = useState(false);
-  const [addRepoButtonRef, setAddRepoButtonRef] = useState<HTMLButtonElement | null>(null);
-  const [addRepoDropdownPosition, setAddRepoDropdownPosition] = useState({ top: 0, right: 0 });
+  const [addRepoButtonRef, setAddRepoButtonRef] =
+    useState<HTMLButtonElement | null>(null);
+  const [addRepoDropdownPosition, setAddRepoDropdownPosition] = useState({
+    top: 0,
+    right: 0,
+  });
 
   // Show loading/error state while GitHub client initializes
   if (!githubReady) {
@@ -561,20 +593,8 @@ export function Home() {
             })}
           </div>
 
-          {/* Query Preview & Add Repo - pushed to right */}
+          {/* Add Repo - pushed to right */}
           <div className="flex items-center gap-2 shrink-0 ml-auto">
-            {/* Query Preview */}
-            {searchQueries.length > 0 && (
-              <div
-                className="text-xs text-muted-foreground font-mono truncate max-w-xs hidden lg:block shrink-0"
-                title={searchQueries.join("\n")}
-              >
-                {searchQueries.length === 1
-                  ? searchQueries[0]
-                  : `${searchQueries.length} queries`}
-              </div>
-            )}
-
             {/* Add Repo Button */}
             <div className="relative shrink-0">
               <button
@@ -637,64 +657,66 @@ export function Home() {
                     </div>
 
                     <div className="add-repo-dropdown max-h-64 overflow-auto">
-                    {/* All Repos option - always shown at top when not already added */}
-                    {!config.repos.some(isAllReposFilter) && !searchQuery && (
-                      <button
-                        onMouseDown={() => {
-                          handleAddRepo(ALL_REPOS_KEY);
-                          setShowAddRepo(false);
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-primary/10 transition-colors text-left border-b border-border bg-primary/5"
-                      >
-                        <div className="w-4 h-4 rounded bg-primary/20 flex items-center justify-center shrink-0">
-                          <Users className="w-3 h-3 text-primary" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <span className="font-medium text-xs">All Repos</span>
-                          <span className="text-[10px] text-muted-foreground ml-1.5">
-                            PRs across all repositories
-                          </span>
-                        </div>
-                      </button>
-                    )}
-                    {searchResults.length > 0 ? (
-                      searchResults.map((repo) => (
+                      {/* All Repos option - always shown at top when not already added */}
+                      {!config.repos.some(isAllReposFilter) && !searchQuery && (
                         <button
-                          key={repo.id}
                           onMouseDown={() => {
-                            handleAddRepo(repo.full_name);
+                            handleAddRepo(ALL_REPOS_KEY);
                             setShowAddRepo(false);
-                            setSearchQuery("");
                           }}
-                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
+                          className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-primary/10 transition-colors text-left border-b border-border bg-primary/5"
                         >
-                          {repo.owner && (
-                            <img
-                              src={repo.owner.avatar_url}
-                              alt={repo.owner.login}
-                              className="w-4 h-4 rounded shrink-0"
-                            />
-                          )}
-                          <span className="font-medium text-xs truncate flex-1">
-                            {repo.full_name}
-                          </span>
-                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <Star className="w-3 h-3" />
-                            {(repo.stargazers_count ?? 0).toLocaleString()}
-                          </span>
+                          <div className="w-4 h-4 rounded bg-primary/20 flex items-center justify-center shrink-0">
+                            <Users className="w-3 h-3 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <span className="font-medium text-xs">
+                              All Repos
+                            </span>
+                            <span className="text-[10px] text-muted-foreground ml-1.5">
+                              PRs across all repositories
+                            </span>
+                          </div>
                         </button>
-                      ))
-                    ) : searchQuery ? (
-                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                        {searching ? "Searching..." : "No repositories found"}
-                      </div>
-                    ) : (
-                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                        Type to search for repositories
-                      </div>
-                    )}
+                      )}
+                      {searchResults.length > 0 ? (
+                        searchResults.map((repo) => (
+                          <button
+                            key={repo.id}
+                            onMouseDown={() => {
+                              handleAddRepo(repo.full_name);
+                              setShowAddRepo(false);
+                              setSearchQuery("");
+                            }}
+                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
+                          >
+                            {repo.owner && (
+                              <img
+                                src={repo.owner.avatar_url}
+                                alt={repo.owner.login}
+                                className="w-4 h-4 rounded shrink-0"
+                              />
+                            )}
+                            <span className="font-medium text-xs truncate flex-1">
+                              {repo.full_name}
+                            </span>
+                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                              <Star className="w-3 h-3" />
+                              {(repo.stargazers_count ?? 0).toLocaleString()}
+                            </span>
+                          </button>
+                        ))
+                      ) : searchQuery ? (
+                        <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                          {searching ? "Searching..." : "No repositories found"}
+                        </div>
+                      ) : (
+                        <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                          Type to search for repositories
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
                 </>
               )}
             </div>
@@ -906,6 +928,81 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
     }
   };
 
+  // CI status indicator with details
+  const CIStatusBadge = () => {
+    if (!pr.ciStatus || pr.ciStatus === "none") return null;
+
+    const summary =
+      pr.ciSummary ||
+      (pr.ciStatus === "success"
+        ? "Passed"
+        : pr.ciStatus === "failure"
+          ? "Failed"
+          : "Running");
+
+    switch (pr.ciStatus) {
+      case "success":
+        return (
+          <span
+            title={
+              pr.ciChecks
+                ?.map(
+                  (c) =>
+                    `${c.state === "success" ? "✓" : c.state === "failure" ? "✗" : "○"} ${c.name}`
+                )
+                .join("\n") || "CI passed"
+            }
+            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-green-500/15 text-green-500 border border-green-500/30"
+          >
+            <CheckCircle2 className="w-3 h-3" />
+            <span className="hidden sm:inline max-w-[100px] truncate">
+              {summary}
+            </span>
+          </span>
+        );
+      case "failure":
+        return (
+          <span
+            title={
+              pr.ciChecks
+                ?.map(
+                  (c) =>
+                    `${c.state === "success" ? "✓" : c.state === "failure" ? "✗" : "○"} ${c.name}`
+                )
+                .join("\n") || "CI failed"
+            }
+            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-red-500/15 text-red-500 border border-red-500/30"
+          >
+            <XCircle className="w-3 h-3" />
+            <span className="hidden sm:inline max-w-[100px] truncate">
+              {summary}
+            </span>
+          </span>
+        );
+      case "pending":
+        return (
+          <span
+            title={
+              pr.ciChecks
+                ?.map(
+                  (c) =>
+                    `${c.state === "success" ? "✓" : c.state === "failure" ? "✗" : "○"} ${c.name}`
+                )
+                .join("\n") || "CI running"
+            }
+            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-yellow-500/15 text-yellow-500 border border-yellow-500/30"
+          >
+            <Circle className="w-3 h-3 animate-pulse" />
+            <span className="hidden sm:inline max-w-[100px] truncate">
+              {summary}
+            </span>
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <button
       onClick={handleClick}
@@ -931,6 +1028,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
           <span className="font-medium hover:text-blue-400 break-words">
             {pr.title}
           </span>
+          <CIStatusBadge />
           {pr.hasNewChanges && (
             <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
               NEW

@@ -411,6 +411,17 @@ export const PROverview = memo(function PROverview() {
   const handleClosePR = useCallback(async () => {
     setClosingPR(true);
     try {
+      // Post comment first if there's one typed (like GitHub does)
+      if (commentText.trim()) {
+        const newComment = await github.createPRConversationComment(
+          owner,
+          repo,
+          pr.number,
+          commentText
+        );
+        setConversation((prev) => [...prev, newComment]);
+        setCommentText("");
+      }
       await github.closePR(owner, repo, pr.number);
       await refetchPR();
     } catch (error) {
@@ -418,11 +429,22 @@ export const PROverview = memo(function PROverview() {
     } finally {
       setClosingPR(false);
     }
-  }, [github, owner, repo, pr.number, refetchPR]);
+  }, [github, owner, repo, pr.number, refetchPR, commentText]);
 
   const handleReopenPR = useCallback(async () => {
     setReopeningPR(true);
     try {
+      // Post comment first if there's one typed (like GitHub does)
+      if (commentText.trim()) {
+        const newComment = await github.createPRConversationComment(
+          owner,
+          repo,
+          pr.number,
+          commentText
+        );
+        setConversation((prev) => [...prev, newComment]);
+        setCommentText("");
+      }
       await github.reopenPR(owner, repo, pr.number);
       await refetchPR();
     } catch (error) {
@@ -430,7 +452,7 @@ export const PROverview = memo(function PROverview() {
     } finally {
       setReopeningPR(false);
     }
-  }, [github, owner, repo, pr.number, refetchPR]);
+  }, [github, owner, repo, pr.number, refetchPR, commentText]);
 
   const handleDeleteBranch = useCallback(async () => {
     if (
