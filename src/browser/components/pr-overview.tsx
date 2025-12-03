@@ -1062,7 +1062,10 @@ export const PROverview = memo(function PROverview() {
                 )}
 
                 {/* Successfully merged and closed - show for merged PRs */}
-                {pr.merged && (
+                {pr.merged && (() => {
+                  // Check if the head branch is from a fork (different repo than base)
+                  const isFromFork = pr.head.repo?.full_name !== pr.base.repo?.full_name;
+                  return (
                   <div className="border border-purple-500/30 rounded-md overflow-hidden bg-purple-500/10">
                     <div className="flex items-start gap-3 p-4">
                       <div className="p-2 rounded-full bg-purple-500/20 text-purple-400">
@@ -1073,14 +1076,26 @@ export const PROverview = memo(function PROverview() {
                           Pull request successfully merged and closed
                         </h3>
                         <p className="text-sm text-muted-foreground mt-1">
-                          You're all set — the{" "}
-                          <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
-                            {pr.head.label || pr.head.ref}
-                          </code>{" "}
-                          branch can be safely deleted.
+                          {isFromFork ? (
+                            <>
+                              The{" "}
+                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                                {pr.head.label || pr.head.ref}
+                              </code>{" "}
+                              branch is in a fork and cannot be deleted from here.
+                            </>
+                          ) : (
+                            <>
+                              You're all set — the{" "}
+                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                                {pr.head.label || pr.head.ref}
+                              </code>{" "}
+                              branch can be safely deleted.
+                            </>
+                          )}
                         </p>
                       </div>
-                      {canMergeRepo && !branchDeleted && (
+                      {canMergeRepo && !branchDeleted && !isFromFork && (
                         <button
                           onClick={handleDeleteBranch}
                           disabled={deletingBranch}
@@ -1096,7 +1111,7 @@ export const PROverview = memo(function PROverview() {
                           )}
                         </button>
                       )}
-                      {branchDeleted && (
+                      {branchDeleted && !isFromFork && (
                         <div className="shrink-0 flex items-center gap-3">
                           <span className="text-sm text-muted-foreground flex items-center gap-2">
                             <Check className="w-4 h-4 text-green-400" />
@@ -1125,7 +1140,8 @@ export const PROverview = memo(function PROverview() {
                       )}
                     </div>
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* Closed with unmerged commits - show for closed, unmerged PRs */}
                 {pr.state === "closed" && !pr.merged && (
