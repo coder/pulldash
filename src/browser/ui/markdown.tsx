@@ -582,7 +582,9 @@ export const MarkdownEditor = memo(function MarkdownEditor({
         textarea.focus();
         textarea.setSelectionRange(
           selectedText ? start + before.length : newCursorPos,
-          selectedText ? start + before.length + selectedText.length : newCursorPos
+          selectedText
+            ? start + before.length + selectedText.length
+            : newCursorPos
         );
       }, 0);
     },
@@ -623,7 +625,9 @@ export const MarkdownEditor = memo(function MarkdownEditor({
     if (selectedText) {
       // Wrap selected text as link text
       const newValue =
-        value.substring(0, start) + `[${selectedText}](url)` + value.substring(end);
+        value.substring(0, start) +
+        `[${selectedText}](url)` +
+        value.substring(end);
       onChange(newValue);
       setTimeout(() => {
         textarea.focus();
@@ -633,7 +637,8 @@ export const MarkdownEditor = memo(function MarkdownEditor({
       }, 0);
     } else {
       // Insert placeholder
-      const newValue = value.substring(0, start) + "[text](url)" + value.substring(end);
+      const newValue =
+        value.substring(0, start) + "[text](url)" + value.substring(end);
       onChange(newValue);
       setTimeout(() => {
         textarea.focus();
@@ -697,7 +702,10 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   ];
 
   return (
-    <div className="markdown-editor rounded-lg overflow-hidden bg-background border border-border focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30 transition-all" style={{ fontFamily: 'var(--font-sans)' }}>
+    <div
+      className="markdown-editor rounded-lg overflow-hidden bg-background border border-border focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30 transition-all"
+      style={{ fontFamily: "var(--font-sans)" }}
+    >
       {/* Tab bar with toolbar */}
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-1">
         <div className="flex items-center">
@@ -710,7 +718,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"
             )}
-            style={{ fontFamily: 'var(--font-sans)' }}
+            style={{ fontFamily: "var(--font-sans)" }}
           >
             Write
             {activeTab === "write" && (
@@ -726,7 +734,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"
             )}
-            style={{ fontFamily: 'var(--font-sans)' }}
+            style={{ fontFamily: "var(--font-sans)" }}
           >
             Preview
             {activeTab === "preview" && (
@@ -740,10 +748,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
           <div className="flex items-center gap-0.5 pr-1">
             {toolbarButtons.map((btn, idx) =>
               btn.type === "separator" ? (
-                <div
-                  key={idx}
-                  className="w-px h-4 bg-border mx-1"
-                />
+                <div key={idx} className="w-px h-4 bg-border mx-1" />
               ) : (
                 <Tooltip key={idx}>
                   <TooltipTrigger asChild>
@@ -862,17 +867,28 @@ export const MarkdownEditor = memo(function MarkdownEditor({
       )}
 
       {/* Footer hint */}
-      <div className="px-3 py-2 border-t border-border bg-muted/20" style={{ fontFamily: 'var(--font-sans)' }}>
+      <div
+        className="px-3 py-2 border-t border-border bg-muted/20"
+        style={{ fontFamily: "var(--font-sans)" }}
+      >
         <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
           <span>Supports Markdown</span>
           <span className="text-border">·</span>
-          <span>Type <span className="text-foreground/70">@</span> to mention</span>
+          <span>
+            Type <span className="text-foreground/70">@</span> to mention
+          </span>
           <span className="text-border">·</span>
           <span className="inline-flex items-center gap-0.5">
-            <kbd className="px-1 py-0.5 bg-muted border border-border/50 rounded text-[10px]" style={{ fontFamily: 'var(--font-mono)' }}>
+            <kbd
+              className="px-1 py-0.5 bg-muted border border-border/50 rounded text-[10px]"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
               {isMac ? "⌘" : "Ctrl"}
             </kbd>
-            <kbd className="px-1 py-0.5 bg-muted border border-border/50 rounded text-[10px]" style={{ fontFamily: 'var(--font-mono)' }}>
+            <kbd
+              className="px-1 py-0.5 bg-muted border border-border/50 rounded text-[10px]"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
               ↵
             </kbd>
             <span className="ml-0.5">to submit</span>

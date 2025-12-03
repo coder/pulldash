@@ -2013,7 +2013,10 @@ const InlineCommentForm = memo(function InlineCommentForm({
   }
 
   return (
-    <div className="mx-4 my-3 rounded-lg border border-border bg-card overflow-hidden shadow-sm" style={{ fontFamily: 'var(--font-sans)' }}>
+    <div
+      className="mx-4 my-3 rounded-lg border border-border bg-card overflow-hidden shadow-sm"
+      style={{ fontFamily: "var(--font-sans)" }}
+    >
       {/* Header with avatar and title */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
         <div className="flex items-center gap-3">
@@ -2053,11 +2056,14 @@ const InlineCommentForm = memo(function InlineCommentForm({
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/20" style={{ fontFamily: 'var(--font-sans)' }}>
+      <div
+        className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/20"
+        style={{ fontFamily: "var(--font-sans)" }}
+      >
         <button
           onClick={store.cancelCommenting}
           className="px-4 py-2 text-sm font-medium rounded-md border border-border bg-background hover:bg-muted transition-colors"
-          style={{ fontFamily: 'var(--font-sans)' }}
+          style={{ fontFamily: "var(--font-sans)" }}
         >
           Cancel
         </button>
@@ -2065,7 +2071,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
           onClick={handleSubmit}
           disabled={!text.trim() || submitting}
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ fontFamily: 'var(--font-sans)' }}
+          style={{ fontFamily: "var(--font-sans)" }}
         >
           {submitting ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -2347,7 +2353,11 @@ const CommentItem = memo(function CommentItem({
     const fetchReactions = async () => {
       setLoadingReactions(true);
       try {
-        const data = await github.getReviewCommentReactions(owner, repo, comment.id);
+        const data = await github.getReviewCommentReactions(
+          owner,
+          repo,
+          comment.id
+        );
         setReactions(data);
       } catch (error) {
         console.error("Failed to fetch reactions:", error);
@@ -2378,7 +2388,12 @@ const CommentItem = memo(function CommentItem({
   const handleRemoveReaction = useCallback(
     async (reactionId: number) => {
       try {
-        await github.deleteReviewCommentReaction(owner, repo, comment.id, reactionId);
+        await github.deleteReviewCommentReaction(
+          owner,
+          repo,
+          comment.id,
+          reactionId
+        );
         setReactions((prev) => prev.filter((r) => r.id !== reactionId));
       } catch (error) {
         console.error("Failed to remove reaction:", error);
@@ -2678,7 +2693,10 @@ function EmojiReactions({
   }
 
   return (
-    <div className="flex items-center gap-1.5 flex-wrap" style={{ fontFamily: 'var(--font-sans)' }}>
+    <div
+      className="flex items-center gap-1.5 flex-wrap"
+      style={{ fontFamily: "var(--font-sans)" }}
+    >
       {/* Add reaction button */}
       {onAddReaction && (
         <>

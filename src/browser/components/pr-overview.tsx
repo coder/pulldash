@@ -751,7 +751,10 @@ export const PROverview = memo(function PROverview() {
   );
 
   // Calculate check status
-  const checkStatus = calculateCheckStatus(checks, workflowRunsAwaitingApproval);
+  const checkStatus = calculateCheckStatus(
+    checks,
+    workflowRunsAwaitingApproval
+  );
   const latestReviews = getLatestReviewsByUser(reviews);
   const canMergePR = canMerge(pr, checkStatus);
 
@@ -1036,7 +1039,9 @@ export const PROverview = memo(function PROverview() {
                       onUpdateBranch={handleUpdateBranch}
                       markingReady={markingReady}
                       onMarkReadyForReview={handleMarkReadyForReview}
-                      workflowRunsAwaitingApproval={workflowRunsAwaitingApproval}
+                      workflowRunsAwaitingApproval={
+                        workflowRunsAwaitingApproval
+                      }
                       approvingWorkflows={approvingWorkflows}
                       onApproveWorkflows={handleApproveWorkflows}
                       canBypassBranchProtections={viewerPermission === "ADMIN"}
@@ -1062,86 +1067,89 @@ export const PROverview = memo(function PROverview() {
                 )}
 
                 {/* Successfully merged and closed - show for merged PRs */}
-                {pr.merged && (() => {
-                  // Check if the head branch is from a fork (different repo than base)
-                  const isFromFork = pr.head.repo?.full_name !== pr.base.repo?.full_name;
-                  return (
-                  <div className="border border-purple-500/30 rounded-md overflow-hidden bg-purple-500/10">
-                    <div className="flex items-start gap-3 p-4">
-                      <div className="p-2 rounded-full bg-purple-500/20 text-purple-400">
-                        <GitMerge className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold">
-                          Pull request successfully merged and closed
-                        </h3>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {isFromFork ? (
-                            <>
-                              The{" "}
-                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
-                                {pr.head.label || pr.head.ref}
-                              </code>{" "}
-                              branch is in a fork and cannot be deleted from here.
-                            </>
-                          ) : (
-                            <>
-                              You're all set — the{" "}
-                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
-                                {pr.head.label || pr.head.ref}
-                              </code>{" "}
-                              branch can be safely deleted.
-                            </>
-                          )}
-                        </p>
-                      </div>
-                      {canMergeRepo && !branchDeleted && !isFromFork && (
-                        <button
-                          onClick={handleDeleteBranch}
-                          disabled={deletingBranch}
-                          className="shrink-0 px-4 py-2 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
-                        >
-                          {deletingBranch ? (
-                            <span className="flex items-center gap-2">
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              Deleting...
-                            </span>
-                          ) : (
-                            "Delete branch"
-                          )}
-                        </button>
-                      )}
-                      {branchDeleted && !isFromFork && (
-                        <div className="shrink-0 flex items-center gap-3">
-                          <span className="text-sm text-muted-foreground flex items-center gap-2">
-                            <Check className="w-4 h-4 text-green-400" />
-                            Deleted{" "}
-                            <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                              {pr.head.ref}
-                            </code>
-                          </span>
-                          {canMergeRepo && (
+                {pr.merged &&
+                  (() => {
+                    // Check if the head branch is from a fork (different repo than base)
+                    const isFromFork =
+                      pr.head.repo?.full_name !== pr.base.repo?.full_name;
+                    return (
+                      <div className="border border-purple-500/30 rounded-md overflow-hidden bg-purple-500/10">
+                        <div className="flex items-start gap-3 p-4">
+                          <div className="p-2 rounded-full bg-purple-500/20 text-purple-400">
+                            <GitMerge className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold">
+                              Pull request successfully merged and closed
+                            </h3>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {isFromFork ? (
+                                <>
+                                  The{" "}
+                                  <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                                    {pr.head.label || pr.head.ref}
+                                  </code>{" "}
+                                  branch is in a fork and cannot be deleted from
+                                  here.
+                                </>
+                              ) : (
+                                <>
+                                  You're all set — the{" "}
+                                  <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                                    {pr.head.label || pr.head.ref}
+                                  </code>{" "}
+                                  branch can be safely deleted.
+                                </>
+                              )}
+                            </p>
+                          </div>
+                          {canMergeRepo && !branchDeleted && !isFromFork && (
                             <button
-                              onClick={handleRestoreBranch}
-                              disabled={restoringBranch}
-                              className="px-3 py-1.5 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
+                              onClick={handleDeleteBranch}
+                              disabled={deletingBranch}
+                              className="shrink-0 px-4 py-2 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
                             >
-                              {restoringBranch ? (
+                              {deletingBranch ? (
                                 <span className="flex items-center gap-2">
                                   <Loader2 className="w-4 h-4 animate-spin" />
-                                  Restoring...
+                                  Deleting...
                                 </span>
                               ) : (
-                                "Restore branch"
+                                "Delete branch"
                               )}
                             </button>
                           )}
+                          {branchDeleted && !isFromFork && (
+                            <div className="shrink-0 flex items-center gap-3">
+                              <span className="text-sm text-muted-foreground flex items-center gap-2">
+                                <Check className="w-4 h-4 text-green-400" />
+                                Deleted{" "}
+                                <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                                  {pr.head.ref}
+                                </code>
+                              </span>
+                              {canMergeRepo && (
+                                <button
+                                  onClick={handleRestoreBranch}
+                                  disabled={restoringBranch}
+                                  className="px-3 py-1.5 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
+                                >
+                                  {restoringBranch ? (
+                                    <span className="flex items-center gap-2">
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                      Restoring...
+                                    </span>
+                                  ) : (
+                                    "Restore branch"
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                  );
-                })()}
+                      </div>
+                    );
+                  })()}
 
                 {/* Closed with unmerged commits - show for closed, unmerged PRs */}
                 {pr.state === "closed" && !pr.merged && (
@@ -1437,7 +1445,9 @@ export const PROverview = memo(function PROverview() {
                             !pr.requested_reviewers?.some(
                               (r) => r.login === c.login
                             ) &&
-                            c.login.toLowerCase().includes(reviewerSearchQuery.toLowerCase())
+                            c.login
+                              .toLowerCase()
+                              .includes(reviewerSearchQuery.toLowerCase())
                         )
                         .map((collaborator) => (
                           <button
@@ -1560,8 +1570,11 @@ export const PROverview = memo(function PROverview() {
                     ) : (
                       collaborators
                         .filter(
-                          (c) => !pr.assignees?.some((a) => a.login === c.login) &&
-                            c.login.toLowerCase().includes(assigneeSearchQuery.toLowerCase())
+                          (c) =>
+                            !pr.assignees?.some((a) => a.login === c.login) &&
+                            c.login
+                              .toLowerCase()
+                              .includes(assigneeSearchQuery.toLowerCase())
                         )
                         .map((collaborator) => (
                           <button
@@ -2544,44 +2557,45 @@ function MergeSection({
       </div>
 
       {/* Workflow Approval Section - shows when fork PR needs workflow approval */}
-      {workflowRunsAwaitingApproval && workflowRunsAwaitingApproval.length > 0 && (
-        <div className="border-b border-border">
-          <div className="flex items-center gap-3 p-4">
-            <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0" />
-            <div className="flex-1">
-              <p className="font-medium text-sm">
-                {workflowRunsAwaitingApproval.length} workflow
-                {workflowRunsAwaitingApproval.length !== 1 ? "s" : ""} awaiting
-                approval
-              </p>
-              <p className="text-xs text-muted-foreground">
-                This workflow requires approval from a maintainer.{" "}
-                <a
-                  href="https://docs.github.com/en/actions/managing-workflow-runs/approving-workflow-runs-from-public-forks"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-400 hover:underline"
+      {workflowRunsAwaitingApproval &&
+        workflowRunsAwaitingApproval.length > 0 && (
+          <div className="border-b border-border">
+            <div className="flex items-center gap-3 p-4">
+              <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0" />
+              <div className="flex-1">
+                <p className="font-medium text-sm">
+                  {workflowRunsAwaitingApproval.length} workflow
+                  {workflowRunsAwaitingApproval.length !== 1 ? "s" : ""}{" "}
+                  awaiting approval
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  This workflow requires approval from a maintainer.{" "}
+                  <a
+                    href="https://docs.github.com/en/actions/managing-workflow-runs/approving-workflow-runs-from-public-forks"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:underline"
+                  >
+                    Learn more about approving workflows.
+                  </a>
+                </p>
+              </div>
+              {onApproveWorkflows && (
+                <button
+                  onClick={onApproveWorkflows}
+                  disabled={approvingWorkflows}
+                  className="px-3 py-1.5 text-sm font-medium border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
                 >
-                  Learn more about approving workflows.
-                </a>
-              </p>
+                  {approvingWorkflows ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Approve workflows to run"
+                  )}
+                </button>
+              )}
             </div>
-            {onApproveWorkflows && (
-              <button
-                onClick={onApproveWorkflows}
-                disabled={approvingWorkflows}
-                className="px-3 py-1.5 text-sm font-medium border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
-              >
-                {approvingWorkflows ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  "Approve workflows to run"
-                )}
-              </button>
-            )}
           </div>
-        </div>
-      )}
+        )}
 
       {/* Checks Section */}
       <div className="border-b border-border">

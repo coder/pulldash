@@ -54,7 +54,9 @@ export const FileHeader = memo(function FileHeader({
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <FileCode className="w-4 h-4 text-muted-foreground shrink-0" />
-        <span className="font-mono text-sm font-medium truncate">{file.filename}</span>
+        <span className="font-mono text-sm font-medium truncate">
+          {file.filename}
+        </span>
         {fileStatusBadge}
         <span className="text-xs text-muted-foreground shrink-0">
           <span className="text-green-500">+{file.additions}</span>{" "}

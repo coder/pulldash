@@ -183,7 +183,10 @@ function buildSearchQueries(config: FilterConfig): string[] {
     if (modeFilter) parts.push(modeFilter);
     // Note: "all" mode on All Repos would be too broad, so we skip it
     // Also skip "authored-by" without a username
-    if (filter.mode !== "all" && !(filter.mode === "authored-by" && !filter.authoredBy)) {
+    if (
+      filter.mode !== "all" &&
+      !(filter.mode === "authored-by" && !filter.authoredBy)
+    ) {
       queries.push(parts.join(" "));
     }
   }
@@ -191,21 +194,31 @@ function buildSearchQueries(config: FilterConfig): string[] {
   // Group specific repos by mode+authoredBy (for authored-by, different authors need separate queries)
   if (specificRepos.length > 0) {
     // Use a composite key: mode + authoredBy for authored-by mode
-    const byModeKey = new Map<string, { mode: FilterMode; authoredBy?: string; repos: string[] }>();
+    const byModeKey = new Map<
+      string,
+      { mode: FilterMode; authoredBy?: string; repos: string[] }
+    >();
     for (const repo of specificRepos) {
-      const key = repo.mode === "authored-by" ? `${repo.mode}:${repo.authoredBy || ""}` : repo.mode;
+      const key =
+        repo.mode === "authored-by"
+          ? `${repo.mode}:${repo.authoredBy || ""}`
+          : repo.mode;
       const existing = byModeKey.get(key);
       if (existing) {
         existing.repos.push(repo.name);
       } else {
-        byModeKey.set(key, { mode: repo.mode, authoredBy: repo.authoredBy, repos: [repo.name] });
+        byModeKey.set(key, {
+          mode: repo.mode,
+          authoredBy: repo.authoredBy,
+          repos: [repo.name],
+        });
       }
     }
 
     for (const [, { mode, authoredBy, repos }] of byModeKey) {
       // Skip authored-by without a username
       if (mode === "authored-by" && !authoredBy) continue;
-      
+
       const parts = ["is:pr", "archived:false"];
       if (stateFilter) parts.push(stateFilter);
       // Multiple repo: qualifiers act as OR
@@ -440,7 +453,9 @@ export function Home() {
   });
   // Track author input for "authored-by" mode
   const [authoredByInput, setAuthoredByInput] = useState<string>("");
-  const [showAuthoredByInput, setShowAuthoredByInput] = useState<string | null>(null);
+  const [showAuthoredByInput, setShowAuthoredByInput] = useState<string | null>(
+    null
+  );
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [addRepoButtonRef, setAddRepoButtonRef] =
     useState<HTMLButtonElement | null>(null);
@@ -594,12 +609,18 @@ export function Home() {
                       >
                         {showAuthoredByInput === repo.name ? (
                           <div className="p-3">
-                            <div className="text-xs font-medium mb-2">Enter GitHub username</div>
+                            <div className="text-xs font-medium mb-2">
+                              Enter GitHub username
+                            </div>
                             <form
                               onSubmit={(e) => {
                                 e.preventDefault();
                                 if (authoredByInput.trim()) {
-                                  handleRepoModeChange(repo.name, "authored-by", authoredByInput.trim());
+                                  handleRepoModeChange(
+                                    repo.name,
+                                    "authored-by",
+                                    authoredByInput.trim()
+                                  );
                                   setOpenRepoDropdown(null);
                                   setShowAuthoredByInput(null);
                                   setAuthoredByInput("");
@@ -608,11 +629,15 @@ export function Home() {
                             >
                               <div className="flex gap-2">
                                 <div className="relative flex-1">
-                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">@</span>
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">
+                                    @
+                                  </span>
                                   <input
                                     type="text"
                                     value={authoredByInput}
-                                    onChange={(e) => setAuthoredByInput(e.target.value)}
+                                    onChange={(e) =>
+                                      setAuthoredByInput(e.target.value)
+                                    }
                                     placeholder="username"
                                     className="w-full h-7 pl-6 pr-2 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
                                     autoFocus
@@ -659,11 +684,13 @@ export function Home() {
                               <div className="flex-1 min-w-0">
                                 <div className="font-medium text-xs">
                                   {option.label}
-                                  {option.value === "authored-by" && repo.mode === "authored-by" && repo.authoredBy && (
-                                    <span className="text-muted-foreground font-normal ml-1">
-                                      @{repo.authoredBy}
-                                    </span>
-                                  )}
+                                  {option.value === "authored-by" &&
+                                    repo.mode === "authored-by" &&
+                                    repo.authoredBy && (
+                                      <span className="text-muted-foreground font-normal ml-1">
+                                        @{repo.authoredBy}
+                                      </span>
+                                    )}
                                 </div>
                                 <div className="text-[10px] text-muted-foreground">
                                   {option.description}
@@ -707,14 +734,17 @@ export function Home() {
                   "text-emerald-400 hover:text-emerald-300",
                   "hover:shadow-[0_0_20px_rgba(16,185,129,0.15)]",
                   "hover:from-emerald-500/15 hover:via-green-500/15 hover:to-teal-500/15",
-                  showAddRepo && "border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)] from-emerald-500/20 via-green-500/20 to-teal-500/20"
+                  showAddRepo &&
+                    "border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)] from-emerald-500/20 via-green-500/20 to-teal-500/20"
                 )}
               >
-                <span className={cn(
-                  "flex items-center justify-center w-4 h-4 rounded-md transition-all duration-200",
-                  "bg-emerald-500/20 group-hover:bg-emerald-500/30 group-hover:scale-110",
-                  showAddRepo && "bg-emerald-500/30 rotate-45"
-                )}>
+                <span
+                  className={cn(
+                    "flex items-center justify-center w-4 h-4 rounded-md transition-all duration-200",
+                    "bg-emerald-500/20 group-hover:bg-emerald-500/30 group-hover:scale-110",
+                    showAddRepo && "bg-emerald-500/30 rotate-45"
+                  )}
+                >
                   <Plus className="w-3 h-3" />
                 </span>
                 <span>Add Repo</span>
