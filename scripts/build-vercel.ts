@@ -17,7 +17,9 @@ await import("./build-browser");
 // Copy browser build contents to public (served by Vercel CDN)
 const browserFiles = await readdir(browserDistDir);
 for (const file of browserFiles) {
-  await cp(resolve(browserDistDir, file), resolve(publicDir, file), { recursive: true });
+  await cp(resolve(browserDistDir, file), resolve(publicDir, file), {
+    recursive: true,
+  });
 }
 console.log("Copied browser files to public/");
 
