@@ -3526,6 +3526,10 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
       case "head_ref_force_pushed": {
         // Timeline API only provides commit_id (the "to" SHA), no "before" SHA
         const forcePush = event as { commit_id?: string };
+        const commitUrl =
+          forcePush.commit_id && pr
+            ? `https://github.com/${pr.base?.repo?.owner?.login || pr.user?.login}/${pr.base?.repo?.name || pr.head?.repo?.name}/commit/${forcePush.commit_id}`
+            : undefined;
         return {
           icon: <GitBranch className="w-4 h-4" />,
           text: (
@@ -3540,9 +3544,20 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
                 <>
                   {" "}
                   to{" "}
-                  <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
-                    {forcePush.commit_id.slice(0, 7)}
-                  </code>
+                  {commitUrl ? (
+                    <a
+                      href={commitUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono hover:text-blue-400 hover:underline"
+                    >
+                      {forcePush.commit_id.slice(0, 7)}
+                    </a>
+                  ) : (
+                    <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                      {forcePush.commit_id.slice(0, 7)}
+                    </code>
+                  )}
                 </>
               )}
             </span>
