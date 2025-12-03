@@ -790,9 +790,16 @@ export const PROverview = memo(function PROverview() {
                     });
                   });
 
-                  // Add reviews with bodies
-                  latestReviews
-                    .filter((r) => r.body && r.submitted_at)
+                  // Add ALL reviews to timeline - show APPROVED/CHANGES_REQUESTED always, COMMENTED only if they have a body
+                  // Note: we use `reviews` not `latestReviews` because latestReviews only keeps one review per user
+                  reviews
+                    .filter(
+                      (r) =>
+                        r.submitted_at &&
+                        (r.body ||
+                          r.state === "APPROVED" ||
+                          r.state === "CHANGES_REQUESTED")
+                    )
                     .forEach((review) => {
                       entries.push({
                         type: "review",
@@ -936,6 +943,8 @@ export const PROverview = memo(function PROverview() {
                         setShowMergeOptions(!showMergeOptions)
                       }
                       onUpdateBranch={handleUpdateBranch}
+                      markingReady={markingReady}
+                      onMarkReadyForReview={handleMarkReadyForReview}
                     />
                     {/* Still in progress - only show if NOT a draft and user can merge */}
                     {canMergeRepo && !pr.draft && (
@@ -1445,24 +1454,6 @@ export const PROverview = memo(function PROverview() {
               onUpdate={refetchPR}
               canWrite={canMergeRepo}
             />
-
-            {/* Draft - Mark as ready for review */}
-            {canMergeRepo && pr.state === "open" && !pr.merged && pr.draft && (
-              <div className="pt-2 border-t border-border">
-                <p className="text-xs text-muted-foreground mb-1">
-                  This pull request is still a work in progress.
-                </p>
-                <button
-                  onClick={handleMarkReadyForReview}
-                  disabled={markingReady}
-                  className="text-sm text-blue-400 hover:underline disabled:opacity-50"
-                >
-                  {markingReady
-                    ? "Marking ready..."
-                    : "Mark as ready for review"}
-                </button>
-              </div>
-            )}
 
             {/* Participants */}
             <SidebarSection
@@ -2121,6 +2112,8 @@ function MergeSection({
   onSetMergeMethod,
   onToggleMergeOptions,
   onUpdateBranch,
+  markingReady,
+  onMarkReadyForReview,
 }: {
   pr: {
     draft?: boolean;
@@ -2141,6 +2134,8 @@ function MergeSection({
   onSetMergeMethod: (method: "merge" | "squash" | "rebase") => void;
   onToggleMergeOptions: () => void;
   onUpdateBranch: () => void;
+  markingReady?: boolean;
+  onMarkReadyForReview?: () => void;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({
@@ -2518,8 +2513,40 @@ function MergeSection({
         </div>
       </div>
 
-      {/* Merge controls - only show when user can merge */}
-      {canMergeRepo && (
+      {/* Draft section - show when PR is a draft */}
+      {pr.draft && (
+        <div className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-full bg-muted text-muted-foreground">
+              <GitPullRequest className="w-5 h-5" />
+            </div>
+            <div className="flex-1">
+              <p className="font-medium text-sm">
+                This pull request is still a work in progress
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Draft pull requests cannot be merged.
+              </p>
+            </div>
+            {canMergeRepo && onMarkReadyForReview && (
+              <button
+                onClick={onMarkReadyForReview}
+                disabled={markingReady}
+                className="px-3 py-1.5 border border-border rounded-md hover:bg-muted transition-colors text-sm font-medium disabled:opacity-50"
+              >
+                {markingReady ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Ready for review"
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Merge controls - only show when user can merge and PR is not a draft */}
+      {canMergeRepo && !pr.draft && (
         <div className="p-4 space-y-3">
           {mergeError && (
             <p className="text-sm text-destructive">{mergeError}</p>
@@ -3493,6 +3520,34 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
             </span>
           ),
           color: "text-muted-foreground",
+        };
+      }
+
+      case "head_ref_force_pushed": {
+        // Timeline API only provides commit_id (the "to" SHA), no "before" SHA
+        const forcePush = event as { commit_id?: string };
+        return {
+          icon: <GitBranch className="w-4 h-4" />,
+          text: (
+            <span>
+              <span className="font-medium">{actor?.login}</span> force-pushed
+              the{" "}
+              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                {pr?.head?.ref || "branch"}
+              </code>{" "}
+              branch
+              {forcePush.commit_id && (
+                <>
+                  {" "}
+                  to{" "}
+                  <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                    {forcePush.commit_id.slice(0, 7)}
+                  </code>
+                </>
+              )}
+            </span>
+          ),
+          color: "text-amber-400",
         };
       }
 

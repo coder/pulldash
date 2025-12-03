@@ -2840,6 +2840,9 @@ export function useReviewActions() {
       store.setComments(newComments as ReviewComment[]);
 
       store.clearReviewState();
+
+      // Navigate to overview page after successful review submission
+      store.selectOverview();
     } finally {
       store.setSubmittingReview(false);
     }

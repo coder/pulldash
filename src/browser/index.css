@@ -409,7 +409,7 @@
   font-size: 0.85em;
   padding: 0.2em 0.4em;
   margin: 0;
-  background-color: oklch(0.25 0 0);
+  background-color: oklch(0.22 0.01 260 / 80%);
   border-radius: 4px;
 }
 
@@ -420,19 +420,21 @@
   overflow: auto;
   font-size: 0.85em;
   line-height: 1.45;
-  background-color: oklch(0.16 0 0);
+  background-color: oklch(0.18 0.01 260 / 60%);
   border-radius: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid oklch(1 0 0 / 8%);
 }
 
-.markdown-body pre code {
+.markdown-body pre code,
+.markdown-body pre code[class*="language-"],
+.markdown-body pre code.hljs {
   display: block;
   padding: 0;
   margin: 0;
   overflow: visible;
   line-height: inherit;
   word-wrap: normal;
-  background-color: transparent;
+  background: transparent !important;
   border: 0;
   font-size: 100%;
 }

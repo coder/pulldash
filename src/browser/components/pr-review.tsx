@@ -2902,7 +2902,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="APPROVE" className="mt-0.5" />
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-medium text-sm text-green-500">
+                    <span className="font-medium text-sm text-green-400">
                       Approve
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -2914,7 +2914,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="REQUEST_CHANGES" className="mt-0.5" />
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-medium text-sm text-orange-500">
+                    <span className="font-medium text-sm text-amber-400">
                       Request changes
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -2977,9 +2977,9 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             className={cn(
               "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50",
               reviewType === "APPROVE" &&
-                "bg-green-600 text-white hover:bg-green-700",
+                "bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30",
               reviewType === "REQUEST_CHANGES" &&
-                "bg-orange-600 text-white hover:bg-orange-700",
+                "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/30",
               reviewType === "COMMENT" &&
                 "bg-primary text-primary-foreground hover:bg-primary/90"
             )}
