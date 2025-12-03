@@ -1724,6 +1724,22 @@ function createGitHubStore() {
     });
   }
 
+  async function restoreBranch(
+    owner: string,
+    repo: string,
+    branch: string,
+    sha: string
+  ) {
+    if (!octokit) throw new Error("Not initialized");
+
+    await octokit.request("POST /repos/{owner}/{repo}/git/refs", {
+      owner,
+      repo,
+      ref: `refs/heads/${branch}`,
+      sha,
+    });
+  }
+
   async function getPRConversation(
     owner: string,
     repo: string,
@@ -2244,6 +2260,7 @@ function createGitHubStore() {
     closePR,
     reopenPR,
     deleteBranch,
+    restoreBranch,
     // Reactions
     getIssueReactions,
     addIssueReaction,

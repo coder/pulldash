@@ -433,7 +433,7 @@ export function Home() {
           </div>
 
           {/* Repo Chips with Mode Dropdowns */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0 flex-1 min-w-0">
             {config.repos.length === 0 && (
               <span className="text-xs text-muted-foreground">
                 Add a filter to get started →
@@ -531,122 +531,125 @@ export function Home() {
             })}
           </div>
 
-          {/* Query Preview */}
-          {searchQueries.length > 0 && (
-            <div
-              className="text-xs text-muted-foreground font-mono truncate max-w-xs hidden lg:block shrink-0"
-              title={searchQueries.join("\n")}
-            >
-              {searchQueries.length === 1
-                ? searchQueries[0]
-                : `${searchQueries.length} queries`}
-            </div>
-          )}
+          {/* Query Preview & Add Repo - pushed to right */}
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            {/* Query Preview */}
+            {searchQueries.length > 0 && (
+              <div
+                className="text-xs text-muted-foreground font-mono truncate max-w-xs hidden lg:block shrink-0"
+                title={searchQueries.join("\n")}
+              >
+                {searchQueries.length === 1
+                  ? searchQueries[0]
+                  : `${searchQueries.length} queries`}
+              </div>
+            )}
 
-          {/* Add Repo Button */}
-          <div className="relative shrink-0">
-            <button
-              onClick={() => {
-                setShowAddRepo(!showAddRepo);
-                setOpenRepoDropdown(null);
-              }}
-              className={cn(
-                "flex items-center gap-1.5 px-2 py-1 rounded-md border transition-colors text-xs",
-                showAddRepo
-                  ? "bg-muted border-border text-foreground"
-                  : "border-dashed border-border hover:bg-muted/50 hover:border-solid text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Repo</span>
-            </button>
+            {/* Add Repo Button */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => {
+                  setShowAddRepo(!showAddRepo);
+                  setOpenRepoDropdown(null);
+                }}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-1 rounded-md border transition-colors text-xs",
+                  showAddRepo
+                    ? "bg-muted border-border text-foreground"
+                    : "border-dashed border-border hover:bg-muted/50 hover:border-solid text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Repo</span>
+              </button>
 
-            {/* Search Dropdown */}
-            {showAddRepo && (
-              <div className="absolute top-full right-0 mt-1 w-72 max-w-[calc(100vw-1rem)] bg-card border border-border rounded-lg shadow-xl overflow-hidden z-30">
-                <div className="p-2 border-b border-border">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onBlur={(e) => {
-                        // Close dropdown if not clicking inside it
-                        if (!e.relatedTarget?.closest(".add-repo-dropdown")) {
-                          setTimeout(() => setShowAddRepo(false), 150);
-                        }
-                      }}
-                      placeholder="Search repositories..."
-                      className="w-full h-7 pl-7 pr-3 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-                      autoFocus
-                    />
-                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                    {searching && (
-                      <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 animate-spin text-muted-foreground" />
+              {/* Search Dropdown */}
+              {showAddRepo && (
+                <div className="absolute top-full right-0 mt-1 w-72 max-w-[calc(100vw-1rem)] bg-card border border-border rounded-lg shadow-xl overflow-hidden z-30">
+                  <div className="p-2 border-b border-border">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onBlur={(e) => {
+                          // Close dropdown if not clicking inside it
+                          if (!e.relatedTarget?.closest(".add-repo-dropdown")) {
+                            setTimeout(() => setShowAddRepo(false), 150);
+                          }
+                        }}
+                        placeholder="Search repositories..."
+                        className="w-full h-7 pl-7 pr-3 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                        autoFocus
+                      />
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                      {searching && (
+                        <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 animate-spin text-muted-foreground" />
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="add-repo-dropdown max-h-64 overflow-auto">
+                    {/* All Repos option - always shown at top when not already added */}
+                    {!config.repos.some(isAllReposFilter) && !searchQuery && (
+                      <button
+                        onMouseDown={() => {
+                          handleAddRepo(ALL_REPOS_KEY);
+                          setShowAddRepo(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-primary/10 transition-colors text-left border-b border-border bg-primary/5"
+                      >
+                        <div className="w-4 h-4 rounded bg-primary/20 flex items-center justify-center shrink-0">
+                          <Users className="w-3 h-3 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium text-xs">All Repos</span>
+                          <span className="text-[10px] text-muted-foreground ml-1.5">
+                            PRs across all repositories
+                          </span>
+                        </div>
+                      </button>
+                    )}
+                    {searchResults.length > 0 ? (
+                      searchResults.map((repo) => (
+                        <button
+                          key={repo.id}
+                          onMouseDown={() => {
+                            handleAddRepo(repo.full_name);
+                            setShowAddRepo(false);
+                            setSearchQuery("");
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
+                        >
+                          {repo.owner && (
+                            <img
+                              src={repo.owner.avatar_url}
+                              alt={repo.owner.login}
+                              className="w-4 h-4 rounded shrink-0"
+                            />
+                          )}
+                          <span className="font-medium text-xs truncate flex-1">
+                            {repo.full_name}
+                          </span>
+                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <Star className="w-3 h-3" />
+                            {(repo.stargazers_count ?? 0).toLocaleString()}
+                          </span>
+                        </button>
+                      ))
+                    ) : searchQuery ? (
+                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                        {searching ? "Searching..." : "No repositories found"}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                        Type to search for repositories
+                      </div>
                     )}
                   </div>
                 </div>
-
-                <div className="add-repo-dropdown max-h-64 overflow-auto">
-                  {/* All Repos option - always shown at top when not already added */}
-                  {!config.repos.some(isAllReposFilter) && !searchQuery && (
-                    <button
-                      onMouseDown={() => {
-                        handleAddRepo(ALL_REPOS_KEY);
-                        setShowAddRepo(false);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-primary/10 transition-colors text-left border-b border-border bg-primary/5"
-                    >
-                      <div className="w-4 h-4 rounded bg-primary/20 flex items-center justify-center shrink-0">
-                        <Users className="w-3 h-3 text-primary" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="font-medium text-xs">All Repos</span>
-                        <span className="text-[10px] text-muted-foreground ml-1.5">
-                          PRs across all repositories
-                        </span>
-                      </div>
-                    </button>
-                  )}
-                  {searchResults.length > 0 ? (
-                    searchResults.map((repo) => (
-                      <button
-                        key={repo.id}
-                        onMouseDown={() => {
-                          handleAddRepo(repo.full_name);
-                          setShowAddRepo(false);
-                          setSearchQuery("");
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
-                      >
-                        {repo.owner && (
-                          <img
-                            src={repo.owner.avatar_url}
-                            alt={repo.owner.login}
-                            className="w-4 h-4 rounded shrink-0"
-                          />
-                        )}
-                        <span className="font-medium text-xs truncate flex-1">
-                          {repo.full_name}
-                        </span>
-                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <Star className="w-3 h-3" />
-                          {(repo.stargazers_count ?? 0).toLocaleString()}
-                        </span>
-                      </button>
-                    ))
-                  ) : searchQuery ? (
-                    <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                      {searching ? "Searching..." : "No repositories found"}
-                    </div>
-                  ) : (
-                    <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                      Type to search for repositories
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>

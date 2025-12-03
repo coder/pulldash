@@ -193,6 +193,7 @@ export function PRReviewContent({
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [files, setFiles] = useState<PullRequestFile[]>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [viewerPermission, setViewerPermission] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -207,15 +208,21 @@ export function PRReviewContent({
       setError(null);
 
       try {
-        const [prData, filesData, commentsData] = await Promise.all([
-          github.getPR(owner, repo, number),
-          github.getPRFiles(owner, repo, number),
-          github.getPRComments(owner, repo, number),
-        ]);
+        const [prData, filesData, commentsData, reviewThreadsResult] =
+          await Promise.all([
+            github.getPR(owner, repo, number),
+            github.getPRFiles(owner, repo, number),
+            github.getPRComments(owner, repo, number),
+            github.getReviewThreads(owner, repo, number).catch(() => ({
+              threads: [],
+              viewerPermission: null,
+            })),
+          ]);
 
         setPr(prData);
         setFiles(filesData);
         setComments(commentsData as ReviewComment[]);
+        setViewerPermission(reviewThreadsResult.viewerPermission);
 
         // Track PR viewed
         track("pr_viewed", {
@@ -275,6 +282,7 @@ export function PRReviewContent({
       comments={comments}
       owner={owner}
       repo={repo}
+      viewerPermission={viewerPermission}
     >
       <PRReviewLayout />
     </PRReviewProvider>
@@ -631,19 +639,17 @@ const DiffPanel = memo(function DiffPanel() {
             <span className="text-sm font-medium">Overview</span>
           </div>
           <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
-            <span className="text-muted-foreground">
-              <span className="text-green-500">+{pr.additions}</span>{" "}
-              <span className="text-red-500">−{pr.deletions}</span>
-            </span>
-            <span className="text-muted-foreground hidden sm:inline">
-              <span className="text-green-500 font-medium">
-                {viewedFiles.size}
+            {viewedFiles.size > 0 && (
+              <span className="text-muted-foreground hidden sm:inline">
+                <span className="text-green-500 font-medium">
+                  {viewedFiles.size}
+                </span>
+                <span className="text-muted-foreground">
+                  {" / "}
+                  {files.length} files reviewed
+                </span>
               </span>
-              <span className="text-muted-foreground">
-                {" "}
-                / {files.length} reviewed
-              </span>
-            </span>
+            )}
             {canWrite && <SubmitReviewDropdown />}
           </div>
         </div>
@@ -661,12 +667,12 @@ const DiffPanel = memo(function DiffPanel() {
           <button
             onClick={() => store.navigateToPrevUnviewedFile()}
             className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
-            title="Previous unreviewed file (j)"
+            title="Previous unreviewed file (k)"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
             <span className="hidden xs:inline">Prev</span>
             <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
-              j
+              k
             </kbd>
           </button>
           <span className="text-xs text-muted-foreground tabular-nums">
@@ -675,29 +681,27 @@ const DiffPanel = memo(function DiffPanel() {
           <button
             onClick={() => store.navigateToNextUnviewedFile()}
             className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
-            title="Next unreviewed file (k)"
+            title="Next unreviewed file (j)"
           >
             <span className="hidden xs:inline">Next</span>
             <ChevronRight className="w-3.5 h-3.5" />
             <kbd className="hidden sm:inline-block ml-0.5 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono text-muted-foreground">
-              k
+              j
             </kbd>
           </button>
         </div>
         <div className="flex items-center gap-1 sm:gap-2 text-xs">
-          <span className="text-muted-foreground hidden xs:inline">
-            <span className="text-green-500">+{pr.additions}</span>{" "}
-            <span className="text-red-500">−{pr.deletions}</span>
-          </span>
-          <span className="text-muted-foreground hidden sm:inline">
-            <span className="text-green-500 font-medium">
-              {viewedFiles.size}
+          {viewedFiles.size > 0 && (
+            <span className="text-muted-foreground hidden sm:inline">
+              <span className="text-green-500 font-medium">
+                {viewedFiles.size}
+              </span>
+              <span className="text-muted-foreground">
+                {" / "}
+                {files.length} files reviewed
+              </span>
             </span>
-            <span className="text-muted-foreground">
-              {" "}
-              / {files.length} reviewed
-            </span>
-          </span>
+          )}
           {files.length - viewedFiles.size > 0 && (
             <span className="text-yellow-500 hidden md:inline">
               {files.length - viewedFiles.size} left
@@ -924,7 +928,7 @@ const KeybindsBar = memo(function KeybindsBar() {
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Keycap keyName="j" size="xs" />
-                <Keycap keyName="k" size="xs" /> next/prev unreviewed
+                <Keycap keyName="k" size="xs" /> next/prev file
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Keycap keyName="v" size="xs" /> mark viewed
@@ -2713,6 +2717,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   const submitting = usePRReviewSelector((s) => s.submittingReview);
   const pr = usePRReviewSelector((s) => s.pr);
   const currentUser = usePRReviewSelector((s) => s.currentUser);
+  const viewerPermission = usePRReviewSelector((s) => s.viewerPermission);
 
   const [reviewType, setReviewType] = useState<
     "COMMENT" | "APPROVE" | "REQUEST_CHANGES"
@@ -2722,6 +2727,13 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
 
   // Check if current user is the PR author (can't approve/request changes on own PR)
   const isAuthor = currentUser !== null && pr.user.login === currentUser;
+
+  // Check if viewer has write access (ADMIN, MAINTAIN, or WRITE can approve/request_changes)
+  // TRIAGE and READ permissions are limited to commenting only
+  const canApproveOrRequestChanges =
+    viewerPermission === "ADMIN" ||
+    viewerPermission === "MAINTAIN" ||
+    viewerPermission === "WRITE";
 
   // Group pending comments by file
   const commentsByFile = useMemo(() => {
@@ -2885,7 +2897,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
               </div>
             </label>
 
-            {!isAuthor && (
+            {!isAuthor && canApproveOrRequestChanges && (
               <>
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="APPROVE" className="mt-0.5" />
@@ -2911,6 +2923,29 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                   </div>
                 </label>
               </>
+            )}
+
+            {/* Show explanation when user cannot approve */}
+            {!isAuthor && !canApproveOrRequestChanges && viewerPermission && (
+              <div className="flex items-start gap-2 px-1 py-2 text-xs text-muted-foreground bg-muted/30 rounded-md">
+                <ExternalLink className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>
+                  You can only comment on this PR. The{" "}
+                  <span className="font-medium">
+                    {pr.base.repo.owner.login}
+                  </span>{" "}
+                  organization has OAuth app restrictions enabled.{" "}
+                  <a
+                    href="https://docs.github.com/en/organizations/managing-oauth-access-to-your-organizations-data/approving-oauth-apps-for-your-organization"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Learn more
+                  </a>
+                </span>
+              </div>
             )}
           </RadioGroup>
         </div>
@@ -2973,18 +3008,15 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
 function PRReviewSkeleton() {
   return (
     <div className="flex flex-col h-full">
-      {/* Header skeleton */}
-      <div className="shrink-0 border-b border-border bg-card/30 px-4 py-3">
-        <div className="flex items-center gap-3">
-          <Skeleton className="w-5 h-5 rounded-full" />
-          <Skeleton className="h-5 w-48" />
-          <Skeleton className="h-5 w-16" />
-          <div className="flex-1" />
-          <Skeleton className="h-8 w-24" />
-        </div>
-        <div className="flex items-center gap-2 mt-2">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-24" />
+      {/* Header skeleton - single row matching PRHeader */}
+      <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-4 py-2">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Skeleton className="h-6 w-16 rounded-full" />
+          <Skeleton className="h-4 w-24 hidden sm:block" />
+          <Skeleton className="h-5 flex-1 max-w-md" />
+          <Skeleton className="h-5 w-5 rounded-full" />
+          <Skeleton className="h-4 w-16 hidden sm:block" />
+          <Skeleton className="h-4 w-4" />
         </div>
       </div>
 
@@ -3009,21 +3041,151 @@ function PRReviewSkeleton() {
           </div>
         </aside>
 
-        {/* Diff panel skeleton */}
+        {/* Overview panel skeleton - shown by default since showOverview is true initially */}
         <main className="flex-1 overflow-hidden flex flex-col">
-          <div className="shrink-0 border-b border-border bg-card/30 px-3 py-1.5 flex items-center justify-between">
+          {/* Header bar matching the overview view */}
+          <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <Skeleton className="h-6 w-16" />
-              <Skeleton className="h-4 w-12" />
-              <Skeleton className="h-6 w-16" />
+              <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="text-sm font-medium text-muted-foreground">
+                Overview
+              </span>
             </div>
             <div className="flex items-center gap-2">
-              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-24 hidden sm:block" />
               <Skeleton className="h-8 w-28" />
             </div>
           </div>
-          <DiffSkeleton />
+          <OverviewPanelSkeleton />
         </main>
+      </div>
+    </div>
+  );
+}
+
+function OverviewPanelSkeleton() {
+  return (
+    <div className="flex-1 overflow-auto bg-background">
+      {/* Tabs skeleton */}
+      <div className="border-b border-border">
+        <div className="max-w-[1280px] mx-auto px-6">
+          <div className="flex items-center gap-4 py-2">
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-8 w-20" />
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content skeleton */}
+      <div className="max-w-[1280px] mx-auto px-6 py-6">
+        <div className="flex gap-6">
+          {/* Left Column */}
+          <div className="flex-1 min-w-0 space-y-4">
+            {/* PR Description skeleton */}
+            <div className="border border-border rounded-md overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50">
+                <Skeleton className="w-5 h-5 rounded-full" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <div className="p-4 space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-[90%]" />
+                <Skeleton className="h-4 w-[75%]" />
+                <Skeleton className="h-4 w-[85%]" />
+                <Skeleton className="h-4 w-[60%]" />
+              </div>
+            </div>
+
+            {/* Timeline items skeleton */}
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div
+                key={i}
+                className="border border-border rounded-md overflow-hidden"
+              >
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50">
+                  <Skeleton className="w-5 h-5 rounded-full" />
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+                <div className="p-4 space-y-2">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-[90%]" />
+                </div>
+              </div>
+            ))}
+
+            {/* Merge section skeleton */}
+            <div className="border border-border rounded-md overflow-hidden">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 p-4 border-b border-border last:border-b-0"
+                >
+                  <Skeleton className="w-5 h-5 rounded-full" />
+                  <div className="flex-1 space-y-1">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-3 w-64" />
+                  </div>
+                </div>
+              ))}
+              <div className="p-4">
+                <Skeleton className="h-10 w-full" />
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Sidebar skeleton */}
+          <div className="w-[296px] shrink-0 space-y-4 hidden lg:block">
+            {/* Reviewers */}
+            <div className="pb-3 border-b border-border">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-muted-foreground">
+                  Reviewers
+                </span>
+                <Skeleton className="w-4 h-4" />
+              </div>
+              <div className="space-y-2">
+                {Array.from({ length: 2 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Skeleton className="w-5 h-5 rounded-full" />
+                    <Skeleton className="h-4 w-24" />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Labels */}
+            <div className="pb-3 border-b border-border">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-muted-foreground">
+                  Labels
+                </span>
+                <Skeleton className="w-4 h-4" />
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-5 w-16 rounded-full" />
+                ))}
+              </div>
+            </div>
+
+            {/* Participants */}
+            <div className="pb-3 border-b border-border">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-muted-foreground">
+                  Participants
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="w-6 h-6 rounded-full" />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

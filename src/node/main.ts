@@ -27,9 +27,12 @@ app.get("*", (c) => {
   return c.html(html.replaceAll("./", "/"));
 });
 
-serve({
-  fetch: app.fetch,
-  port: 3000,
-});
-
-console.log("🚀 pulldash running at http://localhost:3000");
+serve(
+  {
+    fetch: app.fetch,
+    port: 3002,
+  },
+  (address) => {
+    console.log(`🚀 pulldash running at http://localhost:${address.port}`);
+  }
+);

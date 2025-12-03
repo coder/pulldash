@@ -82,24 +82,15 @@ export const PRHeader = memo(function PRHeader({
         {owner}/{repo}
       </a>
 
-      {/* Title */}
-      <h1 className="text-sm font-medium truncate flex-1 min-w-0">
-        <span>{pr.title}</span>
-        <span className="text-muted-foreground ml-1.5">#{pr.number}</span>
-      </h1>
-
-      {/* Right side info */}
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        {/* Branch info */}
-        <div className="text-[11px] text-muted-foreground font-mono hidden lg:flex items-center gap-1">
-          <BranchBadge branch={pr.base.ref} />
-          <span>←</span>
-          <BranchBadge branch={pr.head.ref} />
-        </div>
-
+      {/* Title with author and branches inline */}
+      <h1 className="text-sm font-medium truncate flex-1 min-w-0 flex items-center gap-2">
+        <span className="truncate">
+          <span>{pr.title}</span>
+          <span className="text-muted-foreground ml-1.5">#{pr.number}</span>
+        </span>
         {/* Author */}
         <UserHoverCard login={pr.user.login}>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors shrink-0">
             <img
               src={pr.user.avatar_url}
               alt={pr.user.login}
@@ -108,6 +99,21 @@ export const PRHeader = memo(function PRHeader({
             <span className="hidden lg:inline">{pr.user.login}</span>
           </div>
         </UserHoverCard>
+        {/* Branch info */}
+        <div className="text-[11px] text-muted-foreground font-mono hidden lg:flex items-center gap-1 shrink-0">
+          <BranchBadge branch={pr.base.ref} />
+          <span>←</span>
+          <BranchBadge branch={pr.head.ref} />
+        </div>
+      </h1>
+
+      {/* Right side info */}
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        {/* Line diff stats */}
+        <span className="text-xs hidden sm:inline">
+          <span className="text-green-500">+{pr.additions}</span>{" "}
+          <span className="text-red-500">−{pr.deletions}</span>
+        </span>
 
         {/* External Link */}
         <a

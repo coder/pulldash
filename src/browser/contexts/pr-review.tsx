@@ -132,6 +132,10 @@ interface PRReviewState {
   owner: string;
   repo: string;
   currentUser: string | null;
+  // Viewer permissions (from GraphQL) - affects what actions are available
+  // ADMIN, MAINTAIN, WRITE can approve/request_changes
+  // TRIAGE, READ can only comment
+  viewerPermission: string | null;
 
   // File navigation
   selectedFile: string | null;
@@ -302,6 +306,10 @@ class PRReviewStore {
 
   setCurrentUser = (username: string) => {
     this.set({ currentUser: username });
+  };
+
+  setViewerPermission = (permission: string | null) => {
+    this.set({ viewerPermission: permission });
   };
 
   // ---------------------------------------------------------------------------
@@ -1616,6 +1624,7 @@ interface PRReviewProviderProps {
   comments: ReviewComment[];
   owner: string;
   repo: string;
+  viewerPermission: string | null;
   children: ReactNode;
 }
 
@@ -1625,18 +1634,31 @@ export function PRReviewProvider({
   comments,
   owner,
   repo,
+  viewerPermission,
   children,
 }: PRReviewProviderProps) {
   // Create store once and keep it stable
   const storeRef = useRef<PRReviewStore | null>(null);
   if (!storeRef.current) {
-    storeRef.current = new PRReviewStore({ pr, files, comments, owner, repo });
+    storeRef.current = new PRReviewStore({
+      pr,
+      files,
+      comments,
+      owner,
+      repo,
+      viewerPermission,
+    });
   }
 
   // Sync comments from props (for when they're refreshed from server)
   useEffect(() => {
     storeRef.current?.setComments(comments);
   }, [comments]);
+
+  // Sync viewerPermission from props
+  useEffect(() => {
+    storeRef.current?.setViewerPermission(viewerPermission);
+  }, [viewerPermission]);
 
   // Extract relevant users for @mention suggestions
   // Priority: PR participants (author, reviewers, assignees, commenters)

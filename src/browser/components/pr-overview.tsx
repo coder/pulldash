@@ -33,6 +33,7 @@ import {
   Link,
   Trash2,
   FileEdit,
+  Files,
   Lock,
   Unlock,
   GitBranch,
@@ -45,6 +46,12 @@ import { Checkbox } from "../ui/checkbox";
 import { cn } from "../cn";
 import { Markdown, MarkdownEditor } from "../ui/markdown";
 import { UserHoverCard, UserAvatar } from "../ui/user-hover-card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
 import {
   usePRReviewSelector,
   usePRReviewStore,
@@ -123,6 +130,7 @@ export const PROverview = memo(function PROverview() {
   const [reopeningPR, setReopeningPR] = useState(false);
   const [deletingBranch, setDeletingBranch] = useState(false);
   const [branchDeleted, setBranchDeleted] = useState(false);
+  const [restoringBranch, setRestoringBranch] = useState(false);
   const [convertingToDraft, setConvertingToDraft] = useState(false);
   const [markingReady, setMarkingReady] = useState(false);
   const [assigningSelf, setAssigningSelf] = useState(false);
@@ -243,6 +251,16 @@ export const PROverview = memo(function PROverview() {
         setTimeline(timelineData);
         setReviewThreads(reviewThreadsResult.threads);
         setViewerPermission(reviewThreadsResult.viewerPermission);
+
+        // Check if branch was already deleted (and not restored) from timeline
+        // Branch is deleted if there are more delete events than restore events
+        const deleteCount = timelineData.filter(
+          (event) => (event as { event?: string }).event === "head_ref_deleted"
+        ).length;
+        const restoreCount = timelineData.filter(
+          (event) => (event as { event?: string }).event === "head_ref_restored"
+        ).length;
+        setBranchDeleted(deleteCount > restoreCount);
       } finally {
         setLoading(false);
       }
@@ -437,6 +455,23 @@ export const PROverview = memo(function PROverview() {
       setDeletingBranch(false);
     }
   }, [github, owner, repo, pr.head.ref, pr.head.repo]);
+
+  const handleRestoreBranch = useCallback(async () => {
+    setRestoringBranch(true);
+    try {
+      await github.restoreBranch(
+        pr.head.repo?.owner?.login ?? owner,
+        pr.head.repo?.name ?? repo,
+        pr.head.ref,
+        pr.head.sha
+      );
+      setBranchDeleted(false);
+    } catch (error) {
+      console.error("Failed to restore branch:", error);
+    } finally {
+      setRestoringBranch(false);
+    }
+  }, [github, owner, repo, pr.head.ref, pr.head.repo, pr.head.sha]);
 
   const handleRequestReviewer = useCallback(
     async (login: string) => {
@@ -678,7 +713,7 @@ export const PROverview = memo(function PROverview() {
       {/* Tabs */}
       <div className="border-b border-border overflow-x-auto">
         <div className="max-w-[1280px] mx-auto px-2 sm:px-6">
-          <div className="flex items-center gap-0 py-0">
+          <div className="flex items-center gap-1 py-1">
             <TabButton
               active={activeTab === "conversation"}
               onClick={() => setActiveTab("conversation")}
@@ -699,6 +734,18 @@ export const PROverview = memo(function PROverview() {
               icon={<CheckStatusIcon status={checkStatus} size="sm" />}
               label="Checks"
               count={checksCount}
+            />
+            <TabButton
+              active={false}
+              onClick={() => {
+                // Navigate to the first file
+                if (files.length > 0) {
+                  store.selectFile(files[0].filename);
+                }
+              }}
+              icon={<Files className="w-4 h-4" />}
+              label="Files Changed"
+              count={files.length}
             />
           </div>
         </div>
@@ -788,12 +835,14 @@ export const PROverview = memo(function PROverview() {
                       }
                     }
                     // Include other events (except comments/reviews which we handle separately)
+                    // Also skip "closed" event when PR was merged (it's redundant)
                     else if (
                       eventType &&
                       createdAt &&
                       !["commented", "reviewed", "line-commented"].includes(
                         eventType
-                      )
+                      ) &&
+                      !(eventType === "closed" && pr.merged)
                     ) {
                       entries.push({
                         type: "event",
@@ -839,6 +888,7 @@ export const PROverview = memo(function PROverview() {
                         <TimelineItem
                           key={`event-${index}`}
                           event={entry.data}
+                          pr={pr}
                         />
                       );
                     }
@@ -866,14 +916,15 @@ export const PROverview = memo(function PROverview() {
                   </div>
                 )}
 
-                {/* Merge Section - only show when user can merge */}
-                {canMergeRepo && pr.state === "open" && !pr.merged && (
+                {/* Merge Section - show to all users for open PRs */}
+                {pr.state === "open" && !pr.merged && (
                   <>
                     <MergeSection
                       pr={pr}
                       checkStatus={checkStatus}
                       checks={checks}
                       canMerge={canMergePR}
+                      canMergeRepo={canMergeRepo}
                       merging={merging}
                       mergeMethod={mergeMethod}
                       showMergeOptions={showMergeOptions}
@@ -886,8 +937,8 @@ export const PROverview = memo(function PROverview() {
                       }
                       onUpdateBranch={handleUpdateBranch}
                     />
-                    {/* Still in progress - only show if NOT a draft */}
-                    {!pr.draft && (
+                    {/* Still in progress - only show if NOT a draft and user can merge */}
+                    {canMergeRepo && !pr.draft && (
                       <div className="flex justify-end">
                         <p className="text-sm text-muted-foreground">
                           Still in progress?{" "}
@@ -904,6 +955,72 @@ export const PROverview = memo(function PROverview() {
                       </div>
                     )}
                   </>
+                )}
+
+                {/* Successfully merged and closed - show for merged PRs */}
+                {pr.merged && (
+                  <div className="border border-purple-500/30 rounded-md overflow-hidden bg-purple-500/10">
+                    <div className="flex items-start gap-3 p-4">
+                      <div className="p-2 rounded-full bg-purple-500/20 text-purple-400">
+                        <GitMerge className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold">
+                          Pull request successfully merged and closed
+                        </h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          You're all set — the{" "}
+                          <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                            {pr.head.label || pr.head.ref}
+                          </code>{" "}
+                          branch can be safely deleted.
+                        </p>
+                      </div>
+                      {canMergeRepo && !branchDeleted && (
+                        <button
+                          onClick={handleDeleteBranch}
+                          disabled={deletingBranch}
+                          className="shrink-0 px-4 py-2 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
+                        >
+                          {deletingBranch ? (
+                            <span className="flex items-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Deleting...
+                            </span>
+                          ) : (
+                            "Delete branch"
+                          )}
+                        </button>
+                      )}
+                      {branchDeleted && (
+                        <div className="shrink-0 flex items-center gap-3">
+                          <span className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Check className="w-4 h-4 text-green-400" />
+                            Deleted{" "}
+                            <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                              {pr.head.ref}
+                            </code>
+                          </span>
+                          {canMergeRepo && (
+                            <button
+                              onClick={handleRestoreBranch}
+                              disabled={restoringBranch}
+                              className="px-3 py-1.5 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
+                            >
+                              {restoringBranch ? (
+                                <span className="flex items-center gap-2">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Restoring...
+                                </span>
+                              ) : (
+                                "Restore branch"
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
 
                 {/* Closed with unmerged commits - show for closed, unmerged PRs */}
@@ -942,10 +1059,31 @@ export const PROverview = memo(function PROverview() {
                         </button>
                       )}
                       {branchDeleted && (
-                        <span className="shrink-0 px-4 py-2 text-sm text-green-400 flex items-center gap-2">
-                          <Check className="w-4 h-4" />
-                          Branch deleted
-                        </span>
+                        <div className="shrink-0 flex items-center gap-3">
+                          <span className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Check className="w-4 h-4 text-green-400" />
+                            Deleted{" "}
+                            <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                              {pr.head.ref}
+                            </code>
+                          </span>
+                          {canMergeRepo && (
+                            <button
+                              onClick={handleRestoreBranch}
+                              disabled={restoringBranch}
+                              className="px-3 py-1.5 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
+                            >
+                              {restoringBranch ? (
+                                <span className="flex items-center gap-2">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Restoring...
+                                </span>
+                              ) : (
+                                "Restore branch"
+                              )}
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                     {canMergeRepo && (
@@ -978,54 +1116,38 @@ export const PROverview = memo(function PROverview() {
                         className="w-10 h-10 rounded-full shrink-0"
                       />
                     )}
-                    <div className="flex-1 border border-border rounded-md overflow-hidden">
-                      <div className="px-3 py-2 border-b border-border bg-card/30">
-                        <span className="text-sm font-medium">
-                          Add a comment
-                        </span>
-                      </div>
-                      <div className="p-3">
-                        <MarkdownEditor
-                          value={commentText}
-                          onChange={setCommentText}
-                          placeholder="Add your comment here..."
-                          minHeight="100px"
-                        />
-                      </div>
-                      <div className="flex items-center justify-between px-3 py-2 bg-card/30 border-t border-border">
-                        <p className="text-xs text-muted-foreground">
-                          Markdown is supported
-                        </p>
-                        <div className="flex items-center gap-2">
-                          {canMergeRepo &&
-                            pr.state === "open" &&
-                            !pr.merged && (
-                              <button
-                                onClick={handleClosePR}
-                                disabled={closingPR}
-                                className="flex items-center gap-2 px-3 py-1.5 border border-red-500/50 text-red-400 rounded-md hover:bg-red-500/10 transition-colors text-sm font-medium disabled:opacity-50"
-                              >
-                                {closingPR ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                  <GitPullRequest className="w-4 h-4" />
-                                )}
-                                {closingPR
-                                  ? "Closing..."
-                                  : "Close pull request"}
-                              </button>
-                            )}
+                    <div className="flex-1 flex flex-col gap-2">
+                      <MarkdownEditor
+                        value={commentText}
+                        onChange={setCommentText}
+                        placeholder="Add your comment here..."
+                        minHeight="100px"
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        {canMergeRepo && pr.state === "open" && !pr.merged && (
                           <button
-                            onClick={handleAddComment}
-                            disabled={!commentText.trim() || submittingComment}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 text-sm font-medium"
+                            onClick={handleClosePR}
+                            disabled={closingPR}
+                            className="flex items-center gap-2 px-3 py-1.5 border border-red-500/50 text-red-400 rounded-md hover:bg-red-500/10 transition-colors text-sm font-medium disabled:opacity-50"
                           >
-                            {submittingComment ? (
+                            {closingPR ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : null}
-                            Comment
+                            ) : (
+                              <GitPullRequest className="w-4 h-4" />
+                            )}
+                            {closingPR ? "Closing..." : "Close pull request"}
                           </button>
-                        </div>
+                        )}
+                        <button
+                          onClick={handleAddComment}
+                          disabled={!commentText.trim() || submittingComment}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 text-sm font-medium"
+                        >
+                          {submittingComment ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : null}
+                          Comment
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1060,7 +1182,7 @@ export const PROverview = memo(function PROverview() {
             <SidebarSection
               title="Reviewers"
               action={
-                canMergeRepo && pr.state === "open" && !pr.merged ? (
+                canMergeRepo && !pr.merged ? (
                   <button
                     ref={reviewersButtonRef}
                     onClick={handleToggleReviewersPicker}
@@ -1092,7 +1214,7 @@ export const PROverview = memo(function PROverview() {
                         </span>
                       </UserHoverCard>
                       <Clock className="w-3.5 h-3.5 text-yellow-500" />
-                      {canMergeRepo && pr.state === "open" && !pr.merged && (
+                      {canMergeRepo && !pr.merged && (
                         <button
                           onClick={() => handleRemoveReviewer(reviewer.login)}
                           className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1204,7 +1326,7 @@ export const PROverview = memo(function PROverview() {
             <SidebarSection
               title="Assignees"
               action={
-                canMergeRepo && pr.state === "open" && !pr.merged ? (
+                canMergeRepo && !pr.merged ? (
                   <button
                     ref={assigneesButtonRef}
                     onClick={handleToggleAssigneesPicker}
@@ -1235,7 +1357,7 @@ export const PROverview = memo(function PROverview() {
                           {assignee.login}
                         </span>
                       </UserHoverCard>
-                      {canMergeRepo && pr.state === "open" && !pr.merged && (
+                      {canMergeRepo && !pr.merged && (
                         <button
                           onClick={() => handleRemoveAssignee(assignee.login)}
                           className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1250,7 +1372,7 @@ export const PROverview = memo(function PROverview() {
               ) : (
                 <span className="text-sm text-muted-foreground">
                   No one—
-                  {canMergeRepo && pr.state === "open" && !pr.merged ? (
+                  {canMergeRepo && !pr.merged ? (
                     <button
                       onClick={handleAssignSelf}
                       disabled={assigningSelf}
@@ -1743,6 +1865,17 @@ function ReviewBox({ review }: { review: Review }) {
         <span className="text-muted-foreground">
           {review.submitted_at && getTimeAgo(new Date(review.submitted_at))}
         </span>
+        <span className="flex-1" />
+        {review.html_url && (
+          <a
+            href={review.html_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 hover:underline text-xs"
+          >
+            View reviewed changes
+          </a>
+        )}
       </div>
       {review.body && (
         <div className="p-4">
@@ -1978,6 +2111,7 @@ function MergeSection({
   checkStatus,
   checks,
   canMerge: canMergePR,
+  canMergeRepo,
   merging,
   mergeMethod,
   showMergeOptions,
@@ -1992,11 +2126,12 @@ function MergeSection({
     draft?: boolean;
     state: string;
     mergeable: boolean | null;
-    requested_reviewers?: Array<{ login: string; avatar_url: string }>;
+    requested_reviewers?: Array<{ login: string; avatar_url: string }> | null;
   };
   checkStatus: "success" | "failure" | "pending";
   checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null;
   canMerge: boolean;
+  canMergeRepo: boolean;
   merging: boolean;
   mergeMethod: "merge" | "squash" | "rebase";
   showMergeOptions: boolean;
@@ -2065,7 +2200,7 @@ function MergeSection({
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Calculate checks info
+  // Calculate checks info with detailed breakdown
   const totalChecks = checks
     ? checks.checkRuns.length + checks.status.statuses.length
     : 0;
@@ -2077,14 +2212,30 @@ function MergeSection({
     ? checks.checkRuns.filter((c) => c.conclusion === "failure").length +
       checks.status.statuses.filter((s) => s.state === "failure").length
     : 0;
-  const pendingChecks = totalChecks - successfulChecks - failedChecks;
+  const skippedChecks = checks
+    ? checks.checkRuns.filter((c) => c.conclusion === "skipped").length
+    : 0;
+  const queuedChecks = checks
+    ? checks.checkRuns.filter((c) => c.status === "queued").length +
+      checks.status.statuses.filter((s) => s.state === "pending").length
+    : 0;
+  const inProgressChecks = checks
+    ? checks.checkRuns.filter((c) => c.status === "in_progress").length
+    : 0;
+  const pendingChecks = queuedChecks + inProgressChecks;
 
   // Review info
   const pendingReviewers = pr.requested_reviewers?.length || 0;
-  const hasApproval = latestReviews.some((r) => r.state === "APPROVED");
+  const approvalCount = latestReviews.filter(
+    (r) => r.state === "APPROVED"
+  ).length;
+  const hasApproval = approvalCount > 0;
   const hasChangesRequested = latestReviews.some(
     (r) => r.state === "CHANGES_REQUESTED"
   );
+  const changesRequestedCount = latestReviews.filter(
+    (r) => r.state === "CHANGES_REQUESTED"
+  ).length;
 
   // Status indicators
   const reviewStatus = hasChangesRequested
@@ -2138,22 +2289,14 @@ function MergeSection({
             <Clock className="w-5 h-5 text-yellow-500 shrink-0" />
           )}
           <div className="flex-1 text-left">
-            <p className="font-medium text-sm">
-              {hasChangesRequested
-                ? "Changes requested"
-                : hasApproval
-                  ? "Approved"
-                  : pendingReviewers > 0
-                    ? "Review requested"
-                    : "No reviews required"}
-            </p>
+            <p className="font-medium text-sm">Changes reviewed</p>
             <p className="text-xs text-muted-foreground">
               {hasChangesRequested
-                ? "Changes have been requested on this pull request."
+                ? `${changesRequestedCount} reviewer${changesRequestedCount !== 1 ? "s" : ""} requested changes`
                 : hasApproval
-                  ? "This pull request has been approved."
+                  ? `${approvalCount} approving review${approvalCount !== 1 ? "s" : ""} by reviewer${approvalCount !== 1 ? "s" : ""} with write access.`
                   : pendingReviewers > 0
-                    ? "Review has been requested on this pull request. It is not required to merge."
+                    ? "Review has been requested on this pull request."
                     : "No reviewers have been requested."}
             </p>
           </div>
@@ -2165,7 +2308,17 @@ function MergeSection({
           />
         </button>
         {expandedSections["reviews"] && (
-          <div className="px-4 pb-4 pt-0 border-t border-border bg-card/20">
+          <div className="px-4 pb-4 pt-0 border-t border-border bg-card/20 space-y-1">
+            {/* Approval count row */}
+            {approvalCount > 0 && (
+              <div className="flex items-center gap-2 py-2">
+                <CheckCircle2 className="w-4 h-4 text-green-500" />
+                <span className="text-sm">
+                  {approvalCount} approval{approvalCount !== 1 ? "s" : ""}
+                </span>
+              </div>
+            )}
+            {/* Pending reviews row */}
             {pendingReviewers > 0 && (
               <div className="flex items-center gap-2 py-2">
                 <User className="w-4 h-4 text-muted-foreground" />
@@ -2173,21 +2326,24 @@ function MergeSection({
                   {pendingReviewers} pending review
                   {pendingReviewers !== 1 ? "s" : ""}
                 </span>
-                <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto" />
               </div>
             )}
-            {latestReviews.length > 0 &&
-              latestReviews.map((review) => (
-                <div key={review.id} className="flex items-center gap-2 py-2">
-                  <img
-                    src={review.user?.avatar_url}
-                    alt={review.user?.login}
-                    className="w-5 h-5 rounded-full"
-                  />
-                  <span className="text-sm">{review.user?.login}</span>
-                  <ReviewStateIcon state={review.state} />
-                </div>
-              ))}
+            {/* Individual reviewers */}
+            {latestReviews.length > 0 && (
+              <div className="pt-2 border-t border-border/50">
+                {latestReviews.map((review) => (
+                  <div key={review.id} className="flex items-center gap-2 py-2">
+                    <img
+                      src={review.user?.avatar_url}
+                      alt={review.user?.login}
+                      className="w-5 h-5 rounded-full"
+                    />
+                    <span className="text-sm">{review.user?.login}</span>
+                    <ReviewStateIcon state={review.state} />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2214,10 +2370,16 @@ function MergeSection({
                   : "Some checks haven't completed yet"}
             </p>
             <p className="text-xs text-muted-foreground">
-              {successfulChecks} successful check
-              {successfulChecks !== 1 ? "s" : ""}
-              {failedChecks > 0 && `, ${failedChecks} failed`}
-              {pendingChecks > 0 && `, ${pendingChecks} pending`}
+              {[
+                queuedChecks > 0 && `${queuedChecks} queued`,
+                skippedChecks > 0 && `${skippedChecks} skipped`,
+                successfulChecks > 0 && `${successfulChecks} successful`,
+                failedChecks > 0 && `${failedChecks} failed`,
+                inProgressChecks > 0 && `${inProgressChecks} in progress`,
+              ]
+                .filter(Boolean)
+                .join(", ")}{" "}
+              {totalChecks === 1 ? "check" : "checks"}
             </p>
           </div>
           <ChevronDown
@@ -2231,14 +2393,31 @@ function MergeSection({
           <div className="px-4 pb-4 pt-0 border-t border-border bg-card/20 max-h-[300px] overflow-auto">
             {checks.checkRuns.map((check) => (
               <div key={check.id} className="flex items-center gap-2 py-2">
-                {check.conclusion === "success" ? (
+                {check.status === "queued" ? (
+                  <div className="w-4 h-4 rounded-full border-2 border-yellow-500 shrink-0" />
+                ) : check.status === "in_progress" ? (
+                  <Loader2 className="w-4 h-4 text-yellow-500 shrink-0 animate-spin" />
+                ) : check.conclusion === "success" ? (
                   <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
                 ) : check.conclusion === "failure" ? (
                   <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                ) : check.conclusion === "skipped" ? (
+                  <div className="w-4 h-4 rounded-full border-2 border-muted-foreground shrink-0 flex items-center justify-center">
+                    <div className="w-2 h-0.5 bg-muted-foreground" />
+                  </div>
                 ) : (
                   <Clock className="w-4 h-4 text-yellow-500 shrink-0" />
                 )}
                 <span className="text-sm truncate flex-1">{check.name}</span>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {check.status === "queued"
+                    ? "Queued"
+                    : check.status === "in_progress"
+                      ? "In progress"
+                      : check.conclusion === "skipped"
+                        ? "Skipped"
+                        : ""}
+                </span>
                 {check.html_url && (
                   <a
                     href={check.html_url}
@@ -2257,12 +2436,19 @@ function MergeSection({
                   <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
                 ) : status.state === "failure" || status.state === "error" ? (
                   <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                ) : status.state === "pending" ? (
+                  <div className="w-4 h-4 rounded-full border-2 border-yellow-500 shrink-0" />
                 ) : (
                   <Clock className="w-4 h-4 text-yellow-500 shrink-0" />
                 )}
                 <span className="text-sm truncate flex-1">
                   {status.context}
                 </span>
+                {status.state === "pending" && (
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    Pending
+                  </span>
+                )}
                 {status.target_url && (
                   <a
                     href={status.target_url}
@@ -2332,127 +2518,131 @@ function MergeSection({
         </div>
       </div>
 
-      {/* Merge controls */}
-      <div className="p-4 space-y-3">
-        {mergeError && <p className="text-sm text-destructive">{mergeError}</p>}
-
-        {/* Bypass rules checkbox */}
-        <label className="flex items-start gap-2 cursor-pointer group">
-          <Checkbox
-            checked={bypassRules}
-            onCheckedChange={(checked) => setBypassRules(checked === true)}
-            className="mt-0.5"
-          />
-          <span className="text-sm text-yellow-500 group-hover:text-yellow-400">
-            Merge without waiting for requirements to be met (bypass rules)
-          </span>
-        </label>
-
-        {/* Merge button with dropdown */}
-        <div className="flex items-center gap-0.5">
-          {/* Main merge button */}
-          <button
-            onClick={onMerge}
-            disabled={merging || (!canMergePR && !bypassRules)}
-            className={cn(
-              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
-              canMergePR || bypassRules
-                ? "bg-green-600 text-white hover:bg-green-700"
-                : "bg-muted text-muted-foreground cursor-not-allowed"
-            )}
-          >
-            {merging ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : bypassRules ? (
-              <>Bypass rules and merge ({mergeMethod})</>
-            ) : (
-              <>Merge when ready</>
-            )}
-          </button>
-
-          {/* Dropdown button */}
-          <button
-            ref={buttonRef}
-            onClick={handleToggleDropdown}
-            disabled={merging}
-            className={cn(
-              "px-2 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-green-700",
-              canMergePR || bypassRules
-                ? "bg-green-600 text-white hover:bg-green-700"
-                : "bg-muted text-muted-foreground cursor-not-allowed"
-            )}
-          >
-            <ChevronDown
-              className={cn(
-                "w-4 h-4 transition-transform",
-                showMergeOptions && "rotate-180"
-              )}
-            />
-          </button>
-
-          {/* Dropdown menu */}
-          {showMergeOptions && (
-            <>
-              {/* Backdrop */}
-              <div
-                className="fixed inset-0 z-[100]"
-                onClick={onToggleMergeOptions}
-              />
-              {/* Menu */}
-              <div
-                className="fixed bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
-                style={{
-                  top: dropdownPosition.top,
-                  left: dropdownPosition.left,
-                  width: Math.max(dropdownPosition.width, 280),
-                }}
-              >
-                {(["squash", "merge", "rebase"] as const).map((method) => (
-                  <button
-                    key={method}
-                    onClick={() => {
-                      onSetMergeMethod(method);
-                      onToggleMergeOptions();
-                    }}
-                    className={cn(
-                      "w-full px-4 py-3 text-left hover:bg-muted transition-colors",
-                      mergeMethod === method && "bg-muted/50"
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      {mergeMethod === method ? (
-                        <Check className="w-4 h-4 text-green-500" />
-                      ) : (
-                        <div className="w-4 h-4" />
-                      )}
-                      <span className="font-medium text-sm">
-                        {getMergeButtonText(method)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground ml-6 mt-0.5">
-                      {mergeDescriptions[method]}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </>
+      {/* Merge controls - only show when user can merge */}
+      {canMergeRepo && (
+        <div className="p-4 space-y-3">
+          {mergeError && (
+            <p className="text-sm text-destructive">{mergeError}</p>
           )}
-        </div>
 
-        {/* Merge queue info */}
-        <p className="text-xs text-muted-foreground">
-          This repository uses the{" "}
-          <a
-            href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-400 hover:underline"
-          >
-            merge queue
-          </a>{" "}
-          for all merges into the main branch.
-        </p>
-      </div>
+          {/* Bypass rules checkbox */}
+          <label className="flex items-start gap-2 cursor-pointer group">
+            <Checkbox
+              checked={bypassRules}
+              onCheckedChange={(checked) => setBypassRules(checked === true)}
+              className="mt-0.5"
+            />
+            <span className="text-sm text-yellow-500 group-hover:text-yellow-400">
+              Merge without waiting for requirements to be met (bypass rules)
+            </span>
+          </label>
+
+          {/* Merge button with dropdown */}
+          <div className="flex items-center gap-0.5">
+            {/* Main merge button */}
+            <button
+              onClick={onMerge}
+              disabled={merging || (!canMergePR && !bypassRules)}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
+                canMergePR || bypassRules
+                  ? "bg-green-600 text-white hover:bg-green-700"
+                  : "bg-muted text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              {merging ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : bypassRules ? (
+                <>Bypass rules and merge ({mergeMethod})</>
+              ) : (
+                <>Merge when ready</>
+              )}
+            </button>
+
+            {/* Dropdown button */}
+            <button
+              ref={buttonRef}
+              onClick={handleToggleDropdown}
+              disabled={merging}
+              className={cn(
+                "px-2 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-green-700",
+                canMergePR || bypassRules
+                  ? "bg-green-600 text-white hover:bg-green-700"
+                  : "bg-muted text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              <ChevronDown
+                className={cn(
+                  "w-4 h-4 transition-transform",
+                  showMergeOptions && "rotate-180"
+                )}
+              />
+            </button>
+
+            {/* Dropdown menu */}
+            {showMergeOptions && (
+              <>
+                {/* Backdrop */}
+                <div
+                  className="fixed inset-0 z-[100]"
+                  onClick={onToggleMergeOptions}
+                />
+                {/* Menu */}
+                <div
+                  className="fixed bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
+                  style={{
+                    top: dropdownPosition.top,
+                    left: dropdownPosition.left,
+                    width: Math.max(dropdownPosition.width, 280),
+                  }}
+                >
+                  {(["squash", "merge", "rebase"] as const).map((method) => (
+                    <button
+                      key={method}
+                      onClick={() => {
+                        onSetMergeMethod(method);
+                        onToggleMergeOptions();
+                      }}
+                      className={cn(
+                        "w-full px-4 py-3 text-left hover:bg-muted transition-colors",
+                        mergeMethod === method && "bg-muted/50"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        {mergeMethod === method ? (
+                          <Check className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <div className="w-4 h-4" />
+                        )}
+                        <span className="font-medium text-sm">
+                          {getMergeButtonText(method)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground ml-6 mt-0.5">
+                        {mergeDescriptions[method]}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Merge queue info */}
+          <p className="text-xs text-muted-foreground">
+            This repository uses the{" "}
+            <a
+              href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:underline"
+            >
+              merge queue
+            </a>{" "}
+            for all merges into the main branch.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -2788,42 +2978,36 @@ function EmojiReactions({
     );
   }, [groupedReactions]);
 
+  // Format users list for tooltip (like GitHub: "user1, user2, and 3 others reacted with 👍")
+  const formatUsersTooltip = (users: string[], emoji: string) => {
+    if (users.length === 0) return "";
+    if (users.length === 1) return `${users[0]} reacted with ${emoji}`;
+    if (users.length === 2)
+      return `${users[0]} and ${users[1]} reacted with ${emoji}`;
+    if (users.length === 3)
+      return `${users[0]}, ${users[1]}, and ${users[2]} reacted with ${emoji}`;
+    return `${users[0]}, ${users[1]}, and ${users.length - 2} others reacted with ${emoji}`;
+  };
+
   return (
-    <div className="flex items-center gap-1 flex-wrap">
-      {/* Existing reactions */}
-      {sortedReactions.map((content) => {
-        const group = groupedReactions[content];
-        const isUserReaction = !!group.userReactionId;
-
-        return (
-          <button
-            key={content}
-            onClick={() => handleReactionClick(content)}
-            className={cn(
-              "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border transition-colors",
-              isUserReaction
-                ? "bg-blue-500/20 border-blue-500/50 text-blue-400"
-                : "bg-muted/50 border-border hover:border-blue-500/50"
-            )}
-            title={group.users.join(", ")}
-          >
-            <span>{REACTION_EMOJIS[content]}</span>
-            <span>{group.count}</span>
-          </button>
-        );
-      })}
-
-      {/* Add reaction button */}
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {/* Add reaction button - on the left like GitHub */}
       {onAddReaction && (
         <>
-          <button
-            ref={buttonRef}
-            onClick={handleTogglePicker}
-            className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border border-border hover:border-blue-500/50 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Smile className="w-3.5 h-3.5" />
-            {sortedReactions.length === 0 && <Plus className="w-3 h-3" />}
-          </button>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  ref={buttonRef}
+                  onClick={handleTogglePicker}
+                  className="inline-flex items-center justify-center w-7 h-7 text-xs rounded-full border border-border hover:border-blue-500/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  <Smile className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Add reaction</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
 
           {/* Emoji picker dropdown - using fixed positioning to escape overflow */}
           {showPicker && (
@@ -2857,6 +3041,36 @@ function EmojiReactions({
           )}
         </>
       )}
+
+      {/* Existing reactions - after the add button */}
+      <TooltipProvider delayDuration={200}>
+        {sortedReactions.map((content) => {
+          const group = groupedReactions[content];
+          const isUserReaction = !!group.userReactionId;
+
+          return (
+            <Tooltip key={content}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => handleReactionClick(content)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors",
+                    isUserReaction
+                      ? "bg-blue-500/20 border-blue-500/50 text-blue-400"
+                      : "bg-muted/50 border-border hover:border-blue-500/50"
+                  )}
+                >
+                  <span>{REACTION_EMOJIS[content]}</span>
+                  <span>{group.count}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {formatUsersTooltip(group.users, REACTION_EMOJIS[content])}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </TooltipProvider>
     </div>
   );
 }
@@ -2952,9 +3166,10 @@ function getMergeButtonText(method: "merge" | "squash" | "rebase"): string {
 
 interface TimelineItemProps {
   event: TimelineEvent;
+  pr?: PullRequest;
 }
 
-function TimelineItem({ event }: TimelineItemProps) {
+function TimelineItem({ event, pr }: TimelineItemProps) {
   // Get the event type - timeline events have an "event" field
   // Commits don't have an "event" field but have a "sha" field
   const eventType = (event as { event?: string }).event;
@@ -3282,12 +3497,20 @@ function TimelineItem({ event }: TimelineItemProps) {
       }
 
       case "merged": {
+        const merged = event as { commit_id?: string };
         return {
           icon: <GitMerge className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> merged this
-              pull request
+              <span className="font-medium">{actor?.login}</span> merged commit{" "}
+              <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
+                {merged.commit_id?.slice(0, 7) ||
+                  pr?.merge_commit_sha?.slice(0, 7)}
+              </code>{" "}
+              into{" "}
+              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                {pr?.base?.ref || "main"}
+              </code>
             </span>
           ),
           color: "text-purple-400",
@@ -3499,15 +3722,9 @@ function PROverviewSkeleton() {
             {/* Add comment skeleton */}
             <div className="flex gap-3">
               <Skeleton className="w-10 h-10 rounded-full shrink-0" />
-              <div className="flex-1 border border-border rounded-md overflow-hidden">
-                <div className="px-3 py-2 border-b border-border bg-card/30">
-                  <Skeleton className="h-4 w-32" />
-                </div>
-                <div className="p-3">
-                  <Skeleton className="h-24 w-full" />
-                </div>
-                <div className="flex items-center justify-between px-3 py-2 bg-card/30 border-t border-border">
-                  <Skeleton className="h-3 w-32" />
+              <div className="flex-1 flex flex-col gap-2">
+                <Skeleton className="h-32 w-full rounded-md" />
+                <div className="flex justify-end">
                   <Skeleton className="h-8 w-24" />
                 </div>
               </div>
