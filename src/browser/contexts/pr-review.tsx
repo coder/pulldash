@@ -2047,14 +2047,14 @@ export function useKeyboardNavigation() {
 
       // Shortcuts
       switch (e.key.toLowerCase()) {
-        case "k":
+        case "j":
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
             store.navigateToNextUnviewedFile();
           });
           break;
-        case "j":
+        case "k":
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
