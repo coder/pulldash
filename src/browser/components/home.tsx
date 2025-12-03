@@ -64,6 +64,7 @@ type FilterMode =
   | "review-requested"
   | "reviewed"
   | "authored"
+  | "authored-by"
   | "involves"
   | "all";
 
@@ -74,6 +75,7 @@ const ALL_REPOS_KEY = "__all_repos__";
 interface RepoFilter {
   name: string;
   mode: FilterMode;
+  authoredBy?: string; // Username for "authored-by" filter mode
 }
 
 // Filter configuration stored in localStorage
@@ -136,7 +138,7 @@ function saveFilterConfig(config: FilterConfig): void {
 // Query Builder
 // ============================================================================
 
-function getModeFilter(mode: FilterMode): string {
+function getModeFilter(mode: FilterMode, authoredBy?: string): string {
   switch (mode) {
     case "review-requested":
       return "review-requested:@me";
@@ -144,6 +146,8 @@ function getModeFilter(mode: FilterMode): string {
       return "reviewed-by:@me";
     case "authored":
       return "author:@me";
+    case "authored-by":
+      return authoredBy ? `author:${authoredBy}` : "";
     case "involves":
       return "involves:@me";
     default:
@@ -175,29 +179,38 @@ function buildSearchQueries(config: FilterConfig): string[] {
   for (const filter of allReposFilters) {
     const parts = ["is:pr", "archived:false"];
     if (stateFilter) parts.push(stateFilter);
-    const modeFilter = getModeFilter(filter.mode);
+    const modeFilter = getModeFilter(filter.mode, filter.authoredBy);
     if (modeFilter) parts.push(modeFilter);
     // Note: "all" mode on All Repos would be too broad, so we skip it
-    if (filter.mode !== "all") {
+    // Also skip "authored-by" without a username
+    if (filter.mode !== "all" && !(filter.mode === "authored-by" && !filter.authoredBy)) {
       queries.push(parts.join(" "));
     }
   }
 
-  // Group specific repos by mode
+  // Group specific repos by mode+authoredBy (for authored-by, different authors need separate queries)
   if (specificRepos.length > 0) {
-    const byMode = new Map<FilterMode, string[]>();
+    // Use a composite key: mode + authoredBy for authored-by mode
+    const byModeKey = new Map<string, { mode: FilterMode; authoredBy?: string; repos: string[] }>();
     for (const repo of specificRepos) {
-      const existing = byMode.get(repo.mode) || [];
-      existing.push(repo.name);
-      byMode.set(repo.mode, existing);
+      const key = repo.mode === "authored-by" ? `${repo.mode}:${repo.authoredBy || ""}` : repo.mode;
+      const existing = byModeKey.get(key);
+      if (existing) {
+        existing.repos.push(repo.name);
+      } else {
+        byModeKey.set(key, { mode: repo.mode, authoredBy: repo.authoredBy, repos: [repo.name] });
+      }
     }
 
-    for (const [mode, repos] of byMode) {
+    for (const [, { mode, authoredBy, repos }] of byModeKey) {
+      // Skip authored-by without a username
+      if (mode === "authored-by" && !authoredBy) continue;
+      
       const parts = ["is:pr", "archived:false"];
       if (stateFilter) parts.push(stateFilter);
       // Multiple repo: qualifiers act as OR
       parts.push(...repos.map((r) => `repo:${r}`));
-      const modeFilter = getModeFilter(mode);
+      const modeFilter = getModeFilter(mode, authoredBy);
       if (modeFilter) parts.push(modeFilter);
       queries.push(parts.join(" "));
     }
@@ -257,6 +270,13 @@ const MODE_OPTIONS = [
     label: "My PRs",
     icon: User,
     description: "PRs you authored",
+  },
+  {
+    value: "authored-by",
+    label: "Created by User",
+    icon: User,
+    description: "PRs created by a specific user",
+    hasInput: true,
   },
   {
     value: "involves",
@@ -388,11 +408,11 @@ export function Home() {
   }, []);
 
   const handleRepoModeChange = useCallback(
-    (repoName: string, mode: FilterMode) => {
+    (repoName: string, mode: FilterMode, authoredBy?: string) => {
       setConfig((prev) => ({
         ...prev,
         repos: prev.repos.map((r) =>
-          r.name === repoName ? { ...r, mode } : r
+          r.name === repoName ? { ...r, mode, authoredBy } : r
         ),
       }));
     },
@@ -418,6 +438,9 @@ export function Home() {
     top: 0,
     left: 0,
   });
+  // Track author input for "authored-by" mode
+  const [authoredByInput, setAuthoredByInput] = useState<string>("");
+  const [showAuthoredByInput, setShowAuthoredByInput] = useState<string | null>(null);
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [addRepoButtonRef, setAddRepoButtonRef] =
     useState<HTMLButtonElement | null>(null);
@@ -534,6 +557,11 @@ export function Home() {
                     <span className={isAllRepos ? "font-medium" : "font-mono"}>
                       {isAllRepos ? "All Repos" : repo.name}
                     </span>
+                    {repo.mode === "authored-by" && repo.authoredBy && (
+                      <span className="text-muted-foreground">
+                        @{repo.authoredBy}
+                      </span>
+                    )}
                     <ChevronDown className="w-3 h-3 text-muted-foreground" />
                     <button
                       onClick={(e) => {
@@ -551,7 +579,11 @@ export function Home() {
                       {/* Backdrop to close dropdown when clicking outside */}
                       <div
                         className="fixed inset-0 z-40"
-                        onClick={() => setOpenRepoDropdown(null)}
+                        onClick={() => {
+                          setOpenRepoDropdown(null);
+                          setShowAuthoredByInput(null);
+                          setAuthoredByInput("");
+                        }}
                       />
                       <div
                         className="fixed w-56 bg-card border border-border rounded-lg shadow-xl z-50 max-w-[calc(100vw-1rem)] sm:max-w-none"
@@ -560,32 +592,89 @@ export function Home() {
                           left: repoDropdownPosition.left,
                         }}
                       >
-                        {availableModes.map((option) => (
-                          <button
-                            key={option.value}
-                            onClick={() => {
-                              handleRepoModeChange(repo.name, option.value);
-                              setOpenRepoDropdown(null);
-                            }}
-                            className={cn(
-                              "w-full flex items-start gap-2.5 px-3 py-2 hover:bg-muted/50 transition-colors text-left",
-                              repo.mode === option.value && "bg-muted/50"
-                            )}
-                          >
-                            <option.icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-xs">
-                                {option.label}
+                        {showAuthoredByInput === repo.name ? (
+                          <div className="p-3">
+                            <div className="text-xs font-medium mb-2">Enter GitHub username</div>
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                if (authoredByInput.trim()) {
+                                  handleRepoModeChange(repo.name, "authored-by", authoredByInput.trim());
+                                  setOpenRepoDropdown(null);
+                                  setShowAuthoredByInput(null);
+                                  setAuthoredByInput("");
+                                }
+                              }}
+                            >
+                              <div className="flex gap-2">
+                                <div className="relative flex-1">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">@</span>
+                                  <input
+                                    type="text"
+                                    value={authoredByInput}
+                                    onChange={(e) => setAuthoredByInput(e.target.value)}
+                                    placeholder="username"
+                                    className="w-full h-7 pl-6 pr-2 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                                    autoFocus
+                                  />
+                                </div>
+                                <button
+                                  type="submit"
+                                  disabled={!authoredByInput.trim()}
+                                  className="px-2 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  Apply
+                                </button>
                               </div>
-                              <div className="text-[10px] text-muted-foreground">
-                                {option.description}
+                            </form>
+                            <button
+                              onClick={() => {
+                                setShowAuthoredByInput(null);
+                                setAuthoredByInput("");
+                              }}
+                              className="mt-2 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              ← Back to modes
+                            </button>
+                          </div>
+                        ) : (
+                          availableModes.map((option) => (
+                            <button
+                              key={option.value}
+                              onClick={() => {
+                                if (option.value === "authored-by") {
+                                  setShowAuthoredByInput(repo.name);
+                                  setAuthoredByInput(repo.authoredBy || "");
+                                } else {
+                                  handleRepoModeChange(repo.name, option.value);
+                                  setOpenRepoDropdown(null);
+                                }
+                              }}
+                              className={cn(
+                                "w-full flex items-start gap-2.5 px-3 py-2 hover:bg-muted/50 transition-colors text-left",
+                                repo.mode === option.value && "bg-muted/50"
+                              )}
+                            >
+                              <option.icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-xs">
+                                  {option.label}
+                                  {option.value === "authored-by" && repo.mode === "authored-by" && repo.authoredBy && (
+                                    <span className="text-muted-foreground font-normal ml-1">
+                                      @{repo.authoredBy}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  {option.description}
+                                </div>
                               </div>
-                            </div>
-                            {repo.mode === option.value && (
-                              <Check className="w-3.5 h-3.5 text-primary mt-0.5" />
-                            )}
-                          </button>
-                        ))}
+                              {repo.mode === option.value && (
+                                <Check className="w-3.5 h-3.5 text-primary mt-0.5" />
+                              )}
+                            </button>
+                          ))
+                        )}
                       </div>
                     </>
                   )}
