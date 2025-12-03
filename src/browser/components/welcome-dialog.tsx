@@ -939,9 +939,11 @@ export function WelcomeDialog() {
     cancelDeviceAuth();
   }, [setShowWelcomeDialog, cancelDeviceAuth]);
 
-  // Show if: not authenticated and not anonymous, OR explicitly requested via showWelcomeDialog, OR rate limited
+  // Show if: not authenticated and not anonymous, OR explicitly requested via showWelcomeDialog (only when not authenticated), OR rate limited
   const shouldShow =
-    (!isAuthenticated && !isAnonymous) || showWelcomeDialog || isRateLimited;
+    (!isAuthenticated && !isAnonymous) ||
+    (showWelcomeDialog && !isAuthenticated) ||
+    isRateLimited;
 
   if (!shouldShow) {
     return null;
