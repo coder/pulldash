@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useCallback, memo, useMemo, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  memo,
+  useMemo,
+  useRef,
+} from "react";
 import {
   Loader2,
   GitPullRequest,
@@ -31,11 +38,18 @@ import {
   GitBranch,
   UserPlus,
   UserMinus,
+  RefreshCw,
 } from "lucide-react";
 import { Skeleton } from "../ui/skeleton";
+import { Checkbox } from "../ui/checkbox";
 import { cn } from "../cn";
 import { Markdown, MarkdownEditor } from "../ui/markdown";
-import { usePRReviewSelector, usePRReviewStore, getTimeAgo } from "../contexts/pr-review";
+import { UserHoverCard, UserAvatar } from "../ui/user-hover-card";
+import {
+  usePRReviewSelector,
+  usePRReviewStore,
+  getTimeAgo,
+} from "../contexts/pr-review";
 import {
   useGitHub,
   useCurrentUser,
@@ -48,6 +62,7 @@ import {
   type ReactionContent,
   type TimelineEvent,
 } from "../contexts/github";
+import { useCanWrite } from "../contexts/auth";
 
 // ============================================================================
 // Types
@@ -67,6 +82,7 @@ type TabType = "conversation" | "commits" | "checks";
 export const PROverview = memo(function PROverview() {
   const github = useGitHub();
   const store = usePRReviewStore();
+  const canWrite = useCanWrite();
   const pr = usePRReviewSelector((s) => s.pr);
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
@@ -78,6 +94,8 @@ export const PROverview = memo(function PROverview() {
     checkRuns: CheckRun[];
     status: CombinedStatus;
   } | null>(null);
+  const [checksLastUpdated, setChecksLastUpdated] = useState<Date | null>(null);
+  const [refreshingChecks, setRefreshingChecks] = useState(false);
   const [conversation, setConversation] = useState<IssueComment[]>([]);
   const [commits, setCommits] = useState<PRCommit[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -97,21 +115,72 @@ export const PROverview = memo(function PROverview() {
   const [submittingComment, setSubmittingComment] = useState(false);
 
   // Reviewers and Assignees state
-  const [collaborators, setCollaborators] = useState<Array<{ login: string; avatar_url: string }>>([]);
+  const [collaborators, setCollaborators] = useState<
+    Array<{ login: string; avatar_url: string }>
+  >([]);
   const [showReviewersPicker, setShowReviewersPicker] = useState(false);
   const [showAssigneesPicker, setShowAssigneesPicker] = useState(false);
-  const [reviewersPickerPosition, setReviewersPickerPosition] = useState({ top: 0, left: 0 });
-  const [assigneesPickerPosition, setAssigneesPickerPosition] = useState({ top: 0, left: 0 });
+  const [reviewersPickerPosition, setReviewersPickerPosition] = useState({
+    top: 0,
+    left: 0,
+  });
+  const [assigneesPickerPosition, setAssigneesPickerPosition] = useState({
+    top: 0,
+    left: 0,
+  });
   const [loadingCollaborators, setLoadingCollaborators] = useState(false);
   const reviewersButtonRef = useRef<HTMLButtonElement>(null);
   const assigneesButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    document.title = `${pr.title} · Pull Request #${pr.number} · Pulldash`;
+  }, [pr.title, pr.number]);
+
+  // Fetch checks function (used for both initial load and refresh)
+  const fetchChecks = useCallback(async () => {
+    try {
+      const checksData = await github
+        .getPRChecks(owner, repo, pr.head.sha)
+        .catch(() => ({
+          checkRuns: [] as CheckRun[],
+          status: {
+            state: "",
+            sha: "",
+            total_count: 0,
+            statuses: [],
+            repository: {} as CombinedStatus["repository"],
+            commit_url: "",
+            url: "",
+          } as CombinedStatus,
+        }));
+      setChecks(checksData);
+      setChecksLastUpdated(new Date());
+    } catch {
+      // Ignore errors on refresh
+    }
+  }, [github, owner, repo, pr.head.sha]);
+
+  // Manual refresh handler
+  const handleRefreshChecks = useCallback(async () => {
+    setRefreshingChecks(true);
+    await fetchChecks();
+    setRefreshingChecks(false);
+  }, [fetchChecks]);
+
+  useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const [reviewsData, checksData, conversationData, commitsData, timelineData] = await Promise.all([
-          github.getPRReviews(owner, repo, pr.number).catch(() => [] as Review[]),
+        const [
+          reviewsData,
+          checksData,
+          conversationData,
+          commitsData,
+          timelineData,
+        ] = await Promise.all([
+          github
+            .getPRReviews(owner, repo, pr.number)
+            .catch(() => [] as Review[]),
           github.getPRChecks(owner, repo, pr.head.sha).catch(() => ({
             checkRuns: [] as CheckRun[],
             status: {
@@ -124,13 +193,20 @@ export const PROverview = memo(function PROverview() {
               url: "",
             } as CombinedStatus,
           })),
-          github.getPRConversation(owner, repo, pr.number).catch(() => [] as IssueComment[]),
-          github.getPRCommits(owner, repo, pr.number).catch(() => [] as PRCommit[]),
-          github.getPRTimeline(owner, repo, pr.number).catch(() => [] as TimelineEvent[]),
+          github
+            .getPRConversation(owner, repo, pr.number)
+            .catch(() => [] as IssueComment[]),
+          github
+            .getPRCommits(owner, repo, pr.number)
+            .catch(() => [] as PRCommit[]),
+          github
+            .getPRTimeline(owner, repo, pr.number)
+            .catch(() => [] as TimelineEvent[]),
         ]);
 
         setReviews(reviewsData);
         setChecks(checksData);
+        setChecksLastUpdated(new Date());
         setConversation(conversationData);
         setCommits(commitsData);
         setTimeline(timelineData);
@@ -142,12 +218,25 @@ export const PROverview = memo(function PROverview() {
     fetchData();
   }, [github, owner, repo, pr.number, pr.head.sha]);
 
+  // Auto-refresh checks every 30 seconds when PR is open
+  useEffect(() => {
+    if (pr.state !== "open" || pr.merged) return;
+
+    const interval = setInterval(() => {
+      fetchChecks();
+    }, 30_000);
+
+    return () => clearInterval(interval);
+  }, [fetchChecks, pr.state, pr.merged]);
+
   const handleMerge = useCallback(async () => {
     setMerging(true);
     setMergeError(null);
 
     try {
-      await github.mergePR(owner, repo, pr.number, { merge_method: mergeMethod });
+      await github.mergePR(owner, repo, pr.number, {
+        merge_method: mergeMethod,
+      });
       window.location.reload();
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : "Failed to merge");
@@ -213,7 +302,12 @@ export const PROverview = memo(function PROverview() {
     setLoadingCollaborators(true);
     try {
       const data = await github.getRepoCollaborators(owner, repo);
-      setCollaborators(data.map(c => ({ login: c.login || '', avatar_url: c.avatar_url || '' })));
+      setCollaborators(
+        data.map((c) => ({
+          login: c.login || "",
+          avatar_url: c.avatar_url || "",
+        }))
+      );
     } catch (error) {
       console.error("Failed to fetch collaborators:", error);
     } finally {
@@ -257,41 +351,53 @@ export const PROverview = memo(function PROverview() {
     }
   }, [github, owner, repo, pr.number, store]);
 
-  const handleRequestReviewer = useCallback(async (login: string) => {
-    try {
-      await github.requestReviewers(owner, repo, pr.number, [login]);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to request reviewer:", error);
-    }
-  }, [github, owner, repo, pr.number, refetchPR]);
+  const handleRequestReviewer = useCallback(
+    async (login: string) => {
+      try {
+        await github.requestReviewers(owner, repo, pr.number, [login]);
+        await refetchPR();
+      } catch (error) {
+        console.error("Failed to request reviewer:", error);
+      }
+    },
+    [github, owner, repo, pr.number, refetchPR]
+  );
 
-  const handleRemoveReviewer = useCallback(async (login: string) => {
-    try {
-      await github.removeReviewers(owner, repo, pr.number, [login]);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to remove reviewer:", error);
-    }
-  }, [github, owner, repo, pr.number, refetchPR]);
+  const handleRemoveReviewer = useCallback(
+    async (login: string) => {
+      try {
+        await github.removeReviewers(owner, repo, pr.number, [login]);
+        await refetchPR();
+      } catch (error) {
+        console.error("Failed to remove reviewer:", error);
+      }
+    },
+    [github, owner, repo, pr.number, refetchPR]
+  );
 
-  const handleAddAssignee = useCallback(async (login: string) => {
-    try {
-      await github.addAssignees(owner, repo, pr.number, [login]);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to add assignee:", error);
-    }
-  }, [github, owner, repo, pr.number, refetchPR]);
+  const handleAddAssignee = useCallback(
+    async (login: string) => {
+      try {
+        await github.addAssignees(owner, repo, pr.number, [login]);
+        await refetchPR();
+      } catch (error) {
+        console.error("Failed to add assignee:", error);
+      }
+    },
+    [github, owner, repo, pr.number, refetchPR]
+  );
 
-  const handleRemoveAssignee = useCallback(async (login: string) => {
-    try {
-      await github.removeAssignees(owner, repo, pr.number, [login]);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to remove assignee:", error);
-    }
-  }, [github, owner, repo, pr.number, refetchPR]);
+  const handleRemoveAssignee = useCallback(
+    async (login: string) => {
+      try {
+        await github.removeAssignees(owner, repo, pr.number, [login]);
+        await refetchPR();
+      } catch (error) {
+        console.error("Failed to remove assignee:", error);
+      }
+    },
+    [github, owner, repo, pr.number, refetchPR]
+  );
 
   const handleAssignSelf = useCallback(async () => {
     if (!currentUser) return;
@@ -305,14 +411,20 @@ export const PROverview = memo(function PROverview() {
 
   // Reaction state - keyed by "issue" for PR body or comment ID
   const [reactions, setReactions] = useState<Record<string, Reaction[]>>({});
-  const [loadingReactions, setLoadingReactions] = useState<Set<string>>(new Set());
+  const [loadingReactions, setLoadingReactions] = useState<Set<string>>(
+    new Set()
+  );
 
   // Fetch PR body reactions
   useEffect(() => {
     const fetchPRReactions = async () => {
       try {
-        const prReactions = await github.getIssueReactions(owner, repo, pr.number);
-        setReactions(prev => ({ ...prev, issue: prReactions }));
+        const prReactions = await github.getIssueReactions(
+          owner,
+          repo,
+          pr.number
+        );
+        setReactions((prev) => ({ ...prev, issue: prReactions }));
       } catch (error) {
         console.error("Failed to fetch PR reactions:", error);
       }
@@ -325,10 +437,20 @@ export const PROverview = memo(function PROverview() {
     const fetchCommentReactions = async () => {
       for (const comment of conversation) {
         try {
-          const commentReactions = await github.getCommentReactions(owner, repo, comment.id);
-          setReactions(prev => ({ ...prev, [`comment-${comment.id}`]: commentReactions }));
+          const commentReactions = await github.getCommentReactions(
+            owner,
+            repo,
+            comment.id
+          );
+          setReactions((prev) => ({
+            ...prev,
+            [`comment-${comment.id}`]: commentReactions,
+          }));
         } catch (error) {
-          console.error(`Failed to fetch reactions for comment ${comment.id}:`, error);
+          console.error(
+            `Failed to fetch reactions for comment ${comment.id}:`,
+            error
+          );
         }
       }
     };
@@ -337,53 +459,80 @@ export const PROverview = memo(function PROverview() {
     }
   }, [github, owner, repo, conversation]);
 
-  const handleAddPRReaction = useCallback(async (content: ReactionContent) => {
-    try {
-      const newReaction = await github.addIssueReaction(owner, repo, pr.number, content);
-      setReactions(prev => ({
-        ...prev,
-        issue: [...(prev.issue || []), newReaction],
-      }));
-    } catch (error) {
-      console.error("Failed to add reaction:", error);
-    }
-  }, [github, owner, repo, pr.number]);
+  const handleAddPRReaction = useCallback(
+    async (content: ReactionContent) => {
+      try {
+        const newReaction = await github.addIssueReaction(
+          owner,
+          repo,
+          pr.number,
+          content
+        );
+        setReactions((prev) => ({
+          ...prev,
+          issue: [...(prev.issue || []), newReaction],
+        }));
+      } catch (error) {
+        console.error("Failed to add reaction:", error);
+      }
+    },
+    [github, owner, repo, pr.number]
+  );
 
-  const handleRemovePRReaction = useCallback(async (reactionId: number) => {
-    try {
-      await github.deleteIssueReaction(owner, repo, pr.number, reactionId);
-      setReactions(prev => ({
-        ...prev,
-        issue: (prev.issue || []).filter(r => r.id !== reactionId),
-      }));
-    } catch (error) {
-      console.error("Failed to remove reaction:", error);
-    }
-  }, [github, owner, repo, pr.number]);
+  const handleRemovePRReaction = useCallback(
+    async (reactionId: number) => {
+      try {
+        await github.deleteIssueReaction(owner, repo, pr.number, reactionId);
+        setReactions((prev) => ({
+          ...prev,
+          issue: (prev.issue || []).filter((r) => r.id !== reactionId),
+        }));
+      } catch (error) {
+        console.error("Failed to remove reaction:", error);
+      }
+    },
+    [github, owner, repo, pr.number]
+  );
 
-  const handleAddCommentReaction = useCallback(async (commentId: number, content: ReactionContent) => {
-    try {
-      const newReaction = await github.addCommentReaction(owner, repo, commentId, content);
-      setReactions(prev => ({
-        ...prev,
-        [`comment-${commentId}`]: [...(prev[`comment-${commentId}`] || []), newReaction],
-      }));
-    } catch (error) {
-      console.error("Failed to add reaction:", error);
-    }
-  }, [github, owner, repo]);
+  const handleAddCommentReaction = useCallback(
+    async (commentId: number, content: ReactionContent) => {
+      try {
+        const newReaction = await github.addCommentReaction(
+          owner,
+          repo,
+          commentId,
+          content
+        );
+        setReactions((prev) => ({
+          ...prev,
+          [`comment-${commentId}`]: [
+            ...(prev[`comment-${commentId}`] || []),
+            newReaction,
+          ],
+        }));
+      } catch (error) {
+        console.error("Failed to add reaction:", error);
+      }
+    },
+    [github, owner, repo]
+  );
 
-  const handleRemoveCommentReaction = useCallback(async (commentId: number, reactionId: number) => {
-    try {
-      await github.deleteCommentReaction(owner, repo, commentId, reactionId);
-      setReactions(prev => ({
-        ...prev,
-        [`comment-${commentId}`]: (prev[`comment-${commentId}`] || []).filter(r => r.id !== reactionId),
-      }));
-    } catch (error) {
-      console.error("Failed to remove reaction:", error);
-    }
-  }, [github, owner, repo]);
+  const handleRemoveCommentReaction = useCallback(
+    async (commentId: number, reactionId: number) => {
+      try {
+        await github.deleteCommentReaction(owner, repo, commentId, reactionId);
+        setReactions((prev) => ({
+          ...prev,
+          [`comment-${commentId}`]: (prev[`comment-${commentId}`] || []).filter(
+            (r) => r.id !== reactionId
+          ),
+        }));
+      } catch (error) {
+        console.error("Failed to remove reaction:", error);
+      }
+    },
+    [github, owner, repo]
+  );
 
   // Calculate check status
   const checkStatus = calculateCheckStatus(checks);
@@ -391,31 +540,42 @@ export const PROverview = memo(function PROverview() {
   const canMergePR = canMerge(pr, checkStatus);
 
   // Tab counts
-  const checksCount = checks ? checks.checkRuns.length + checks.status.statuses.length : 0;
+  const checksCount = checks
+    ? checks.checkRuns.length + checks.status.statuses.length
+    : 0;
 
   // Get unique participants
   const participants = useMemo(() => {
     const users = new Map<string, { login: string; avatar_url: string }>();
-    
+
     // PR author
     if (pr.user) {
-      users.set(pr.user.login, { login: pr.user.login, avatar_url: pr.user.avatar_url });
+      users.set(pr.user.login, {
+        login: pr.user.login,
+        avatar_url: pr.user.avatar_url,
+      });
     }
-    
+
     // Reviewers
     reviews.forEach((review) => {
       if (review.user) {
-        users.set(review.user.login, { login: review.user.login, avatar_url: review.user.avatar_url });
+        users.set(review.user.login, {
+          login: review.user.login,
+          avatar_url: review.user.avatar_url,
+        });
       }
     });
-    
+
     // Commenters
     conversation.forEach((comment) => {
       if (comment.user) {
-        users.set(comment.user.login, { login: comment.user.login, avatar_url: comment.user.avatar_url });
+        users.set(comment.user.login, {
+          login: comment.user.login,
+          avatar_url: comment.user.avatar_url,
+        });
       }
     });
-    
+
     return Array.from(users.values());
   }, [pr.user, reviews, conversation]);
 
@@ -476,64 +636,75 @@ export const PROverview = memo(function PROverview() {
                 {/* Timeline - merge comments, reviews, and events by date */}
                 {(() => {
                   // Build unified timeline
-                  type TimelineEntry = 
-                    | { type: 'comment'; data: IssueComment; date: Date }
-                    | { type: 'review'; data: Review; date: Date }
-                    | { type: 'event'; data: TimelineEvent; date: Date };
-                  
+                  type TimelineEntry =
+                    | { type: "comment"; data: IssueComment; date: Date }
+                    | { type: "review"; data: Review; date: Date }
+                    | { type: "event"; data: TimelineEvent; date: Date };
+
                   const entries: TimelineEntry[] = [];
-                  
+
                   // Add comments
-                  conversation.forEach(comment => {
+                  conversation.forEach((comment) => {
                     entries.push({
-                      type: 'comment',
+                      type: "comment",
                       data: comment,
                       date: new Date(comment.created_at),
                     });
                   });
-                  
+
                   // Add reviews with bodies
-                  latestReviews.filter(r => r.body && r.submitted_at).forEach(review => {
-                    entries.push({
-                      type: 'review',
-                      data: review,
-                      date: new Date(review.submitted_at!),
+                  latestReviews
+                    .filter((r) => r.body && r.submitted_at)
+                    .forEach((review) => {
+                      entries.push({
+                        type: "review",
+                        data: review,
+                        date: new Date(review.submitted_at!),
+                      });
                     });
-                  });
-                  
+
                   // Add timeline events (excluding those we show as comments/reviews)
-                  timeline.forEach(event => {
+                  timeline.forEach((event) => {
                     const eventType = (event as { event?: string }).event;
-                    const createdAt = (event as { created_at?: string }).created_at;
+                    const createdAt = (event as { created_at?: string })
+                      .created_at;
                     const sha = (event as { sha?: string }).sha;
-                    const commitDate = (event as { commit?: { author?: { date?: string } } }).commit?.author?.date;
-                    
+                    const commitDate = (
+                      event as { commit?: { author?: { date?: string } } }
+                    ).commit?.author?.date;
+
                     // Include commits (have sha but no event field)
                     if (sha && !eventType) {
                       const date = createdAt || commitDate;
                       if (date) {
                         entries.push({
-                          type: 'event',
+                          type: "event",
                           data: event,
                           date: new Date(date),
                         });
                       }
                     }
                     // Include other events (except comments/reviews which we handle separately)
-                    else if (eventType && createdAt && !['commented', 'reviewed', 'line-commented'].includes(eventType)) {
+                    else if (
+                      eventType &&
+                      createdAt &&
+                      !["commented", "reviewed", "line-commented"].includes(
+                        eventType
+                      )
+                    ) {
                       entries.push({
-                        type: 'event',
+                        type: "event",
                         data: event,
                         date: new Date(createdAt),
                       });
                     }
                   });
-                  
+
                   // Sort by date
                   entries.sort((a, b) => a.date.getTime() - b.date.getTime());
-                  
+
                   return entries.map((entry, index) => {
-                    if (entry.type === 'comment') {
+                    if (entry.type === "comment") {
                       const comment = entry.data;
                       return (
                         <CommentBox
@@ -542,24 +713,38 @@ export const PROverview = memo(function PROverview() {
                           createdAt={comment.created_at}
                           body={comment.body}
                           reactions={reactions[`comment-${comment.id}`]}
-                          onAddReaction={(content) => handleAddCommentReaction(comment.id, content)}
-                          onRemoveReaction={(reactionId) => handleRemoveCommentReaction(comment.id, reactionId)}
+                          onAddReaction={(content) =>
+                            handleAddCommentReaction(comment.id, content)
+                          }
+                          onRemoveReaction={(reactionId) =>
+                            handleRemoveCommentReaction(comment.id, reactionId)
+                          }
                           currentUser={currentUser}
                         />
                       );
                     }
-                    if (entry.type === 'review') {
-                      return <ReviewBox key={`review-${entry.data.id}`} review={entry.data} />;
+                    if (entry.type === "review") {
+                      return (
+                        <ReviewBox
+                          key={`review-${entry.data.id}`}
+                          review={entry.data}
+                        />
+                      );
                     }
-                    if (entry.type === 'event') {
-                      return <TimelineItem key={`event-${index}`} event={entry.data} />;
+                    if (entry.type === "event") {
+                      return (
+                        <TimelineItem
+                          key={`event-${index}`}
+                          event={entry.data}
+                        />
+                      );
                     }
                     return null;
                   });
                 })()}
 
-                {/* Merge Section */}
-                {pr.state === "open" && !pr.merged && (
+                {/* Merge Section - only show when user can write */}
+                {canWrite && pr.state === "open" && !pr.merged && (
                   <>
                     <MergeSection
                       pr={pr}
@@ -573,7 +758,9 @@ export const PROverview = memo(function PROverview() {
                       latestReviews={latestReviews}
                       onMerge={handleMerge}
                       onSetMergeMethod={setMergeMethod}
-                      onToggleMergeOptions={() => setShowMergeOptions(!showMergeOptions)}
+                      onToggleMergeOptions={() =>
+                        setShowMergeOptions(!showMergeOptions)
+                      }
                       onUpdateBranch={handleUpdateBranch}
                     />
                     {/* Still in progress - only show if NOT a draft */}
@@ -593,65 +780,81 @@ export const PROverview = memo(function PROverview() {
                   </>
                 )}
 
-                {/* Add a comment */}
-                <div className="flex gap-3">
-                  {/* Avatar */}
-                  {currentUser && (
-                    <img
-                      src={`https://github.com/${currentUser}.png`}
-                      alt={currentUser}
-                      className="w-10 h-10 rounded-full shrink-0"
-                    />
-                  )}
-                  <div className="flex-1 border border-border rounded-md overflow-hidden">
-                    <div className="px-3 py-2 border-b border-border bg-card/30">
-                      <span className="text-sm font-medium">Add a comment</span>
-                    </div>
-                    <div className="p-3">
-                      <MarkdownEditor
-                        value={commentText}
-                        onChange={setCommentText}
-                        placeholder="Add your comment here..."
-                        minHeight="100px"
+                {/* Add a comment - only show when user can write */}
+                {canWrite ? (
+                  <div className="flex gap-3">
+                    {/* Avatar */}
+                    {currentUser && (
+                      <img
+                        src={`https://github.com/${currentUser}.png`}
+                        alt={currentUser}
+                        className="w-10 h-10 rounded-full shrink-0"
                       />
-                    </div>
-                    <div className="flex items-center justify-between px-3 py-2 bg-card/30 border-t border-border">
-                      <p className="text-xs text-muted-foreground">
-                        Markdown is supported
-                      </p>
-        <div className="flex items-center gap-2">
-                        {pr.state === "open" && !pr.merged && (
-          <button
-                            onClick={handleClosePR}
-                            className="flex items-center gap-2 px-3 py-1.5 border border-red-500/50 text-red-400 rounded-md hover:bg-red-500/10 transition-colors text-sm font-medium"
-          >
-                            <GitPullRequest className="w-4 h-4" />
-                            Close pull request
-          </button>
-                        )}
-                        <button
-                          onClick={handleAddComment}
-                          disabled={!commentText.trim() || submittingComment}
-                          className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 text-sm font-medium"
-                        >
-                          {submittingComment ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : null}
-                          Comment
-                        </button>
-        </div>
+                    )}
+                    <div className="flex-1 border border-border rounded-md overflow-hidden">
+                      <div className="px-3 py-2 border-b border-border bg-card/30">
+                        <span className="text-sm font-medium">
+                          Add a comment
+                        </span>
+                      </div>
+                      <div className="p-3">
+                        <MarkdownEditor
+                          value={commentText}
+                          onChange={setCommentText}
+                          placeholder="Add your comment here..."
+                          minHeight="100px"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between px-3 py-2 bg-card/30 border-t border-border">
+                        <p className="text-xs text-muted-foreground">
+                          Markdown is supported
+                        </p>
+                        <div className="flex items-center gap-2">
+                          {pr.state === "open" && !pr.merged && (
+                            <button
+                              onClick={handleClosePR}
+                              className="flex items-center gap-2 px-3 py-1.5 border border-red-500/50 text-red-400 rounded-md hover:bg-red-500/10 transition-colors text-sm font-medium"
+                            >
+                              <GitPullRequest className="w-4 h-4" />
+                              Close pull request
+                            </button>
+                          )}
+                          <button
+                            onClick={handleAddComment}
+                            disabled={!commentText.trim() || submittingComment}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 text-sm font-medium"
+                          >
+                            {submittingComment ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : null}
+                            Comment
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex items-center gap-2 py-3 px-4 bg-amber-500/10 border border-amber-500/20 rounded-md">
+                    <MessageSquare className="w-4 h-4 text-amber-500" />
+                    <span className="text-sm text-amber-200">
+                      Sign in to leave comments
+                    </span>
+                  </div>
+                )}
               </>
             )}
 
             {activeTab === "commits" && (
-              <CommitsTab commits={commits} />
+              <CommitsTab commits={commits} owner={owner} repo={repo} />
             )}
 
             {activeTab === "checks" && (
-              <ChecksTab checks={checks} />
+              <ChecksTab
+                checks={checks}
+                lastUpdated={checksLastUpdated}
+                onRefresh={handleRefreshChecks}
+                refreshing={refreshingChecks}
+              />
             )}
           </div>
 
@@ -661,7 +864,7 @@ export const PROverview = memo(function PROverview() {
             <SidebarSection
               title="Reviewers"
               action={
-                pr.state === "open" && !pr.merged ? (
+                canWrite && pr.state === "open" && !pr.merged ? (
                   <button
                     ref={reviewersButtonRef}
                     onClick={handleToggleReviewersPicker}
@@ -676,15 +879,24 @@ export const PROverview = memo(function PROverview() {
               {pr.requested_reviewers && pr.requested_reviewers.length > 0 ? (
                 <div className="space-y-2">
                   {pr.requested_reviewers.map((reviewer) => (
-                    <div key={reviewer.login} className="flex items-center gap-2 group">
-                      <img
-                        src={reviewer.avatar_url}
-                        alt={reviewer.login}
-                        className="w-5 h-5 rounded-full"
-                      />
-                      <span className="text-sm flex-1">{reviewer.login}</span>
+                    <div
+                      key={reviewer.login}
+                      className="flex items-center gap-2 group"
+                    >
+                      <UserHoverCard login={reviewer.login}>
+                        <img
+                          src={reviewer.avatar_url}
+                          alt={reviewer.login}
+                          className="w-5 h-5 rounded-full cursor-pointer"
+                        />
+                      </UserHoverCard>
+                      <UserHoverCard login={reviewer.login}>
+                        <span className="text-sm flex-1 hover:text-blue-400 hover:underline cursor-pointer">
+                          {reviewer.login}
+                        </span>
+                      </UserHoverCard>
                       <Clock className="w-3.5 h-3.5 text-yellow-500" />
-                      {pr.state === "open" && !pr.merged && (
+                      {canWrite && pr.state === "open" && !pr.merged && (
                         <button
                           onClick={() => handleRemoveReviewer(reviewer.login)}
                           className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -700,12 +912,22 @@ export const PROverview = memo(function PROverview() {
                 <div className="space-y-2">
                   {latestReviews.map((review) => (
                     <div key={review.id} className="flex items-center gap-2">
-                      <img
-                        src={review.user?.avatar_url}
-                        alt={review.user?.login}
-                        className="w-5 h-5 rounded-full"
-                      />
-                      <span className="text-sm">{review.user?.login}</span>
+                      {review.user && (
+                        <UserHoverCard login={review.user.login}>
+                          <img
+                            src={review.user.avatar_url}
+                            alt={review.user.login}
+                            className="w-5 h-5 rounded-full cursor-pointer"
+                          />
+                        </UserHoverCard>
+                      )}
+                      {review.user && (
+                        <UserHoverCard login={review.user.login}>
+                          <span className="text-sm hover:text-blue-400 hover:underline cursor-pointer">
+                            {review.user.login}
+                          </span>
+                        </UserHoverCard>
+                      )}
                       <ReviewStateIcon state={review.state} />
                     </div>
                   ))}
@@ -713,12 +935,12 @@ export const PROverview = memo(function PROverview() {
               ) : (
                 <span className="text-sm text-muted-foreground">
                   No reviews yet
-          </span>
+                </span>
               )}
               {pr.state === "open" && !pr.merged && (
                 <div className="mt-2 pt-2 border-t border-border">
                   <p className="text-xs text-muted-foreground">
-                    {latestReviews.some(r => r.state === "APPROVED")
+                    {latestReviews.some((r) => r.state === "APPROVED")
                       ? "This pull request has been approved."
                       : "At least 1 approving review is required to merge this pull request."}
                   </p>
@@ -735,7 +957,10 @@ export const PROverview = memo(function PROverview() {
                 />
                 <div
                   className="fixed w-[260px] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
-                  style={{ top: reviewersPickerPosition.top, left: reviewersPickerPosition.left }}
+                  style={{
+                    top: reviewersPickerPosition.top,
+                    left: reviewersPickerPosition.left,
+                  }}
                 >
                   <div className="px-3 py-2 border-b border-border">
                     <p className="text-sm font-medium">Request reviewers</p>
@@ -747,11 +972,14 @@ export const PROverview = memo(function PROverview() {
                       </div>
                     ) : (
                       collaborators
-                        .filter(c => 
-                          c.login !== pr.user?.login &&
-                          !pr.requested_reviewers?.some(r => r.login === c.login)
+                        .filter(
+                          (c) =>
+                            c.login !== pr.user?.login &&
+                            !pr.requested_reviewers?.some(
+                              (r) => r.login === c.login
+                            )
                         )
-                        .map(collaborator => (
+                        .map((collaborator) => (
                           <button
                             key={collaborator.login}
                             onClick={() => {
@@ -765,7 +993,9 @@ export const PROverview = memo(function PROverview() {
                               alt={collaborator.login}
                               className="w-5 h-5 rounded-full"
                             />
-                            <span className="text-sm">{collaborator.login}</span>
+                            <span className="text-sm">
+                              {collaborator.login}
+                            </span>
                           </button>
                         ))
                     )}
@@ -778,7 +1008,7 @@ export const PROverview = memo(function PROverview() {
             <SidebarSection
               title="Assignees"
               action={
-                pr.state === "open" && !pr.merged ? (
+                canWrite && pr.state === "open" && !pr.merged ? (
                   <button
                     ref={assigneesButtonRef}
                     onClick={handleToggleAssigneesPicker}
@@ -793,14 +1023,23 @@ export const PROverview = memo(function PROverview() {
               {pr.assignees && pr.assignees.length > 0 ? (
                 <div className="space-y-2">
                   {pr.assignees.map((assignee) => (
-                    <div key={assignee.login} className="flex items-center gap-2 group">
-                      <img
-                        src={assignee.avatar_url}
-                        alt={assignee.login}
-                        className="w-5 h-5 rounded-full"
-                      />
-                      <span className="text-sm flex-1">{assignee.login}</span>
-                      {pr.state === "open" && !pr.merged && (
+                    <div
+                      key={assignee.login}
+                      className="flex items-center gap-2 group"
+                    >
+                      <UserHoverCard login={assignee.login}>
+                        <img
+                          src={assignee.avatar_url}
+                          alt={assignee.login}
+                          className="w-5 h-5 rounded-full cursor-pointer"
+                        />
+                      </UserHoverCard>
+                      <UserHoverCard login={assignee.login}>
+                        <span className="text-sm flex-1 hover:text-blue-400 hover:underline cursor-pointer">
+                          {assignee.login}
+                        </span>
+                      </UserHoverCard>
+                      {canWrite && pr.state === "open" && !pr.merged && (
                         <button
                           onClick={() => handleRemoveAssignee(assignee.login)}
                           className="p-0.5 text-muted-foreground hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -815,13 +1054,13 @@ export const PROverview = memo(function PROverview() {
               ) : (
                 <span className="text-sm text-muted-foreground">
                   No one—
-                  <button 
+                  <button
                     onClick={handleAssignSelf}
                     className="text-blue-400 hover:underline"
                   >
                     assign yourself
                   </button>
-          </span>
+                </span>
               )}
             </SidebarSection>
 
@@ -834,11 +1073,14 @@ export const PROverview = memo(function PROverview() {
                 />
                 <div
                   className="fixed w-[260px] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
-                  style={{ top: assigneesPickerPosition.top, left: assigneesPickerPosition.left }}
+                  style={{
+                    top: assigneesPickerPosition.top,
+                    left: assigneesPickerPosition.left,
+                  }}
                 >
                   <div className="px-3 py-2 border-b border-border">
                     <p className="text-sm font-medium">Assign people</p>
-        </div>
+                  </div>
                   <div className="max-h-[300px] overflow-auto">
                     {loadingCollaborators ? (
                       <div className="p-4 text-center text-sm text-muted-foreground">
@@ -846,8 +1088,10 @@ export const PROverview = memo(function PROverview() {
                       </div>
                     ) : (
                       collaborators
-                        .filter(c => !pr.assignees?.some(a => a.login === c.login))
-                        .map(collaborator => (
+                        .filter(
+                          (c) => !pr.assignees?.some((a) => a.login === c.login)
+                        )
+                        .map((collaborator) => (
                           <button
                             key={collaborator.login}
                             onClick={() => {
@@ -861,7 +1105,9 @@ export const PROverview = memo(function PROverview() {
                               alt={collaborator.login}
                               className="w-5 h-5 rounded-full"
                             />
-                            <span className="text-sm">{collaborator.login}</span>
+                            <span className="text-sm">
+                              {collaborator.login}
+                            </span>
                           </button>
                         ))
                     )}
@@ -870,37 +1116,43 @@ export const PROverview = memo(function PROverview() {
               </>
             )}
 
-        {/* Labels */}
+            {/* Labels */}
             <LabelsSection
               pr={pr}
               owner={owner}
               repo={repo}
               onUpdate={refetchPR}
+              canWrite={canWrite}
             />
 
-            {/* Draft - Ready for review */}
-            {pr.state === "open" && !pr.merged && pr.draft && (
+            {/* Draft - Mark as ready for review */}
+            {canWrite && pr.state === "open" && !pr.merged && pr.draft && (
               <div className="pt-2 border-t border-border">
+                <p className="text-xs text-muted-foreground mb-1">
+                  This pull request is still a work in progress.
+                </p>
                 <button
                   onClick={handleMarkReadyForReview}
                   className="text-sm text-blue-400 hover:underline"
                 >
-                  Ready for review
+                  Mark as ready for review
                 </button>
-          </div>
-        )}
+              </div>
+            )}
 
             {/* Participants */}
-            <SidebarSection title={`${participants.length} participant${participants.length !== 1 ? "s" : ""}`}>
+            <SidebarSection
+              title={`${participants.length} participant${participants.length !== 1 ? "s" : ""}`}
+            >
               <div className="flex items-center gap-1 flex-wrap">
                 {participants.map((user) => (
-                  <img
-                    key={user.login}
-                    src={user.avatar_url}
-                    alt={user.login}
-                    className="w-6 h-6 rounded-full"
-                    title={user.login}
-                  />
+                  <UserHoverCard key={user.login} login={user.login}>
+                    <img
+                      src={user.avatar_url}
+                      alt={user.login}
+                      className="w-6 h-6 rounded-full cursor-pointer ring-1 ring-transparent hover:ring-border transition-all"
+                    />
+                  </UserHoverCard>
                 ))}
               </div>
             </SidebarSection>
@@ -956,10 +1208,12 @@ function TabButton({
       {icon}
       <span>{label}</span>
       {count !== undefined && count > 0 && (
-        <span className={cn(
-          "px-1.5 py-0.5 text-xs rounded-full",
-          active ? "bg-muted" : "bg-muted/50"
-        )}>
+        <span
+          className={cn(
+            "px-1.5 py-0.5 text-xs rounded-full",
+            active ? "bg-muted" : "bg-muted/50"
+          )}
+        >
           {count}
         </span>
       )}
@@ -997,16 +1251,30 @@ function SidebarSection({
 // ============================================================================
 
 interface LabelsSectionProps {
-  pr: { labels: Array<{ name: string; color: string }>; state: string; merged?: boolean; number: number };
+  pr: {
+    labels: Array<{ name: string; color: string }>;
+    state: string;
+    merged?: boolean;
+    number: number;
+  };
   owner: string;
   repo: string;
   onUpdate: () => Promise<void>;
+  canWrite?: boolean;
 }
 
-function LabelsSection({ pr, owner, repo, onUpdate }: LabelsSectionProps) {
+function LabelsSection({
+  pr,
+  owner,
+  repo,
+  onUpdate,
+  canWrite = true,
+}: LabelsSectionProps) {
   const github = useGitHub();
   const [showPicker, setShowPicker] = useState(false);
-  const [repoLabels, setRepoLabels] = useState<Array<{ name: string; color: string; description?: string | null }>>([]);
+  const [repoLabels, setRepoLabels] = useState<
+    Array<{ name: string; color: string; description?: string | null }>
+  >([]);
   const [loadingLabels, setLoadingLabels] = useState(false);
   const [pickerPosition, setPickerPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -1036,21 +1304,24 @@ function LabelsSection({ pr, owner, repo, onUpdate }: LabelsSectionProps) {
     setShowPicker(!showPicker);
   }, [showPicker, fetchLabels]);
 
-  const handleToggleLabel = useCallback(async (labelName: string) => {
-    try {
-      const hasLabel = pr.labels.some(l => l.name === labelName);
-      if (hasLabel) {
-        await github.removeLabel(owner, repo, pr.number, labelName);
-      } else {
-        await github.addLabels(owner, repo, pr.number, [labelName]);
+  const handleToggleLabel = useCallback(
+    async (labelName: string) => {
+      try {
+        const hasLabel = pr.labels.some((l) => l.name === labelName);
+        if (hasLabel) {
+          await github.removeLabel(owner, repo, pr.number, labelName);
+        } else {
+          await github.addLabels(owner, repo, pr.number, [labelName]);
+        }
+        await onUpdate();
+      } catch (error) {
+        console.error("Failed to toggle label:", error);
       }
-      await onUpdate();
-    } catch (error) {
-      console.error("Failed to toggle label:", error);
-    }
-  }, [github, owner, repo, pr.number, pr.labels, onUpdate]);
+    },
+    [github, owner, repo, pr.number, pr.labels, onUpdate]
+  );
 
-  const canEdit = pr.state === "open" && !pr.merged;
+  const canEdit = canWrite && pr.state === "open" && !pr.merged;
 
   return (
     <SidebarSection
@@ -1108,8 +1379,10 @@ function LabelsSection({ pr, owner, repo, onUpdate }: LabelsSectionProps) {
                   <Loader2 className="w-4 h-4 animate-spin mx-auto" />
                 </div>
               ) : (
-                repoLabels.map(label => {
-                  const isApplied = pr.labels.some(l => l.name === label.name);
+                repoLabels.map((label) => {
+                  const isApplied = pr.labels.some(
+                    (l) => l.name === label.name
+                  );
                   return (
                     <button
                       key={label.name}
@@ -1117,7 +1390,9 @@ function LabelsSection({ pr, owner, repo, onUpdate }: LabelsSectionProps) {
                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
                     >
                       <div className="w-4 h-4 flex items-center justify-center">
-                        {isApplied && <Check className="w-3.5 h-3.5 text-green-500" />}
+                        {isApplied && (
+                          <Check className="w-3.5 h-3.5 text-green-500" />
+                        )}
                       </div>
                       <span
                         className="px-2 py-0.5 text-xs font-medium rounded-full"
@@ -1169,16 +1444,24 @@ function CommentBox({
   return (
     <div className="border border-border rounded-md overflow-hidden">
       {/* Header */}
-      <div className={cn(
-        "flex items-center gap-2 px-4 py-2 text-sm border-b border-border",
-        isAuthor ? "bg-blue-500/5" : "bg-card/50"
-      )}>
-        <img
-          src={user.avatar_url}
-          alt={user.login}
-          className="w-5 h-5 rounded-full"
-        />
-        <span className="font-semibold">{user.login}</span>
+      <div
+        className={cn(
+          "flex items-center gap-2 px-4 py-2 text-sm border-b border-border",
+          isAuthor ? "bg-blue-500/5" : "bg-card/50"
+        )}
+      >
+        <UserHoverCard login={user.login}>
+          <img
+            src={user.avatar_url}
+            alt={user.login}
+            className="w-5 h-5 rounded-full cursor-pointer"
+          />
+        </UserHoverCard>
+        <UserHoverCard login={user.login}>
+          <span className="font-semibold hover:text-blue-400 hover:underline cursor-pointer">
+            {user.login}
+          </span>
+        </UserHoverCard>
         <span className="text-muted-foreground">
           commented {getTimeAgo(new Date(createdAt))}
         </span>
@@ -1193,7 +1476,9 @@ function CommentBox({
         {body ? (
           <Markdown>{body}</Markdown>
         ) : (
-          <p className="text-sm text-muted-foreground italic">No description provided.</p>
+          <p className="text-sm text-muted-foreground italic">
+            No description provided.
+          </p>
         )}
       </div>
       {/* Reactions */}
@@ -1218,31 +1503,39 @@ function CommentBox({
 function ReviewBox({ review }: { review: Review }) {
   if (!review.user) return null;
 
-  const stateText = {
-    APPROVED: "approved these changes",
-    CHANGES_REQUESTED: "requested changes",
-    COMMENTED: "reviewed",
-    DISMISSED: "dismissed review",
-    PENDING: "started a review",
-  }[review.state] || "reviewed";
+  const stateText =
+    {
+      APPROVED: "approved these changes",
+      CHANGES_REQUESTED: "requested changes",
+      COMMENTED: "reviewed",
+      DISMISSED: "dismissed review",
+      PENDING: "started a review",
+    }[review.state] || "reviewed";
 
-  const stateBg = {
-    APPROVED: "bg-green-500/10 border-green-500/30",
-    CHANGES_REQUESTED: "bg-red-500/10 border-red-500/30",
-    COMMENTED: "bg-card/50",
-    DISMISSED: "bg-card/50",
-    PENDING: "bg-yellow-500/10 border-yellow-500/30",
-  }[review.state] || "bg-card/50";
+  const stateBg =
+    {
+      APPROVED: "bg-green-500/10 border-green-500/30",
+      CHANGES_REQUESTED: "bg-red-500/10 border-red-500/30",
+      COMMENTED: "bg-card/50",
+      DISMISSED: "bg-card/50",
+      PENDING: "bg-yellow-500/10 border-yellow-500/30",
+    }[review.state] || "bg-card/50";
 
   return (
     <div className={cn("border rounded-md overflow-hidden", stateBg)}>
       <div className="flex items-center gap-2 px-4 py-2 text-sm border-b border-border">
-        <img
-          src={review.user.avatar_url}
-          alt={review.user.login}
-          className="w-5 h-5 rounded-full"
-        />
-        <span className="font-semibold">{review.user.login}</span>
+        <UserHoverCard login={review.user.login}>
+          <img
+            src={review.user.avatar_url}
+            alt={review.user.login}
+            className="w-5 h-5 rounded-full cursor-pointer"
+          />
+        </UserHoverCard>
+        <UserHoverCard login={review.user.login}>
+          <span className="font-semibold hover:text-blue-400 hover:underline cursor-pointer">
+            {review.user.login}
+          </span>
+        </UserHoverCard>
         <ReviewStateIcon state={review.state} />
         <span className="text-muted-foreground">{stateText}</span>
         <span className="text-muted-foreground">
@@ -1296,7 +1589,12 @@ function MergeSection({
   onToggleMergeOptions,
   onUpdateBranch,
 }: {
-  pr: { draft?: boolean; state: string; mergeable: boolean | null; requested_reviewers?: Array<{ login: string; avatar_url: string }> };
+  pr: {
+    draft?: boolean;
+    state: string;
+    mergeable: boolean | null;
+    requested_reviewers?: Array<{ login: string; avatar_url: string }>;
+  };
   checkStatus: "success" | "failure" | "pending";
   checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null;
   canMerge: boolean;
@@ -1311,11 +1609,19 @@ function MergeSection({
   onUpdateBranch: () => void;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [dropdownPosition, setDropdownPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+  });
+  const [expandedSections, setExpandedSections] = useState<
+    Record<string, boolean>
+  >({});
   const [bypassRules, setBypassRules] = useState(false);
   const [updatingBranch, setUpdatingBranch] = useState(false);
-  const [updateBranchError, setUpdateBranchError] = useState<string | null>(null);
+  const [updateBranchError, setUpdateBranchError] = useState<string | null>(
+    null
+  );
   const [updateBranchSuccess, setUpdateBranchSuccess] = useState(false);
 
   const handleUpdateBranch = useCallback(async () => {
@@ -1328,15 +1634,19 @@ function MergeSection({
       // Clear success message after 3 seconds
       setTimeout(() => setUpdateBranchSuccess(false), 3000);
     } catch (error) {
-      setUpdateBranchError(error instanceof Error ? error.message : "Failed to update branch");
+      setUpdateBranchError(
+        error instanceof Error ? error.message : "Failed to update branch"
+      );
     } finally {
       setUpdatingBranch(false);
     }
   }, [onUpdateBranch]);
 
   const mergeDescriptions: Record<"merge" | "squash" | "rebase", string> = {
-    merge: "All commits from this branch will be added to the base branch via a merge commit.",
-    squash: "The commits will be squashed into a single commit in the base branch.",
+    merge:
+      "All commits from this branch will be added to the base branch via a merge commit.",
+    squash:
+      "The commits will be squashed into a single commit in the base branch.",
     rebase: "The commits will be rebased and added to the base branch.",
   };
 
@@ -1353,40 +1663,68 @@ function MergeSection({
   }, [showMergeOptions, onToggleMergeOptions]);
 
   const toggleSection = (section: string) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+    setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
   // Calculate checks info
-  const totalChecks = checks ? checks.checkRuns.length + checks.status.statuses.length : 0;
-  const successfulChecks = checks ? 
-    checks.checkRuns.filter(c => c.conclusion === "success").length +
-    checks.status.statuses.filter(s => s.state === "success").length : 0;
-  const failedChecks = checks ?
-    checks.checkRuns.filter(c => c.conclusion === "failure").length +
-    checks.status.statuses.filter(s => s.state === "failure").length : 0;
+  const totalChecks = checks
+    ? checks.checkRuns.length + checks.status.statuses.length
+    : 0;
+  const successfulChecks = checks
+    ? checks.checkRuns.filter((c) => c.conclusion === "success").length +
+      checks.status.statuses.filter((s) => s.state === "success").length
+    : 0;
+  const failedChecks = checks
+    ? checks.checkRuns.filter((c) => c.conclusion === "failure").length +
+      checks.status.statuses.filter((s) => s.state === "failure").length
+    : 0;
   const pendingChecks = totalChecks - successfulChecks - failedChecks;
 
   // Review info
   const pendingReviewers = pr.requested_reviewers?.length || 0;
-  const hasApproval = latestReviews.some(r => r.state === "APPROVED");
-  const hasChangesRequested = latestReviews.some(r => r.state === "CHANGES_REQUESTED");
+  const hasApproval = latestReviews.some((r) => r.state === "APPROVED");
+  const hasChangesRequested = latestReviews.some(
+    (r) => r.state === "CHANGES_REQUESTED"
+  );
 
   // Status indicators
-  const reviewStatus = hasChangesRequested ? "failure" : hasApproval ? "success" : pendingReviewers > 0 ? "pending" : "success";
-  const conflictStatus = pr.mergeable === false ? "failure" : pr.mergeable === null ? "pending" : "success";
-  
-  // Overall border color based on status
-  const overallStatus = conflictStatus === "failure" || checkStatus === "failure" || reviewStatus === "failure"
+  const reviewStatus = hasChangesRequested
     ? "failure"
-    : conflictStatus === "pending" || checkStatus === "pending" || reviewStatus === "pending"
-      ? "pending"
-      : "success";
+    : hasApproval
+      ? "success"
+      : pendingReviewers > 0
+        ? "pending"
+        : "success";
+  const conflictStatus =
+    pr.mergeable === false
+      ? "failure"
+      : pr.mergeable === null
+        ? "pending"
+        : "success";
+
+  // Overall border color based on status
+  const overallStatus =
+    conflictStatus === "failure" ||
+    checkStatus === "failure" ||
+    reviewStatus === "failure"
+      ? "failure"
+      : conflictStatus === "pending" ||
+          checkStatus === "pending" ||
+          reviewStatus === "pending"
+        ? "pending"
+        : "success";
 
   return (
-    <div className={cn(
-      "border rounded-md overflow-hidden",
-      overallStatus === "success" ? "border-green-600" : overallStatus === "failure" ? "border-red-500" : "border-yellow-500"
-    )}>
+    <div
+      className={cn(
+        "border rounded-md overflow-hidden",
+        overallStatus === "success"
+          ? "border-green-600"
+          : overallStatus === "failure"
+            ? "border-red-500"
+            : "border-yellow-500"
+      )}
+    >
       {/* Review Section */}
       <div className="border-b border-border">
         <button
@@ -1420,24 +1758,37 @@ function MergeSection({
                     : "No reviewers have been requested."}
             </p>
           </div>
-          <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform", expandedSections["reviews"] && "rotate-180")} />
+          <ChevronDown
+            className={cn(
+              "w-4 h-4 text-muted-foreground transition-transform",
+              expandedSections["reviews"] && "rotate-180"
+            )}
+          />
         </button>
         {expandedSections["reviews"] && (
           <div className="px-4 pb-4 pt-0 border-t border-border bg-card/20">
             {pendingReviewers > 0 && (
               <div className="flex items-center gap-2 py-2">
                 <User className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm">{pendingReviewers} pending review{pendingReviewers !== 1 ? "s" : ""}</span>
+                <span className="text-sm">
+                  {pendingReviewers} pending review
+                  {pendingReviewers !== 1 ? "s" : ""}
+                </span>
                 <ChevronDown className="w-4 h-4 text-muted-foreground ml-auto" />
               </div>
             )}
-            {latestReviews.length > 0 && latestReviews.map(review => (
-              <div key={review.id} className="flex items-center gap-2 py-2">
-                <img src={review.user?.avatar_url} alt={review.user?.login} className="w-5 h-5 rounded-full" />
-                <span className="text-sm">{review.user?.login}</span>
-                <ReviewStateIcon state={review.state} />
-              </div>
-            ))}
+            {latestReviews.length > 0 &&
+              latestReviews.map((review) => (
+                <div key={review.id} className="flex items-center gap-2 py-2">
+                  <img
+                    src={review.user?.avatar_url}
+                    alt={review.user?.login}
+                    className="w-5 h-5 rounded-full"
+                  />
+                  <span className="text-sm">{review.user?.login}</span>
+                  <ReviewStateIcon state={review.state} />
+                </div>
+              ))}
           </div>
         )}
       </div>
@@ -1464,16 +1815,22 @@ function MergeSection({
                   : "Some checks haven't completed yet"}
             </p>
             <p className="text-xs text-muted-foreground">
-              {successfulChecks} successful check{successfulChecks !== 1 ? "s" : ""}
+              {successfulChecks} successful check
+              {successfulChecks !== 1 ? "s" : ""}
               {failedChecks > 0 && `, ${failedChecks} failed`}
               {pendingChecks > 0 && `, ${pendingChecks} pending`}
             </p>
           </div>
-          <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform", expandedSections["checks"] && "rotate-180")} />
+          <ChevronDown
+            className={cn(
+              "w-4 h-4 text-muted-foreground transition-transform",
+              expandedSections["checks"] && "rotate-180"
+            )}
+          />
         </button>
         {expandedSections["checks"] && checks && (
           <div className="px-4 pb-4 pt-0 border-t border-border bg-card/20 max-h-[300px] overflow-auto">
-            {checks.checkRuns.map(check => (
+            {checks.checkRuns.map((check) => (
               <div key={check.id} className="flex items-center gap-2 py-2">
                 {check.conclusion === "success" ? (
                   <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
@@ -1495,7 +1852,7 @@ function MergeSection({
                 )}
               </div>
             ))}
-            {checks.status.statuses.map(status => (
+            {checks.status.statuses.map((status) => (
               <div key={status.id} className="flex items-center gap-2 py-2">
                 {status.state === "success" ? (
                   <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
@@ -1504,7 +1861,9 @@ function MergeSection({
                 ) : (
                   <Clock className="w-4 h-4 text-yellow-500 shrink-0" />
                 )}
-                <span className="text-sm truncate flex-1">{status.context}</span>
+                <span className="text-sm truncate flex-1">
+                  {status.context}
+                </span>
                 {status.target_url && (
                   <a
                     href={status.target_url}
@@ -1541,7 +1900,9 @@ function MergeSection({
             </p>
             <p className="text-xs text-muted-foreground">
               {updateBranchSuccess ? (
-                <span className="text-green-500">Branch updated successfully!</span>
+                <span className="text-green-500">
+                  Branch updated successfully!
+                </span>
               ) : updateBranchError ? (
                 <span className="text-red-500">{updateBranchError}</span>
               ) : conflictStatus === "success" ? (
@@ -1574,17 +1935,14 @@ function MergeSection({
 
       {/* Merge controls */}
       <div className="p-4 space-y-3">
-        {mergeError && (
-          <p className="text-sm text-destructive">{mergeError}</p>
-        )}
+        {mergeError && <p className="text-sm text-destructive">{mergeError}</p>}
 
         {/* Bypass rules checkbox */}
         <label className="flex items-start gap-2 cursor-pointer group">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={bypassRules}
-            onChange={(e) => setBypassRules(e.target.checked)}
-            className="mt-0.5 w-4 h-4 rounded border-border bg-background text-green-600 focus:ring-green-600 focus:ring-offset-0"
+            onCheckedChange={(checked) => setBypassRules(checked === true)}
+            className="mt-0.5"
           />
           <span className="text-sm text-yellow-500 group-hover:text-yellow-400">
             Merge without waiting for requirements to be met (bypass rules)
@@ -1599,7 +1957,7 @@ function MergeSection({
             disabled={merging || (!canMergePR && !bypassRules)}
             className={cn(
               "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
-              (canMergePR || bypassRules)
+              canMergePR || bypassRules
                 ? "bg-green-600 text-white hover:bg-green-700"
                 : "bg-muted text-muted-foreground cursor-not-allowed"
             )}
@@ -1620,12 +1978,17 @@ function MergeSection({
             disabled={merging}
             className={cn(
               "px-2 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-green-700",
-              (canMergePR || bypassRules)
+              canMergePR || bypassRules
                 ? "bg-green-600 text-white hover:bg-green-700"
                 : "bg-muted text-muted-foreground cursor-not-allowed"
             )}
           >
-            <ChevronDown className={cn("w-4 h-4 transition-transform", showMergeOptions && "rotate-180")} />
+            <ChevronDown
+              className={cn(
+                "w-4 h-4 transition-transform",
+                showMergeOptions && "rotate-180"
+              )}
+            />
           </button>
 
           {/* Dropdown menu */}
@@ -1663,7 +2026,9 @@ function MergeSection({
                       ) : (
                         <div className="w-4 h-4" />
                       )}
-                      <span className="font-medium text-sm">{getMergeButtonText(method)}</span>
+                      <span className="font-medium text-sm">
+                        {getMergeButtonText(method)}
+                      </span>
                     </div>
                     <p className="text-xs text-muted-foreground ml-6 mt-0.5">
                       {mergeDescriptions[method]}
@@ -1685,8 +2050,8 @@ function MergeSection({
             className="text-blue-400 hover:underline"
           >
             merge queue
-          </a>
-          {" "}for all merges into the main branch.
+          </a>{" "}
+          for all merges into the main branch.
         </p>
       </div>
     </div>
@@ -1697,38 +2062,62 @@ function MergeSection({
 // Commits Tab Component
 // ============================================================================
 
-function CommitsTab({ commits }: { commits: PRCommit[] }) {
+function CommitsTab({
+  commits,
+  owner,
+  repo,
+}: {
+  commits: PRCommit[];
+  owner: string;
+  repo: string;
+}) {
   return (
     <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
       {commits.map((commit) => (
-        <div key={commit.sha} className="flex items-center gap-3 p-3 hover:bg-card/30">
+        <div
+          key={commit.sha}
+          className="flex items-center gap-3 p-3 hover:bg-card/30"
+        >
           <img
             src={commit.author?.avatar_url || commit.committer?.avatar_url}
             alt={commit.commit.author?.name}
             className="w-6 h-6 rounded-full"
           />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">
+            <a
+              href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-medium truncate block hover:text-blue-400"
+            >
               {commit.commit.message.split("\n")[0]}
-            </p>
+            </a>
             <p className="text-xs text-muted-foreground">
-              {commit.commit.author?.name} committed {commit.commit.author?.date && getTimeAgo(new Date(commit.commit.author.date))}
+              {commit.commit.author?.name} committed{" "}
+              {commit.commit.author?.date &&
+                getTimeAgo(new Date(commit.commit.author.date))}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Check className="w-4 h-4 text-green-500" />
-            <code className="text-xs font-mono text-muted-foreground">
+            <a
+              href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-mono text-muted-foreground hover:text-blue-400"
+            >
               {commit.sha.slice(0, 7)}
-            </code>
-              <button
+            </a>
+            <button
               onClick={() => navigator.clipboard.writeText(commit.sha)}
               className="p-1 text-muted-foreground hover:text-foreground rounded hover:bg-muted"
-              >
+              title="Copy commit SHA"
+            >
               <Copy className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            </button>
           </div>
-            ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1739,26 +2128,62 @@ function CommitsTab({ commits }: { commits: PRCommit[] }) {
 
 function ChecksTab({
   checks,
+  lastUpdated,
+  onRefresh,
+  refreshing,
 }: {
   checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null;
+  lastUpdated: Date | null;
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
-  if (!checks || (checks.checkRuns.length === 0 && checks.status.statuses.length === 0)) {
+  if (
+    !checks ||
+    (checks.checkRuns.length === 0 && checks.status.statuses.length === 0)
+  ) {
     return (
       <div className="border border-border rounded-md p-8 text-center">
         <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
-        <p className="text-muted-foreground">No checks configured for this repository</p>
+        <p className="text-muted-foreground">
+          No checks configured for this repository
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
-                {checks.checkRuns.map((check) => (
-                  <CheckRunItem key={check.id} check={check} />
-                ))}
-                {checks.status.statuses.map((status, idx) => (
-                  <StatusItem key={idx} status={status} />
-                ))}
+    <div className="space-y-2">
+      {/* Header with refresh */}
+      <div className="flex items-center justify-end gap-2">
+        {lastUpdated && (
+          <span className="text-[10px] text-muted-foreground">
+            Updated {getTimeAgo(lastUpdated)}
+          </span>
+        )}
+        <button
+          onClick={onRefresh}
+          disabled={refreshing}
+          className={cn(
+            "p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground",
+            refreshing && "opacity-50"
+          )}
+          title="Refresh checks (auto-refreshes every 30s)"
+        >
+          <RefreshCw
+            className={cn("w-3.5 h-3.5", refreshing && "animate-spin")}
+          />
+        </button>
+      </div>
+
+      {/* Checks list */}
+      <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
+        {checks.checkRuns.map((check) => (
+          <CheckRunItem key={check.id} check={check} />
+        ))}
+        {checks.status.statuses.map((status, idx) => (
+          <StatusItem key={idx} status={status} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -1828,7 +2253,9 @@ function StatusItem({
       <div className="flex-1 min-w-0">
         <span className="text-sm">{status.context}</span>
         {status.description && (
-          <p className="text-xs text-muted-foreground truncate">{status.description}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {status.description}
+          </p>
         )}
       </div>
       {status.target_url && (
@@ -1853,7 +2280,7 @@ function CheckStatusIcon({
   size?: "sm" | "md";
 }) {
   const sizeClass = size === "sm" ? "w-4 h-4" : "w-5 h-5";
-  
+
   switch (status) {
     case "success":
       return <CheckCircle2 className={cn(sizeClass, "text-green-500")} />;
@@ -1871,15 +2298,24 @@ function CheckStatusIcon({
 const REACTION_EMOJIS: Record<ReactionContent, string> = {
   "+1": "👍",
   "-1": "👎",
-  "laugh": "😄",
-  "hooray": "🎉",
-  "confused": "😕",
-  "heart": "❤️",
-  "rocket": "🚀",
-  "eyes": "👀",
+  laugh: "😄",
+  hooray: "🎉",
+  confused: "😕",
+  heart: "❤️",
+  rocket: "🚀",
+  eyes: "👀",
 };
 
-const REACTION_ORDER: ReactionContent[] = ["+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes"];
+const REACTION_ORDER: ReactionContent[] = [
+  "+1",
+  "-1",
+  "laugh",
+  "hooray",
+  "confused",
+  "heart",
+  "rocket",
+  "eyes",
+];
 
 function EmojiReactions({
   reactions,
@@ -1898,8 +2334,11 @@ function EmojiReactions({
 
   // Group reactions by content
   const groupedReactions = useMemo(() => {
-    const groups: Record<string, { count: number; users: string[]; userReactionId?: number }> = {};
-    
+    const groups: Record<
+      string,
+      { count: number; users: string[]; userReactionId?: number }
+    > = {};
+
     for (const reaction of reactions) {
       const content = reaction.content as ReactionContent;
       if (!groups[content]) {
@@ -1913,21 +2352,24 @@ function EmojiReactions({
         }
       }
     }
-    
+
     return groups;
   }, [reactions, currentUser]);
 
-  const handleReactionClick = useCallback((content: ReactionContent) => {
-    const group = groupedReactions[content];
-    if (group?.userReactionId && onRemoveReaction) {
-      // User already reacted, remove it
-      onRemoveReaction(group.userReactionId);
-    } else if (onAddReaction) {
-      // Add new reaction
-      onAddReaction(content);
-    }
-    setShowPicker(false);
-  }, [groupedReactions, onAddReaction, onRemoveReaction]);
+  const handleReactionClick = useCallback(
+    (content: ReactionContent) => {
+      const group = groupedReactions[content];
+      if (group?.userReactionId && onRemoveReaction) {
+        // User already reacted, remove it
+        onRemoveReaction(group.userReactionId);
+      } else if (onAddReaction) {
+        // Add new reaction
+        onAddReaction(content);
+      }
+      setShowPicker(false);
+    },
+    [groupedReactions, onAddReaction, onRemoveReaction]
+  );
 
   const handleTogglePicker = useCallback(() => {
     if (!showPicker && buttonRef.current) {
@@ -1942,7 +2384,9 @@ function EmojiReactions({
 
   // Sort reactions to show in consistent order
   const sortedReactions = useMemo(() => {
-    return REACTION_ORDER.filter(content => groupedReactions[content]?.count > 0);
+    return REACTION_ORDER.filter(
+      (content) => groupedReactions[content]?.count > 0
+    );
   }, [groupedReactions]);
 
   return (
@@ -1951,7 +2395,7 @@ function EmojiReactions({
       {sortedReactions.map((content) => {
         const group = groupedReactions[content];
         const isUserReaction = !!group.userReactionId;
-        
+
         return (
           <button
             key={content}
@@ -1981,7 +2425,7 @@ function EmojiReactions({
             <Smile className="w-3.5 h-3.5" />
             {sortedReactions.length === 0 && <Plus className="w-3 h-3" />}
           </button>
-          
+
           {/* Emoji picker dropdown - using fixed positioning to escape overflow */}
           {showPicker && (
             <>
@@ -2001,14 +2445,15 @@ function EmojiReactions({
                     onClick={() => handleReactionClick(content)}
                     className={cn(
                       "w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-muted transition-colors",
-                      groupedReactions[content]?.userReactionId && "bg-blue-500/20"
+                      groupedReactions[content]?.userReactionId &&
+                        "bg-blue-500/20"
                     )}
                     title={content}
                   >
                     {REACTION_EMOJIS[content]}
                   </button>
                 ))}
-        </div>
+              </div>
             </>
           )}
         </>
@@ -2084,7 +2529,8 @@ function getMergeStatusText(
   checkStatus: "success" | "failure" | "pending"
 ): string {
   if (pr.draft) return "This pull request is still a draft";
-  if (pr.mergeable === false) return "This branch has conflicts that must be resolved";
+  if (pr.mergeable === false)
+    return "This branch has conflicts that must be resolved";
   if (checkStatus === "failure") return "Some checks have failed";
   if (checkStatus === "pending") return "Some checks haven't completed yet";
   return "This branch has no conflicts with the base branch";
@@ -2113,39 +2559,49 @@ function TimelineItem({ event }: TimelineItemProps) {
   // Get the event type - timeline events have an "event" field
   // Commits don't have an "event" field but have a "sha" field
   const eventType = (event as { event?: string }).event;
-  const actor = (event as { actor?: { login: string; avatar_url: string } }).actor;
+  const actor = (event as { actor?: { login: string; avatar_url: string } })
+    .actor;
   const createdAt = (event as { created_at?: string }).created_at;
-  
+
   // Check if this is a commit (commits have sha but no event field)
   const isCommit = !eventType && (event as { sha?: string }).sha;
-  
+
   // Skip events we don't want to show (but allow commits)
   if (!eventType && !isCommit) return null;
-  
+
   // Events to skip (they're shown elsewhere or not useful)
-  const skipEvents = ['commented', 'reviewed', 'line-commented'];
+  const skipEvents = ["commented", "reviewed", "line-commented"];
   if (eventType && skipEvents.includes(eventType)) return null;
 
-  const getEventInfo = (): { icon: React.ReactNode; text: React.ReactNode; color: string; avatar?: string } | null => {
+  const getEventInfo = (): {
+    icon: React.ReactNode;
+    text: React.ReactNode;
+    color: string;
+    avatar?: string;
+  } | null => {
     // Handle commits (no event field, but has sha)
     if (isCommit) {
-      const commit = event as { 
-        sha?: string; 
+      const commit = event as {
+        sha?: string;
         html_url?: string;
         author?: { login?: string; avatar_url?: string; name?: string };
         committer?: { login?: string; avatar_url?: string };
-        commit?: { message?: string; author?: { name?: string; date?: string } };
+        commit?: {
+          message?: string;
+          author?: { name?: string; date?: string };
+        };
       };
-      const authorName = commit.author?.login || commit.commit?.author?.name || 'Someone';
-      const authorAvatar = commit.author?.avatar_url || commit.committer?.avatar_url;
-      const message = commit.commit?.message?.split('\n')[0] || '';
-      
+      const authorName =
+        commit.author?.login || commit.commit?.author?.name || "Someone";
+      const authorAvatar =
+        commit.author?.avatar_url || commit.committer?.avatar_url;
+      const message = commit.commit?.message?.split("\n")[0] || "";
+
       return {
         icon: <GitCommit className="w-4 h-4" />,
         text: (
           <span>
-            <span className="font-medium">{authorName}</span>
-            {' '}added a commit{' '}
+            <span className="font-medium">{authorName}</span> added a commit{" "}
             <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
               {commit.sha?.slice(0, 7)}
             </code>
@@ -2154,64 +2610,77 @@ function TimelineItem({ event }: TimelineItemProps) {
             )}
           </span>
         ),
-        color: 'text-muted-foreground',
+        color: "text-muted-foreground",
         avatar: authorAvatar,
       };
     }
-    
+
     switch (eventType) {
-      case 'committed': {
-        const commit = event as { sha?: string; message?: string; author?: { name?: string; avatar_url?: string } };
+      case "committed": {
+        const commit = event as {
+          sha?: string;
+          message?: string;
+          author?: { name?: string; avatar_url?: string };
+        };
         return {
           icon: <GitCommit className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{commit.author?.name || 'Someone'}</span>
-              {' '}added a commit{' '}
+              <span className="font-medium">
+                {commit.author?.name || "Someone"}
+              </span>{" "}
+              added a commit{" "}
               <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
                 {commit.sha?.slice(0, 7)}
               </code>
               {commit.message && (
-                <span className="text-muted-foreground"> — {commit.message.split('\n')[0]}</span>
+                <span className="text-muted-foreground">
+                  {" "}
+                  — {commit.message.split("\n")[0]}
+                </span>
               )}
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
           avatar: commit.author?.avatar_url,
         };
       }
-      
-      case 'review_requested': {
+
+      case "review_requested": {
         const requested = event as { requested_reviewer?: { login: string } };
         return {
           icon: <Eye className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}requested a review from{' '}
-              <span className="font-medium">{requested.requested_reviewer?.login}</span>
+              <span className="font-medium">{actor?.login}</span> requested a
+              review from{" "}
+              <span className="font-medium">
+                {requested.requested_reviewer?.login}
+              </span>
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'review_request_removed': {
+
+      case "review_request_removed": {
         const removed = event as { requested_reviewer?: { login: string } };
         return {
           icon: <Eye className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}removed the request for review from{' '}
-              <span className="font-medium">{removed.requested_reviewer?.login}</span>
+              <span className="font-medium">{actor?.login}</span> removed the
+              request for review from{" "}
+              <span className="font-medium">
+                {removed.requested_reviewer?.login}
+              </span>
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'assigned': {
+
+      case "assigned": {
         const assigned = event as { assignee?: { login: string } };
         const isSelf = actor?.login === assigned.assignee?.login;
         return {
@@ -2219,19 +2688,24 @@ function TimelineItem({ event }: TimelineItemProps) {
           text: (
             <span>
               <span className="font-medium">{actor?.login}</span>
-              {isSelf ? ' self-assigned this' : (
+              {isSelf ? (
+                " self-assigned this"
+              ) : (
                 <>
-                  {' '}assigned{' '}
-                  <span className="font-medium">{assigned.assignee?.login}</span>
+                  {" "}
+                  assigned{" "}
+                  <span className="font-medium">
+                    {assigned.assignee?.login}
+                  </span>
                 </>
               )}
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'unassigned': {
+
+      case "unassigned": {
         const unassigned = event as { assignee?: { login: string } };
         const isSelf = actor?.login === unassigned.assignee?.login;
         return {
@@ -2239,26 +2713,30 @@ function TimelineItem({ event }: TimelineItemProps) {
           text: (
             <span>
               <span className="font-medium">{actor?.login}</span>
-              {isSelf ? ' removed their assignment' : (
+              {isSelf ? (
+                " removed their assignment"
+              ) : (
                 <>
-                  {' '}unassigned{' '}
-                  <span className="font-medium">{unassigned.assignee?.login}</span>
+                  {" "}
+                  unassigned{" "}
+                  <span className="font-medium">
+                    {unassigned.assignee?.login}
+                  </span>
                 </>
               )}
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'labeled': {
+
+      case "labeled": {
         const labeled = event as { label?: { name: string; color: string } };
         return {
           icon: <Tag className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}added the{' '}
+              <span className="font-medium">{actor?.login}</span> added the{" "}
               <span
                 className="px-2 py-0.5 text-xs font-medium rounded-full"
                 style={{
@@ -2268,22 +2746,21 @@ function TimelineItem({ event }: TimelineItemProps) {
                 }}
               >
                 {labeled.label?.name}
-              </span>
-              {' '}label
+              </span>{" "}
+              label
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'unlabeled': {
+
+      case "unlabeled": {
         const unlabeled = event as { label?: { name: string; color: string } };
         return {
           icon: <Tag className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}removed the{' '}
+              <span className="font-medium">{actor?.login}</span> removed the{" "}
               <span
                 className="px-2 py-0.5 text-xs font-medium rounded-full"
                 style={{
@@ -2293,210 +2770,222 @@ function TimelineItem({ event }: TimelineItemProps) {
                 }}
               >
                 {unlabeled.label?.name}
-              </span>
-              {' '}label
+              </span>{" "}
+              label
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'milestoned': {
+
+      case "milestoned": {
         const milestoned = event as { milestone?: { title: string } };
         return {
           icon: <Milestone className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}added this to the{' '}
-              <span className="font-medium">{milestoned.milestone?.title}</span>
-              {' '}milestone
+              <span className="font-medium">{actor?.login}</span> added this to
+              the{" "}
+              <span className="font-medium">{milestoned.milestone?.title}</span>{" "}
+              milestone
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'demilestoned': {
+
+      case "demilestoned": {
         const demilestoned = event as { milestone?: { title: string } };
         return {
           icon: <Milestone className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}removed this from the{' '}
-              <span className="font-medium">{demilestoned.milestone?.title}</span>
-              {' '}milestone
+              <span className="font-medium">{actor?.login}</span> removed this
+              from the{" "}
+              <span className="font-medium">
+                {demilestoned.milestone?.title}
+              </span>{" "}
+              milestone
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'renamed': {
+
+      case "renamed": {
         const renamed = event as { rename?: { from: string; to: string } };
         return {
           icon: <FileEdit className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}changed the title from{' '}
-              <del className="text-muted-foreground">{renamed.rename?.from}</del>
-              {' '}to{' '}
-              <span className="font-medium">{renamed.rename?.to}</span>
+              <span className="font-medium">{actor?.login}</span> changed the
+              title from{" "}
+              <del className="text-muted-foreground">
+                {renamed.rename?.from}
+              </del>{" "}
+              to <span className="font-medium">{renamed.rename?.to}</span>
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'locked': {
+
+      case "locked": {
         return {
           icon: <Lock className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}locked this conversation
+              <span className="font-medium">{actor?.login}</span> locked this
+              conversation
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'unlocked': {
+
+      case "unlocked": {
         return {
           icon: <Unlock className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}unlocked this conversation
+              <span className="font-medium">{actor?.login}</span> unlocked this
+              conversation
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'head_ref_deleted': {
+
+      case "head_ref_deleted": {
         return {
           icon: <GitBranch className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}deleted the head branch
+              <span className="font-medium">{actor?.login}</span> deleted the
+              head branch
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'head_ref_restored': {
+
+      case "head_ref_restored": {
         return {
           icon: <GitBranch className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}restored the head branch
+              <span className="font-medium">{actor?.login}</span> restored the
+              head branch
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'merged': {
+
+      case "merged": {
         return {
           icon: <GitMerge className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}merged this pull request
+              <span className="font-medium">{actor?.login}</span> merged this
+              pull request
             </span>
           ),
-          color: 'text-purple-400',
+          color: "text-purple-400",
         };
       }
-      
-      case 'closed': {
+
+      case "closed": {
         return {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}closed this pull request
+              <span className="font-medium">{actor?.login}</span> closed this
+              pull request
             </span>
           ),
-          color: 'text-red-400',
+          color: "text-red-400",
         };
       }
-      
-      case 'reopened': {
+
+      case "reopened": {
         return {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}reopened this pull request
+              <span className="font-medium">{actor?.login}</span> reopened this
+              pull request
             </span>
           ),
-          color: 'text-green-400',
+          color: "text-green-400",
         };
       }
-      
-      case 'ready_for_review': {
+
+      case "ready_for_review": {
         return {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}marked this pull request as ready for review
+              <span className="font-medium">{actor?.login}</span> marked this
+              pull request as ready for review
             </span>
           ),
-          color: 'text-green-400',
+          color: "text-green-400",
         };
       }
-      
-      case 'convert_to_draft': {
+
+      case "convert_to_draft": {
         return {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}converted this pull request to draft
+              <span className="font-medium">{actor?.login}</span> converted this
+              pull request to draft
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'cross-referenced': {
-        const crossRef = event as { source?: { issue?: { number: number; title: string; repository?: { full_name: string } } } };
+
+      case "cross-referenced": {
+        const crossRef = event as {
+          source?: {
+            issue?: {
+              number: number;
+              title: string;
+              repository?: { full_name: string };
+            };
+          };
+        };
         return {
           icon: <Link className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}mentioned this in{' '}
+              <span className="font-medium">{actor?.login}</span> mentioned this
+              in{" "}
               <span className="font-medium">
-                {crossRef.source?.issue?.repository?.full_name}#{crossRef.source?.issue?.number}
+                {crossRef.source?.issue?.repository?.full_name}#
+                {crossRef.source?.issue?.number}
               </span>
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
-      case 'comment_deleted': {
+
+      case "comment_deleted": {
         return {
           icon: <X className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
-              {' '}deleted a comment
+              <span className="font-medium">{actor?.login}</span> deleted a
+              comment
             </span>
           ),
-          color: 'text-muted-foreground',
+          color: "text-muted-foreground",
         };
       }
-      
+
       default:
         return null;
     }
@@ -2506,24 +2995,30 @@ function TimelineItem({ event }: TimelineItemProps) {
   if (!eventInfo) return null;
 
   // Get the date - for commits, use commit.author.date if created_at is not available
-  const commitDate = isCommit 
-    ? (event as { commit?: { author?: { date?: string } } }).commit?.author?.date
+  const commitDate = isCommit
+    ? (event as { commit?: { author?: { date?: string } } }).commit?.author
+        ?.date
     : undefined;
   const displayDate = createdAt || commitDate;
-  
+
   // Get avatar - prefer actor's avatar, then eventInfo.avatar
   const avatarUrl = actor?.avatar_url || eventInfo.avatar;
-  const avatarAlt = actor?.login || 'User';
+  const avatarAlt = actor?.login || "User";
 
   return (
     <div className="flex items-start gap-3 py-3">
       {/* Timeline line + icon */}
       <div className="flex flex-col items-center">
-        <div className={cn("p-2 rounded-full bg-muted border border-border", eventInfo.color)}>
+        <div
+          className={cn(
+            "p-2 rounded-full bg-muted border border-border",
+            eventInfo.color
+          )}
+        >
           {eventInfo.icon}
         </div>
       </div>
-      
+
       {/* Content */}
       <div className="flex-1 min-w-0 pt-1.5">
         <div className="flex items-center gap-2 flex-wrap text-sm">
@@ -2537,7 +3032,7 @@ function TimelineItem({ event }: TimelineItemProps) {
           {eventInfo.text}
           {displayDate && (
             <span className="text-muted-foreground">
-              <a 
+              <a
                 href="#"
                 className="hover:text-blue-400 hover:underline"
                 title={new Date(displayDate).toLocaleString()}
@@ -2586,7 +3081,10 @@ function PROverviewSkeleton() {
             {/* Merge section skeleton */}
             <div className="border border-border rounded-md overflow-hidden">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-3 p-4 border-b border-border last:border-b-0">
+                <div
+                  key={i}
+                  className="flex items-center gap-3 p-4 border-b border-border last:border-b-0"
+                >
                   <Skeleton className="w-5 h-5 rounded-full" />
                   <div className="flex-1 space-y-1">
                     <Skeleton className="h-4 w-48" />
@@ -2622,7 +3120,11 @@ function PROverviewSkeleton() {
             <SidebarSectionSkeleton title="Reviewers" itemCount={2} />
             <SidebarSectionSkeleton title="Assignees" itemCount={1} />
             <SidebarSectionSkeleton title="Labels" itemCount={3} hasLabels />
-            <SidebarSectionSkeleton title="Participants" itemCount={4} hasAvatars />
+            <SidebarSectionSkeleton
+              title="Participants"
+              itemCount={4}
+              hasAvatars
+            />
           </div>
         </div>
       </div>
@@ -2660,13 +3162,13 @@ function CommentBoxSkeleton({ isLarge }: { isLarge?: boolean }) {
   );
 }
 
-function SidebarSectionSkeleton({ 
-  title, 
-  itemCount = 2, 
+function SidebarSectionSkeleton({
+  title,
+  itemCount = 2,
   hasLabels,
-  hasAvatars 
-}: { 
-  title: string; 
+  hasAvatars,
+}: {
+  title: string;
   itemCount?: number;
   hasLabels?: boolean;
   hasAvatars?: boolean;
@@ -2674,7 +3176,9 @@ function SidebarSectionSkeleton({
   return (
     <div className="pb-3 border-b border-border">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-muted-foreground">{title}</span>
+        <span className="text-xs font-semibold text-muted-foreground">
+          {title}
+        </span>
         <Skeleton className="w-4 h-4" />
       </div>
       {hasLabels ? (

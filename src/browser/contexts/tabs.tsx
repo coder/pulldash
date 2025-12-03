@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useNavigate } from "react-router-dom";
 
 // ============================================================================
 // Types
@@ -224,6 +225,7 @@ export function TabProvider({ children }: TabProviderProps) {
 
 export function useOpenPRReviewTab() {
   const { openTab, getExistingPRTab, setActiveTab } = useTabContext();
+  const navigate = useNavigate();
 
   return useCallback(
     (owner: string, repo: string, number: number) => {
@@ -231,12 +233,14 @@ export function useOpenPRReviewTab() {
       const existing = getExistingPRTab(owner, repo, number);
       if (existing) {
         setActiveTab(existing.id);
+        // Navigate to the PR URL
+        navigate(`/${owner}/${repo}/pull/${number}`);
         return existing.id;
       }
 
       // Create new tab
       const id = `pr-${owner}-${repo}-${number}`;
-      return openTab({
+      const tabId = openTab({
         id,
         type: "pr-review",
         label: `#${number}`,
@@ -244,7 +248,12 @@ export function useOpenPRReviewTab() {
         repo,
         number,
       });
+
+      // Navigate to the PR URL
+      navigate(`/${owner}/${repo}/pull/${number}`);
+
+      return tabId;
     },
-    [openTab, getExistingPRTab, setActiveTab]
+    [openTab, getExistingPRTab, setActiveTab, navigate]
   );
 }

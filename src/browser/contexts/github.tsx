@@ -1,7 +1,6 @@
 import {
   createContext,
   useContext,
-  useState,
   useEffect,
   useRef,
   useCallback,
@@ -10,11 +9,13 @@ import {
 } from "react";
 import { Octokit } from "@octokit/core";
 import type { components } from "@octokit/openapi-types";
+import { useAuth } from "./auth";
 
 // Re-export types
 export type PullRequest = components["schemas"]["pull-request"];
 export type PullRequestFile = components["schemas"]["diff-entry"];
-export type ReviewComment = components["schemas"]["pull-request-review-comment"];
+export type ReviewComment =
+  components["schemas"]["pull-request-review-comment"];
 export type Review = components["schemas"]["pull-request-review"];
 export type CheckRun = components["schemas"]["check-run"];
 export type CombinedStatus = components["schemas"]["combined-commit-status"];
@@ -22,8 +23,17 @@ export type IssueComment = components["schemas"]["issue-comment"];
 export type PRCommit = components["schemas"]["commit"];
 export type Collaborator = components["schemas"]["collaborator"];
 export type Reaction = components["schemas"]["reaction"];
-export type ReactionContent = "+1" | "-1" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes";
+export type ReactionContent =
+  | "+1"
+  | "-1"
+  | "laugh"
+  | "hooray"
+  | "confused"
+  | "heart"
+  | "rocket"
+  | "eyes";
 export type TimelineEvent = components["schemas"]["timeline-issue-events"];
+export type UserProfile = components["schemas"]["public-user"];
 
 // ============================================================================
 // Types
@@ -193,7 +203,10 @@ class RequestCache {
    * Get cached data even if stale (for SWR pattern).
    * Returns { data, isStale } or null if no cache exists.
    */
-  getStale<T>(key: string, freshTtl = DEFAULT_CACHE_TTL): { data: T; isStale: boolean } | null {
+  getStale<T>(
+    key: string,
+    freshTtl = DEFAULT_CACHE_TTL
+  ): { data: T; isStale: boolean } | null {
     const entry = this.cache.get(key);
     if (!entry) return null;
     const isStale = Date.now() - entry.timestamp > freshTtl;
@@ -271,9 +284,17 @@ class GraphQLBatcher {
     this.octokit = octokit;
   }
 
-  async query<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  async query<T>(
+    query: string,
+    variables: Record<string, unknown> = {}
+  ): Promise<T> {
     return new Promise((resolve, reject) => {
-      this.queue.push({ query, variables, resolve: resolve as (data: unknown) => void, reject });
+      this.queue.push({
+        query,
+        variables,
+        resolve: resolve as (data: unknown) => void,
+        reject,
+      });
       this.scheduleBatch();
     });
   }
@@ -357,12 +378,59 @@ function createGitHubStore() {
   const cache = new RequestCache();
   let octokit: Octokit | null = null;
   let batcher: GraphQLBatcher | null = null;
+  let onUnauthorized: (() => void) | null = null;
+  let onRateLimited: (() => void) | null = null;
+
+  function setOnUnauthorized(callback: () => void) {
+    onUnauthorized = callback;
+  }
+
+  function setOnRateLimited(callback: () => void) {
+    onRateLimited = callback;
+  }
+
+  // Helper to wrap octokit with error hooks
+  function wrapOctokitWithHooks(octokitInstance: Octokit) {
+    octokitInstance.hook.wrap("request", async (request, options) => {
+      try {
+        return await request(options);
+      } catch (error) {
+        if (error && typeof error === "object" && "status" in error) {
+          if (error.status === 401) {
+            console.warn(
+              "[GitHub] Received 401 Unauthorized - token may be revoked"
+            );
+            onUnauthorized?.();
+          } else if (
+            error.status === 403 &&
+            "response" in error &&
+            error.response &&
+            typeof error.response === "object" &&
+            "headers" in error.response
+          ) {
+            // Check for rate limit
+            const headers = (
+              error.response as { headers: Record<string, string> }
+            ).headers;
+            const remaining = headers["x-ratelimit-remaining"];
+            if (remaining === "0") {
+              console.warn("[GitHub] Rate limit exceeded");
+              onRateLimited?.();
+            }
+          }
+        }
+        throw error;
+      }
+    });
+  }
 
   function getState() {
     return state;
   }
 
-  function setState(partial: Partial<GitHubState> | ((s: GitHubState) => Partial<GitHubState>)) {
+  function setState(
+    partial: Partial<GitHubState> | ((s: GitHubState) => Partial<GitHubState>)
+  ) {
     const updates = typeof partial === "function" ? partial(state) : partial;
     state = { ...state, ...updates };
     listeners.forEach((l) => l());
@@ -377,28 +445,53 @@ function createGitHubStore() {
   // Initialization
   // ---------------------------------------------------------------------------
 
-  async function initialize() {
+  function initialize(token: string) {
     // Load cached user immediately for instant UI
-    const cachedUser = cache.getStale<components["schemas"]["private-user"]>("user:current");
+    const cachedUser =
+      cache.getStale<components["schemas"]["private-user"]>("user:current");
     if (cachedUser) {
       setState({ currentUser: cachedUser.data.login });
     }
 
-    try {
-      const res = await fetch("/api/token");
-      if (!res.ok) throw new Error("Failed to fetch token");
-      const { token } = await res.json();
+    octokit = new Octokit({ auth: token });
+    wrapOctokitWithHooks(octokit);
+    batcher = new GraphQLBatcher(octokit);
 
-      octokit = new Octokit({ auth: token });
-      batcher = new GraphQLBatcher(octokit);
+    setState({ ready: true, error: null });
 
-      setState({ ready: true, error: null });
+    // Revalidate current user in background
+    fetchCurrentUser();
+  }
 
-      // Revalidate current user in background
-      fetchCurrentUser();
-    } catch (err) {
-      setState({ error: err instanceof Error ? err.message : "Failed to initialize" });
-    }
+  function initializeAnonymous() {
+    // Create an unauthenticated Octokit instance for public repo access
+    // GitHub allows 60 requests/hour for unauthenticated requests
+    octokit = new Octokit();
+    wrapOctokitWithHooks(octokit);
+    batcher = new GraphQLBatcher(octokit);
+
+    setState({ ready: true, error: null, currentUser: null });
+  }
+
+  function reset() {
+    octokit = null;
+    batcher = null;
+    cache.invalidate();
+    setState({
+      ready: false,
+      error: null,
+      currentUser: null,
+      prList: {
+        items: [],
+        totalCount: 0,
+        loading: false,
+        error: null,
+        lastFetchedAt: null,
+      },
+      prListQueries: [],
+      prListPage: 1,
+      prChecks: new Map(),
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -412,7 +505,10 @@ function createGitHubStore() {
     const FRESH_TTL = 300_000; // 5 minutes
 
     // Check for stale data - return immediately if we have any
-    const stale = cache.getStale<components["schemas"]["private-user"]>(cacheKey, FRESH_TTL);
+    const stale = cache.getStale<components["schemas"]["private-user"]>(
+      cacheKey,
+      FRESH_TTL
+    );
     if (stale) {
       setState({ currentUser: stale.data.login });
       // If fresh, don't revalidate
@@ -420,7 +516,8 @@ function createGitHubStore() {
     }
 
     // Check for pending request
-    const pending = cache.getPending<components["schemas"]["private-user"]>(cacheKey);
+    const pending =
+      cache.getPending<components["schemas"]["private-user"]>(cacheKey);
     if (pending) {
       const user = await pending;
       setState({ currentUser: user.login });
@@ -451,7 +548,13 @@ function createGitHubStore() {
 
     if (queries.length === 0) {
       setState({
-        prList: { items: [], totalCount: 0, loading: false, error: null, lastFetchedAt: Date.now() },
+        prList: {
+          items: [],
+          totalCount: 0,
+          loading: false,
+          error: null,
+          lastFetchedAt: Date.now(),
+        },
         prListQueries: queries,
         prListPage: page,
       });
@@ -462,10 +565,18 @@ function createGitHubStore() {
     const FRESH_TTL = 30_000; // 30 seconds
 
     // Check for stale data - show immediately if we have any
-    const stale = cache.getStale<{ items: PRSearchResult[]; totalCount: number }>(cacheKey, FRESH_TTL);
+    const stale = cache.getStale<{
+      items: PRSearchResult[];
+      totalCount: number;
+    }>(cacheKey, FRESH_TTL);
     if (stale) {
       setState({
-        prList: { ...stale.data, loading: stale.isStale, error: null, lastFetchedAt: Date.now() },
+        prList: {
+          ...stale.data,
+          loading: stale.isStale,
+          error: null,
+          lastFetchedAt: Date.now(),
+        },
         prListQueries: queries,
         prListPage: page,
       });
@@ -501,7 +612,10 @@ function createGitHubStore() {
       }
 
       // Sort by updated_at descending
-      combined.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+      combined.sort(
+        (a, b) =>
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
 
       // Enrich with GraphQL data
       const prIdentifiers = combined
@@ -512,7 +626,10 @@ function createGitHubStore() {
           }
           return null;
         })
-        .filter((x): x is { owner: string; repo: string; number: number } => x !== null);
+        .filter(
+          (x): x is { owner: string; repo: string; number: number } =>
+            x !== null
+        );
 
       if (prIdentifiers.length > 0) {
         try {
@@ -536,11 +653,21 @@ function createGitHubStore() {
       cache.set(cacheKey, { items: combined, totalCount: total }, true);
 
       setState({
-        prList: { items: combined, totalCount: total, loading: false, error: null, lastFetchedAt: Date.now() },
+        prList: {
+          items: combined,
+          totalCount: total,
+          loading: false,
+          error: null,
+          lastFetchedAt: Date.now(),
+        },
       });
     } catch (e) {
       setState((s) => ({
-        prList: { ...s.prList, loading: false, error: e instanceof Error ? e.message : "Failed to fetch PRs" },
+        prList: {
+          ...s.prList,
+          loading: false,
+          error: e instanceof Error ? e.message : "Failed to fetch PRs",
+        },
       }));
     }
   }
@@ -585,7 +712,9 @@ function createGitHubStore() {
       let checks: CheckStatus["checks"] = "none";
       if (checkRuns.length > 0 || statuses.length > 0) {
         const allChecks = [
-          ...checkRuns.map((c) => (c.status === "completed" ? c.conclusion : "pending")),
+          ...checkRuns.map((c) =>
+            c.status === "completed" ? c.conclusion : "pending"
+          ),
           ...statuses.map((s) => s.state),
         ];
 
@@ -644,318 +773,419 @@ function createGitHubStore() {
   async function searchPRs(query: string, page = 1, perPage = 30) {
     if (!octokit) throw new Error("Not initialized");
 
-  const cacheKey = `search:prs:${query}:${page}:${perPage}`;
-  
-  const cached = cache.get<Awaited<ReturnType<typeof octokit.request<"GET /search/issues">>>["data"]>(cacheKey);
-  if (cached) return cached;
+    const cacheKey = `search:prs:${query}:${page}:${perPage}`;
 
-  const pending = cache.getPending<Awaited<ReturnType<typeof octokit.request<"GET /search/issues">>>["data"]>(cacheKey);
-  if (pending) return pending;
+    const cached =
+      cache.get<
+        Awaited<
+          ReturnType<typeof octokit.request<"GET /search/issues">>
+        >["data"]
+      >(cacheKey);
+    if (cached) return cached;
+
+    const pending =
+      cache.getPending<
+        Awaited<
+          ReturnType<typeof octokit.request<"GET /search/issues">>
+        >["data"]
+      >(cacheKey);
+    if (pending) return pending;
 
     const promise = octokit
-      .request("GET /search/issues", { q: query, sort: "updated", order: "desc", per_page: perPage, page })
+      .request("GET /search/issues", {
+        q: query,
+        sort: "updated",
+        order: "desc",
+        per_page: perPage,
+        page,
+      })
       .then((res) => {
-    cache.set(cacheKey, res.data);
-    return res.data;
-  });
+        cache.set(cacheKey, res.data);
+        return res.data;
+      });
 
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
 
   async function searchRepos(query: string) {
     if (!octokit) throw new Error("Not initialized");
 
-  const cacheKey = `search:repos:${query}`;
-  
-  const cached = cache.get<Awaited<ReturnType<typeof octokit.request<"GET /search/repositories">>>["data"]>(cacheKey);
-  if (cached) return cached;
+    const cacheKey = `search:repos:${query}`;
 
-  const pending = cache.getPending<Awaited<ReturnType<typeof octokit.request<"GET /search/repositories">>>["data"]>(cacheKey);
-  if (pending) return pending;
+    const cached =
+      cache.get<
+        Awaited<
+          ReturnType<typeof octokit.request<"GET /search/repositories">>
+        >["data"]
+      >(cacheKey);
+    if (cached) return cached;
 
-    const promise = octokit
-      .request("GET /search/repositories", { q: query, order: "desc", per_page: 10 })
-      .then((res) => {
-    cache.set(cacheKey, res.data);
-    return res.data;
-  });
-
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
-
-  async function getPR(owner: string, repo: string, number: number): Promise<PullRequest> {
-    if (!octokit) throw new Error("Not initialized");
-
-  const cacheKey = `pr:${owner}/${repo}/${number}`;
-  
-  const cached = cache.get<PullRequest>(cacheKey);
-  if (cached) return cached;
-
-  const pending = cache.getPending<PullRequest>(cacheKey);
-  if (pending) return pending;
+    const pending =
+      cache.getPending<
+        Awaited<
+          ReturnType<typeof octokit.request<"GET /search/repositories">>
+        >["data"]
+      >(cacheKey);
+    if (pending) return pending;
 
     const promise = octokit
-      .request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner, repo, pull_number: number })
+      .request("GET /search/repositories", {
+        q: query,
+        order: "desc",
+        per_page: 10,
+      })
       .then((res) => {
-    cache.set(cacheKey, res.data);
-    return res.data;
-  });
+        cache.set(cacheKey, res.data);
+        return res.data;
+      });
 
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
 
-  async function getPRFiles(owner: string, repo: string, number: number): Promise<PullRequestFile[]> {
+  async function getPR(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<PullRequest> {
     if (!octokit) throw new Error("Not initialized");
 
-  const cacheKey = `pr:${owner}/${repo}/${number}:files`;
-  
-  const cached = cache.get<PullRequestFile[]>(cacheKey);
-  if (cached) return cached;
+    const cacheKey = `pr:${owner}/${repo}/${number}`;
 
-  const pending = cache.getPending<PullRequestFile[]>(cacheKey);
-  if (pending) return pending;
+    const cached = cache.get<PullRequest>(cacheKey);
+    if (cached) return cached;
 
-  const promise = (async () => {
-    const files: PullRequestFile[] = [];
-    let page = 1;
+    const pending = cache.getPending<PullRequest>(cacheKey);
+    if (pending) return pending;
 
-    while (true) {
-        const { data } = await octokit!.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
+    const promise = octokit
+      .request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
         owner,
         repo,
         pull_number: number,
-        per_page: 100,
-        page,
-      });
-      files.push(...data);
-      if (data.length < 100) break;
-      page++;
-    }
-
-    cache.set(cacheKey, files);
-    return files;
-  })();
-
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
-
-  async function getPRComments(owner: string, repo: string, number: number): Promise<ReviewComment[]> {
-    if (!octokit) throw new Error("Not initialized");
-
-  const cacheKey = `pr:${owner}/${repo}/${number}:comments`;
-  
-  const cached = cache.get<ReviewComment[]>(cacheKey);
-  if (cached) return cached;
-
-  const pending = cache.getPending<ReviewComment[]>(cacheKey);
-  if (pending) return pending;
-
-  const promise = (async () => {
-    const comments: ReviewComment[] = [];
-    let page = 1;
-
-    while (true) {
-        const { data } = await octokit!.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/comments", {
-        owner,
-        repo,
-        pull_number: number,
-        per_page: 100,
-        page,
-      });
-      comments.push(...data);
-      if (data.length < 100) break;
-      page++;
-    }
-
-    cache.set(cacheKey, comments);
-    return comments;
-  })();
-
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
-
-async function createPRComment(
-  owner: string,
-  repo: string,
-  number: number,
-  body: string,
-  options?: {
-    reply_to_id?: number;
-    commit_id?: string;
-    path?: string;
-    line?: number;
-    side?: "LEFT" | "RIGHT";
-  }
-): Promise<ReviewComment> {
-    if (!octokit) throw new Error("Not initialized");
-
-  let result: ReviewComment;
-
-  if (options?.reply_to_id) {
-    const { data } = await octokit.request(
-      "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies",
-        { owner, repo, pull_number: number, comment_id: options.reply_to_id, body }
-    );
-    result = data;
-  } else {
-    const { data } = await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/comments", {
-      owner,
-      repo,
-      pull_number: number,
-      body,
-      commit_id: options?.commit_id!,
-      path: options?.path!,
-      line: options?.line!,
-      side: options?.side ?? "RIGHT",
-    });
-    result = data;
-  }
-
-  cache.invalidate(`pr:${owner}/${repo}/${number}:comments`);
-  return result;
-}
-
-  async function getPRReviews(owner: string, repo: string, number: number): Promise<Review[]> {
-    if (!octokit) throw new Error("Not initialized");
-
-  const cacheKey = `pr:${owner}/${repo}/${number}:reviews`;
-  
-  const cached = cache.get<Review[]>(cacheKey);
-  if (cached) return cached;
-
-  const pending = cache.getPending<Review[]>(cacheKey);
-  if (pending) return pending;
-
-    const promise = octokit
-      .request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", { owner, repo, pull_number: number })
+      })
       .then((res) => {
-    cache.set(cacheKey, res.data);
-    return res.data;
-  });
+        cache.set(cacheKey, res.data);
+        return res.data;
+      });
 
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
 
-async function createPRReview(
-  owner: string,
-  repo: string,
-  number: number,
-  options: {
-    commit_id: string;
-    event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
-    body?: string;
-    comments?: Array<{
-      path: string;
-      line: number;
-      body: string;
+  async function getPRFiles(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<PullRequestFile[]> {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `pr:${owner}/${repo}/${number}:files`;
+
+    const cached = cache.get<PullRequestFile[]>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<PullRequestFile[]>(cacheKey);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const files: PullRequestFile[] = [];
+      let page = 1;
+
+      while (true) {
+        const { data } = await octokit!.request(
+          "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+          {
+            owner,
+            repo,
+            pull_number: number,
+            per_page: 100,
+            page,
+          }
+        );
+        files.push(...data);
+        if (data.length < 100) break;
+        page++;
+      }
+
+      cache.set(cacheKey, files);
+      return files;
+    })();
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  async function getPRComments(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<ReviewComment[]> {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `pr:${owner}/${repo}/${number}:comments`;
+
+    const cached = cache.get<ReviewComment[]>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<ReviewComment[]>(cacheKey);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const comments: ReviewComment[] = [];
+      let page = 1;
+
+      while (true) {
+        const { data } = await octokit!.request(
+          "GET /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+          {
+            owner,
+            repo,
+            pull_number: number,
+            per_page: 100,
+            page,
+          }
+        );
+        comments.push(...data);
+        if (data.length < 100) break;
+        page++;
+      }
+
+      cache.set(cacheKey, comments);
+      return comments;
+    })();
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  async function createPRComment(
+    owner: string,
+    repo: string,
+    number: number,
+    body: string,
+    options?: {
+      reply_to_id?: number;
+      commit_id?: string;
+      path?: string;
+      line?: number;
       side?: "LEFT" | "RIGHT";
-      start_line?: number;
-    }>;
+    }
+  ): Promise<ReviewComment> {
+    if (!octokit) throw new Error("Not initialized");
+
+    let result: ReviewComment;
+
+    if (options?.reply_to_id) {
+      const { data } = await octokit.request(
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies",
+        {
+          owner,
+          repo,
+          pull_number: number,
+          comment_id: options.reply_to_id,
+          body,
+        }
+      );
+      result = data;
+    } else {
+      const { data } = await octokit.request(
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+        {
+          owner,
+          repo,
+          pull_number: number,
+          body,
+          commit_id: options?.commit_id!,
+          path: options?.path!,
+          line: options?.line!,
+          side: options?.side ?? "RIGHT",
+        }
+      );
+      result = data;
+    }
+
+    cache.invalidate(`pr:${owner}/${repo}/${number}:comments`);
+    return result;
   }
-): Promise<Review> {
+
+  async function getPRReviews(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<Review[]> {
     if (!octokit) throw new Error("Not initialized");
 
-  const { data } = await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
-    owner,
-    repo,
-    pull_number: number,
-    commit_id: options.commit_id,
-    event: options.event,
-    body: options.body ?? "",
-    comments: options.comments ?? [],
-  });
-  
-  cache.invalidate(`pr:${owner}/${repo}/${number}`);
-  return data;
-}
+    const cacheKey = `pr:${owner}/${repo}/${number}:reviews`;
 
-async function submitPRReview(
-  owner: string,
-  repo: string,
-  number: number,
-  reviewId: number,
-  event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
-  body?: string
-): Promise<Review> {
+    const cached = cache.get<Review[]>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<Review[]>(cacheKey);
+    if (pending) return pending;
+
+    const promise = octokit
+      .request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
+        owner,
+        repo,
+        pull_number: number,
+      })
+      .then((res) => {
+        cache.set(cacheKey, res.data);
+        return res.data;
+      });
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  async function createPRReview(
+    owner: string,
+    repo: string,
+    number: number,
+    options: {
+      commit_id: string;
+      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      body?: string;
+      comments?: Array<{
+        path: string;
+        line: number;
+        body: string;
+        side?: "LEFT" | "RIGHT";
+        start_line?: number;
+      }>;
+    }
+  ): Promise<Review> {
     if (!octokit) throw new Error("Not initialized");
 
-  const { data } = await octokit.request(
-    "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/events",
-      { owner, repo, pull_number: number, review_id: reviewId, event, body: body ?? "" }
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      {
+        owner,
+        repo,
+        pull_number: number,
+        commit_id: options.commit_id,
+        event: options.event,
+        body: options.body ?? "",
+        comments: options.comments ?? [],
+      }
     );
 
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
     return data;
   }
 
-  async function deletePRReview(owner: string, repo: string, number: number, reviewId: number): Promise<void> {
+  async function submitPRReview(
+    owner: string,
+    repo: string,
+    number: number,
+    reviewId: number,
+    event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+    body?: string
+  ): Promise<Review> {
     if (!octokit) throw new Error("Not initialized");
 
-    await octokit.request("DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}", {
-      owner,
-      repo,
-      pull_number: number,
-      review_id: reviewId,
-    });
-  cache.invalidate(`pr:${owner}/${repo}/${number}`);
-}
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/events",
+      {
+        owner,
+        repo,
+        pull_number: number,
+        review_id: reviewId,
+        event,
+        body: body ?? "",
+      }
+    );
+
+    cache.invalidate(`pr:${owner}/${repo}/${number}`);
+    return data;
+  }
+
+  async function deletePRReview(
+    owner: string,
+    repo: string,
+    number: number,
+    reviewId: number
+  ): Promise<void> {
+    if (!octokit) throw new Error("Not initialized");
+
+    await octokit.request(
+      "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
+      {
+        owner,
+        repo,
+        pull_number: number,
+        review_id: reviewId,
+      }
+    );
+    cache.invalidate(`pr:${owner}/${repo}/${number}`);
+  }
 
   async function getPRChecksForSha(owner: string, repo: string, sha: string) {
     if (!octokit) throw new Error("Not initialized");
 
-  const cacheKey = `checks:${owner}/${repo}/${sha}`;
-  
+    const cacheKey = `checks:${owner}/${repo}/${sha}`;
+
     type ChecksResult = { checkRuns: CheckRun[]; status: CombinedStatus };
-  
+
     const cached = cache.get<ChecksResult>(cacheKey, 15_000);
-  if (cached) return cached;
+    if (cached) return cached;
 
-  const pending = cache.getPending<ChecksResult>(cacheKey);
-  if (pending) return pending;
+    const pending = cache.getPending<ChecksResult>(cacheKey);
+    if (pending) return pending;
 
-  const promise = Promise.all([
-      octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", { owner, repo, ref: sha }),
-      octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/status", { owner, repo, ref: sha }),
-  ]).then(([checkRunsRes, statusRes]) => {
-      const result = { checkRuns: checkRunsRes.data.check_runs, status: statusRes.data };
-    cache.set(cacheKey, result);
-    return result;
-  });
+    const promise = Promise.all([
+      octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
+        owner,
+        repo,
+        ref: sha,
+      }),
+      octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/status", {
+        owner,
+        repo,
+        ref: sha,
+      }),
+    ]).then(([checkRunsRes, statusRes]) => {
+      const result = {
+        checkRuns: checkRunsRes.data.check_runs,
+        status: statusRes.data,
+      };
+      cache.set(cacheKey, result);
+      return result;
+    });
 
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
-
-async function mergePR(
-  owner: string,
-  repo: string,
-  number: number,
-  options?: {
-    merge_method?: "merge" | "squash" | "rebase";
-    commit_title?: string;
-    commit_message?: string;
+    cache.setPending(cacheKey, promise);
+    return promise;
   }
-) {
+
+  async function mergePR(
+    owner: string,
+    repo: string,
+    number: number,
+    options?: {
+      merge_method?: "merge" | "squash" | "rebase";
+      commit_title?: string;
+      commit_message?: string;
+    }
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
-  const { data } = await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge", {
-    owner,
-    repo,
-    pull_number: number,
-    merge_method: options?.merge_method ?? "squash",
-    commit_title: options?.commit_title,
-    commit_message: options?.commit_message,
-  });
-  
-  cache.invalidate(`pr:${owner}/${repo}/${number}`);
-  return data;
-}
+    const { data } = await octokit.request(
+      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge",
+      {
+        owner,
+        repo,
+        pull_number: number,
+        merge_method: options?.merge_method ?? "squash",
+        commit_title: options?.commit_title,
+        commit_message: options?.commit_message,
+      }
+    );
+
+    cache.invalidate(`pr:${owner}/${repo}/${number}`);
+    return data;
+  }
 
   async function getPRCommits(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
@@ -965,7 +1195,8 @@ async function mergePR(
     const cached = cache.get<components["schemas"]["commit"][]>(cacheKey);
     if (cached) return cached;
 
-    const pending = cache.getPending<components["schemas"]["commit"][]>(cacheKey);
+    const pending =
+      cache.getPending<components["schemas"]["commit"][]>(cacheKey);
     if (pending) return pending;
 
     const promise = octokit
@@ -1032,10 +1263,14 @@ async function mergePR(
 
     const cacheKey = `repo:${owner}/${repo}:collaborators`;
 
-    const cached = cache.get<components["schemas"]["collaborator"][]>(cacheKey, 300_000);
+    const cached = cache.get<components["schemas"]["collaborator"][]>(
+      cacheKey,
+      300_000
+    );
     if (cached) return cached;
 
-    const pending = cache.getPending<components["schemas"]["collaborator"][]>(cacheKey);
+    const pending =
+      cache.getPending<components["schemas"]["collaborator"][]>(cacheKey);
     if (pending) return pending;
 
     const promise = octokit
@@ -1101,26 +1336,33 @@ async function mergePR(
 
     const cacheKey = `repo:${owner}/${repo}:labels`;
 
-    const cached = cache.get<Array<{ name: string; color: string; description: string | null }>>(cacheKey, 300_000);
+    const cached = cache.get<
+      Array<{ name: string; color: string; description: string | null }>
+    >(cacheKey, 300_000);
     if (cached) return cached;
 
-    const pending = cache.getPending<Array<{ name: string; color: string; description: string | null }>>(cacheKey);
+    const pending =
+      cache.getPending<
+        Array<{ name: string; color: string; description: string | null }>
+      >(cacheKey);
     if (pending) return pending;
 
-    const promise = octokit.paginate("GET /repos/{owner}/{repo}/labels", {
-      owner,
-      repo,
-      per_page: 100,
-    }).then((labels) => {
-      const result = labels.map(l => ({
-        name: l.name,
-        color: l.color,
-        description: l.description ?? null,
-      }));
-      cache.set(cacheKey, result);
-      cache.clearPending(cacheKey);
-      return result;
-    });
+    const promise = octokit
+      .paginate("GET /repos/{owner}/{repo}/labels", {
+        owner,
+        repo,
+        per_page: 100,
+      })
+      .then((labels) => {
+        const result = labels.map((l) => ({
+          name: l.name,
+          color: l.color,
+          description: l.description ?? null,
+        }));
+        cache.set(cacheKey, result);
+        cache.clearPending(cacheKey);
+        return result;
+      });
 
     cache.setPending(cacheKey, promise);
     return promise;
@@ -1187,7 +1429,11 @@ async function mergePR(
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
   }
 
-  async function markReadyForReview(owner: string, repo: string, number: number) {
+  async function markReadyForReview(
+    owner: string,
+    repo: string,
+    number: number
+  ) {
     if (!batcher) throw new Error("Not initialized");
 
     const prData = await batcher.query<{
@@ -1208,107 +1454,170 @@ async function mergePR(
   async function updateBranch(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
 
-    const { data } = await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch", {
-      owner,
-      repo,
-      pull_number: number,
-    });
+    const { data } = await octokit.request(
+      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch",
+      {
+        owner,
+        repo,
+        pull_number: number,
+      }
+    );
 
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
     return data;
   }
 
   // Reaction types: +1, -1, laugh, hooray, confused, heart, rocket, eyes
-  type ReactionContent = "+1" | "-1" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes";
+  type ReactionContent =
+    | "+1"
+    | "-1"
+    | "laugh"
+    | "hooray"
+    | "confused"
+    | "heart"
+    | "rocket"
+    | "eyes";
 
-  async function getIssueReactions(owner: string, repo: string, issueNumber: number) {
+  async function getIssueReactions(
+    owner: string,
+    repo: string,
+    issueNumber: number
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
     const cacheKey = `reactions:issue:${owner}/${repo}/${issueNumber}`;
 
-    const cached = cache.get<components["schemas"]["reaction"][]>(cacheKey, 30_000);
+    const cached = cache.get<components["schemas"]["reaction"][]>(
+      cacheKey,
+      30_000
+    );
     if (cached) return cached;
 
-    const { data } = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/reactions", {
-      owner,
-      repo,
-      issue_number: issueNumber,
-      per_page: 100,
-    });
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/issues/{issue_number}/reactions",
+      {
+        owner,
+        repo,
+        issue_number: issueNumber,
+        per_page: 100,
+      }
+    );
 
     cache.set(cacheKey, data);
     return data;
   }
 
-  async function addIssueReaction(owner: string, repo: string, issueNumber: number, content: ReactionContent) {
+  async function addIssueReaction(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    content: ReactionContent
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
-    const { data } = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/reactions", {
-      owner,
-      repo,
-      issue_number: issueNumber,
-      content,
-    });
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/issues/{issue_number}/reactions",
+      {
+        owner,
+        repo,
+        issue_number: issueNumber,
+        content,
+      }
+    );
 
     cache.invalidate(`reactions:issue:${owner}/${repo}/${issueNumber}`);
     return data;
   }
 
-  async function deleteIssueReaction(owner: string, repo: string, issueNumber: number, reactionId: number) {
+  async function deleteIssueReaction(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    reactionId: number
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
-    await octokit.request("DELETE /repos/{owner}/{repo}/issues/{issue_number}/reactions/{reaction_id}", {
-      owner,
-      repo,
-      issue_number: issueNumber,
-      reaction_id: reactionId,
-    });
+    await octokit.request(
+      "DELETE /repos/{owner}/{repo}/issues/{issue_number}/reactions/{reaction_id}",
+      {
+        owner,
+        repo,
+        issue_number: issueNumber,
+        reaction_id: reactionId,
+      }
+    );
 
     cache.invalidate(`reactions:issue:${owner}/${repo}/${issueNumber}`);
   }
 
-  async function getCommentReactions(owner: string, repo: string, commentId: number) {
+  async function getCommentReactions(
+    owner: string,
+    repo: string,
+    commentId: number
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
     const cacheKey = `reactions:comment:${owner}/${repo}/${commentId}`;
 
-    const cached = cache.get<components["schemas"]["reaction"][]>(cacheKey, 30_000);
+    const cached = cache.get<components["schemas"]["reaction"][]>(
+      cacheKey,
+      30_000
+    );
     if (cached) return cached;
 
-    const { data } = await octokit.request("GET /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions", {
-      owner,
-      repo,
-      comment_id: commentId,
-      per_page: 100,
-    });
+    const { data } = await octokit.request(
+      "GET /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+        per_page: 100,
+      }
+    );
 
     cache.set(cacheKey, data);
     return data;
   }
 
-  async function addCommentReaction(owner: string, repo: string, commentId: number, content: ReactionContent) {
+  async function addCommentReaction(
+    owner: string,
+    repo: string,
+    commentId: number,
+    content: ReactionContent
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
-    const { data } = await octokit.request("POST /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions", {
-      owner,
-      repo,
-      comment_id: commentId,
-      content,
-    });
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+        content,
+      }
+    );
 
     cache.invalidate(`reactions:comment:${owner}/${repo}/${commentId}`);
     return data;
   }
 
-  async function deleteCommentReaction(owner: string, repo: string, commentId: number, reactionId: number) {
+  async function deleteCommentReaction(
+    owner: string,
+    repo: string,
+    commentId: number,
+    reactionId: number
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
-    await octokit.request("DELETE /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions/{reaction_id}", {
-      owner,
-      repo,
-      comment_id: commentId,
-      reaction_id: reactionId,
-    });
+    await octokit.request(
+      "DELETE /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions/{reaction_id}",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+        reaction_id: reactionId,
+      }
+    );
 
     cache.invalidate(`reactions:comment:${owner}/${repo}/${commentId}`);
   }
@@ -1316,12 +1625,15 @@ async function mergePR(
   async function closePR(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
 
-    const { data } = await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
-      owner,
-      repo,
-      pull_number: number,
-      state: "closed",
-    });
+    const { data } = await octokit.request(
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: number,
+        state: "closed",
+      }
+    );
 
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
     return data;
@@ -1330,53 +1642,76 @@ async function mergePR(
   async function reopenPR(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
 
-    const { data } = await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
-      owner,
-      repo,
-      pull_number: number,
-      state: "open",
-    });
+    const { data } = await octokit.request(
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: number,
+        state: "open",
+      }
+    );
 
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
     return data;
   }
 
-  async function getPRConversation(owner: string, repo: string, number: number): Promise<IssueComment[]> {
+  async function getPRConversation(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<IssueComment[]> {
     if (!octokit) throw new Error("Not initialized");
 
-  const cacheKey = `pr:${owner}/${repo}/${number}:conversation`;
-  
-  const cached = cache.get<IssueComment[]>(cacheKey);
-  if (cached) return cached;
+    const cacheKey = `pr:${owner}/${repo}/${number}:conversation`;
 
-  const pending = cache.getPending<IssueComment[]>(cacheKey);
-  if (pending) return pending;
+    const cached = cache.get<IssueComment[]>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<IssueComment[]>(cacheKey);
+    if (pending) return pending;
 
     const promise = octokit
-      .request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", { owner, repo, issue_number: number })
+      .request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+        owner,
+        repo,
+        issue_number: number,
+      })
       .then((res) => {
-    cache.set(cacheKey, res.data);
-    return res.data;
-  });
+        cache.set(cacheKey, res.data);
+        return res.data;
+      });
 
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
 
-  async function createPRConversationComment(owner: string, repo: string, number: number, body: string): Promise<IssueComment> {
+  async function createPRConversationComment(
+    owner: string,
+    repo: string,
+    number: number,
+    body: string
+  ): Promise<IssueComment> {
     if (!octokit) throw new Error("Not initialized");
 
-    const { data } = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
-      owner,
-      repo,
-      issue_number: number,
-      body,
-    });
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      {
+        owner,
+        repo,
+        issue_number: number,
+        body,
+      }
+    );
     cache.invalidate(`pr:${owner}/${repo}/${number}:conversation`);
     return data;
   }
 
-  async function getPRTimeline(owner: string, repo: string, number: number): Promise<TimelineEvent[]> {
+  async function getPRTimeline(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<TimelineEvent[]> {
     if (!octokit) throw new Error("Not initialized");
 
     const cacheKey = `pr:${owner}/${repo}/${number}:timeline`;
@@ -1403,57 +1738,75 @@ async function mergePR(
     return promise;
   }
 
-  async function getFileContent(owner: string, repo: string, path: string, ref: string): Promise<string> {
+  async function getFileContent(
+    owner: string,
+    repo: string,
+    path: string,
+    ref: string
+  ): Promise<string> {
     if (!octokit) throw new Error("Not initialized");
 
-  const cacheKey = `file:${owner}/${repo}/${ref}/${path}`;
-  
+    const cacheKey = `file:${owner}/${repo}/${ref}/${path}`;
+
     const cached = cache.get<string>(cacheKey, 300_000);
-  if (cached) return cached;
+    if (cached) return cached;
 
-  const pending = cache.getPending<string>(cacheKey);
-  if (pending) return pending;
+    const pending = cache.getPending<string>(cacheKey);
+    if (pending) return pending;
 
-  const promise = (async () => {
-    try {
-        const response = await octokit!.request("GET /repos/{owner}/{repo}/contents/{path}", {
-        owner,
-        repo,
-        path,
-        ref,
-        headers: { Accept: "application/vnd.github.raw+json" },
-      });
-      const content = response.data as unknown as string;
-      cache.set(cacheKey, content);
-      return content;
-    } catch (error: unknown) {
-      if (error && typeof error === "object" && "status" in error && error.status === 404) {
-        cache.set(cacheKey, "");
-        return "";
+    const promise = (async () => {
+      try {
+        const response = await octokit!.request(
+          "GET /repos/{owner}/{repo}/contents/{path}",
+          {
+            owner,
+            repo,
+            path,
+            ref,
+            headers: { Accept: "application/vnd.github.raw+json" },
+          }
+        );
+        const content = response.data as unknown as string;
+        cache.set(cacheKey, content);
+        return content;
+      } catch (error: unknown) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "status" in error &&
+          error.status === 404
+        ) {
+          cache.set(cacheKey, "");
+          return "";
+        }
+        throw error;
       }
-      throw error;
-    }
-  })();
+    })();
 
-  cache.setPending(cacheKey, promise);
-  return promise;
-}
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
 
   // ---------------------------------------------------------------------------
   // GraphQL Methods
   // ---------------------------------------------------------------------------
 
-  async function graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  async function graphql<T>(
+    query: string,
+    variables?: Record<string, unknown>
+  ): Promise<T> {
     if (!batcher) throw new Error("Not initialized");
     return batcher.query<T>(query, variables);
   }
 
-  async function getPREnrichment(prs: Array<{ owner: string; repo: string; number: number }>): Promise<Map<string, PREnrichment>> {
+  async function getPREnrichment(
+    prs: Array<{ owner: string; repo: string; number: number }>
+  ): Promise<Map<string, PREnrichment>> {
     if (!batcher || prs.length === 0) return new Map();
 
-  const prQueries = prs
-    .map(
-      (pr, idx) => `
+    const prQueries = prs
+      .map(
+        (pr, idx) => `
       pr${idx}: repository(owner: "${pr.owner}", name: "${pr.repo}") {
         pullRequest(number: ${pr.number}) {
           number
@@ -1473,62 +1826,68 @@ async function mergePR(
         }
       }
     `
-    )
-    .join("\n");
+      )
+      .join("\n");
 
-  const data = await batcher.query<
-    Record<
-      string,
-      {
-        pullRequest: {
-          number: number;
-          changedFiles: number;
-          additions: number;
-          deletions: number;
-          commits: { nodes: Array<{ commit: { committedDate: string } }> };
-          viewerLatestReview: { submittedAt: string } | null;
-        } | null;
+    const data = await batcher.query<
+      Record<
+        string,
+        {
+          pullRequest: {
+            number: number;
+            changedFiles: number;
+            additions: number;
+            deletions: number;
+            commits: { nodes: Array<{ commit: { committedDate: string } }> };
+            viewerLatestReview: { submittedAt: string } | null;
+          } | null;
+        }
+      >
+    >(`query { ${prQueries} }`);
+
+    const enrichmentMap = new Map<string, PREnrichment>();
+
+    prs.forEach((pr, idx) => {
+      const result = data[`pr${idx}`]?.pullRequest;
+      if (result) {
+        const lastCommitAt =
+          result.commits.nodes[0]?.commit.committedDate || null;
+        const viewerLastReviewAt =
+          result.viewerLatestReview?.submittedAt || null;
+        let hasNewChanges = false;
+        if (viewerLastReviewAt && lastCommitAt) {
+          hasNewChanges = new Date(lastCommitAt) > new Date(viewerLastReviewAt);
+        }
+
+        enrichmentMap.set(`${pr.owner}/${pr.repo}/${pr.number}`, {
+          changedFiles: result.changedFiles,
+          additions: result.additions,
+          deletions: result.deletions,
+          lastCommitAt,
+          viewerLastReviewAt,
+          hasNewChanges,
+        });
       }
-    >
-  >(`query { ${prQueries} }`);
+    });
 
-  const enrichmentMap = new Map<string, PREnrichment>();
+    return enrichmentMap;
+  }
 
-  prs.forEach((pr, idx) => {
-    const result = data[`pr${idx}`]?.pullRequest;
-    if (result) {
-      const lastCommitAt = result.commits.nodes[0]?.commit.committedDate || null;
-      const viewerLastReviewAt = result.viewerLatestReview?.submittedAt || null;
-      let hasNewChanges = false;
-      if (viewerLastReviewAt && lastCommitAt) {
-        hasNewChanges = new Date(lastCommitAt) > new Date(viewerLastReviewAt);
-      }
-
-      enrichmentMap.set(`${pr.owner}/${pr.repo}/${pr.number}`, {
-        changedFiles: result.changedFiles,
-        additions: result.additions,
-        deletions: result.deletions,
-        lastCommitAt,
-        viewerLastReviewAt,
-        hasNewChanges,
-      });
-    }
-  });
-
-  return enrichmentMap;
-}
-
-  async function getReviewThreads(owner: string, repo: string, number: number): Promise<ReviewThread[]> {
+  async function getReviewThreads(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<ReviewThread[]> {
     if (!batcher) throw new Error("Not initialized");
 
-  const data = await batcher.query<{
-    repository: {
-      pullRequest: {
+    const data = await batcher.query<{
+      repository: {
+        pullRequest: {
           reviewThreads: { nodes: ReviewThread[] };
+        };
       };
-    };
-  }>(
-    `
+    }>(
+      `
       query ($owner: String!, $repo: String!, $number: Int!) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $number) {
@@ -1558,11 +1917,11 @@ async function mergePR(
         }
       }
     `,
-    { owner, repo, number }
-  );
+      { owner, repo, number }
+    );
 
-  return data.repository.pullRequest.reviewThreads.nodes;
-}
+    return data.repository.pullRequest.reviewThreads.nodes;
+  }
 
   async function resolveThread(threadId: string): Promise<void> {
     if (!batcher) throw new Error("Not initialized");
@@ -1580,17 +1939,21 @@ async function mergePR(
     );
   }
 
-  async function getPendingReview(owner: string, repo: string, number: number): Promise<PendingReview | null> {
+  async function getPendingReview(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<PendingReview | null> {
     if (!batcher) throw new Error("Not initialized");
 
-  const data = await batcher.query<{
-    repository: {
-      pullRequest: {
+    const data = await batcher.query<{
+      repository: {
+        pullRequest: {
           reviews: { nodes: PendingReview[] };
+        };
       };
-    };
-  }>(
-    `
+    }>(
+      `
       query ($owner: String!, $repo: String!, $number: Int!) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $number) {
@@ -1608,51 +1971,63 @@ async function mergePR(
         }
       }
     `,
-    { owner, repo, number }
-  );
+      { owner, repo, number }
+    );
 
-  return data.repository.pullRequest.reviews.nodes.find((r) => r.viewerDidAuthor) || null;
-}
-
-async function addPendingComment(
-  owner: string,
-  repo: string,
-  number: number,
-    options: { path: string; line: number; body: string; startLine?: number }
-): Promise<{ reviewId: string; commentId: string; commentDatabaseId: number }> {
-    if (!batcher) throw new Error("Not initialized");
-
-  const prData = await batcher.query<{
-    repository: { pullRequest: { id: string } };
-  }>(
-      `query ($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } } }`,
-    { owner, repo, number }
-  );
-
-  const input: Record<string, unknown> = {
-    pullRequestId: prData.repository.pullRequest.id,
-    path: options.path,
-    line: options.line,
-    body: options.body,
-  };
-
-  if (options.startLine && options.startLine !== options.line) {
-    input.startLine = options.startLine;
+    return (
+      data.repository.pullRequest.reviews.nodes.find(
+        (r) => r.viewerDidAuthor
+      ) || null
+    );
   }
 
-  const data = await batcher.query<{
-    addPullRequestReviewComment: {
-        comment: { id: string; databaseId: number; pullRequestReview: { id: string } };
-    };
-  }>(
-      `mutation ($input: AddPullRequestReviewCommentInput!) { addPullRequestReviewComment(input: $input) { comment { id databaseId pullRequestReview { id } } } }`,
-    { input }
-  );
+  async function addPendingComment(
+    owner: string,
+    repo: string,
+    number: number,
+    options: { path: string; line: number; body: string; startLine?: number }
+  ): Promise<{
+    reviewId: string;
+    commentId: string;
+    commentDatabaseId: number;
+  }> {
+    if (!batcher) throw new Error("Not initialized");
 
-  return {
-    reviewId: data.addPullRequestReviewComment.comment.pullRequestReview.id,
-    commentId: data.addPullRequestReviewComment.comment.id,
-    commentDatabaseId: data.addPullRequestReviewComment.comment.databaseId,
+    const prData = await batcher.query<{
+      repository: { pullRequest: { id: string } };
+    }>(
+      `query ($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } } }`,
+      { owner, repo, number }
+    );
+
+    const input: Record<string, unknown> = {
+      pullRequestId: prData.repository.pullRequest.id,
+      path: options.path,
+      line: options.line,
+      body: options.body,
+    };
+
+    if (options.startLine && options.startLine !== options.line) {
+      input.startLine = options.startLine;
+    }
+
+    const data = await batcher.query<{
+      addPullRequestReviewComment: {
+        comment: {
+          id: string;
+          databaseId: number;
+          pullRequestReview: { id: string };
+        };
+      };
+    }>(
+      `mutation ($input: AddPullRequestReviewCommentInput!) { addPullRequestReviewComment(input: $input) { comment { id databaseId pullRequestReview { id } } } }`,
+      { input }
+    );
+
+    return {
+      reviewId: data.addPullRequestReviewComment.comment.pullRequestReview.id,
+      commentId: data.addPullRequestReviewComment.comment.id,
+      commentDatabaseId: data.addPullRequestReviewComment.comment.databaseId,
     };
   }
 
@@ -1664,7 +2039,10 @@ async function addPendingComment(
     );
   }
 
-  async function updatePendingComment(commentId: string, body: string): Promise<void> {
+  async function updatePendingComment(
+    commentId: string,
+    body: string
+  ): Promise<void> {
     if (!batcher) throw new Error("Not initialized");
     await batcher.query(
       `mutation ($input: UpdatePullRequestReviewCommentInput!) { updatePullRequestReviewComment(input: $input) { pullRequestReviewComment { id } } }`,
@@ -1672,7 +2050,11 @@ async function addPendingComment(
     );
   }
 
-  async function submitPendingReview(reviewId: string, event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT", body?: string): Promise<void> {
+  async function submitPendingReview(
+    reviewId: string,
+    event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+    body?: string
+  ): Promise<void> {
     if (!batcher) throw new Error("Not initialized");
     await batcher.query(
       `mutation ($input: SubmitPullRequestReviewInput!) { submitPullRequestReview(input: $input) { pullRequestReview { id } } }`,
@@ -1680,24 +2062,60 @@ async function addPendingComment(
     );
   }
 
-  async function updateComment(owner: string, repo: string, commentId: number, body: string): Promise<ReviewComment> {
+  async function updateComment(
+    owner: string,
+    repo: string,
+    commentId: number,
+    body: string
+  ): Promise<ReviewComment> {
     if (!octokit) throw new Error("Not initialized");
-    const { data } = await octokit.request("PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}", {
-      owner,
-      repo,
-      comment_id: commentId,
-      body,
-    });
+    const { data } = await octokit.request(
+      "PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+        body,
+      }
+    );
     return data;
   }
 
-  async function deleteComment(owner: string, repo: string, commentId: number): Promise<void> {
+  async function deleteComment(
+    owner: string,
+    repo: string,
+    commentId: number
+  ): Promise<void> {
     if (!octokit) throw new Error("Not initialized");
-    await octokit.request("DELETE /repos/{owner}/{repo}/pulls/comments/{comment_id}", {
-      owner,
-      repo,
-      comment_id: commentId,
-    });
+    await octokit.request(
+      "DELETE /repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      {
+        owner,
+        repo,
+        comment_id: commentId,
+      }
+    );
+  }
+
+  async function getUserProfile(login: string): Promise<UserProfile> {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `user:${login}`;
+    const cached = cache.get<UserProfile>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<UserProfile>(cacheKey);
+    if (pending) return pending;
+
+    const promise = octokit
+      .request("GET /users/{username}", { username: login })
+      .then((res) => {
+        cache.set(cacheKey, res.data);
+        return res.data as UserProfile;
+      });
+
+    cache.setPending(cacheKey, promise);
+    return promise;
   }
 
   function invalidateCache(pattern?: string) {
@@ -1709,6 +2127,10 @@ async function addPendingComment(
     getState,
     subscribe,
     initialize,
+    initializeAnonymous,
+    reset,
+    setOnUnauthorized,
+    setOnRateLimited,
     // State actions
     fetchPRList,
     refreshPRList,
@@ -1766,6 +2188,7 @@ async function addPendingComment(
     submitPendingReview,
     updateComment,
     deleteComment,
+    getUserProfile,
     invalidateCache,
   };
 }
@@ -1783,6 +2206,8 @@ const GitHubContext = createContext<GitHubStore | null>(null);
 // ============================================================================
 
 export function GitHubProvider({ children }: { children: ReactNode }) {
+  const { token, isAuthenticated, isAnonymous, logout, setRateLimited } =
+    useAuth();
   const storeRef = useRef<GitHubStore | null>(null);
 
   if (!storeRef.current) {
@@ -1791,10 +2216,27 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
 
   const store = storeRef.current;
 
-  // Initialize on mount
+  // Set up unauthorized handler to logout when token is revoked
   useEffect(() => {
-    store.initialize();
-  }, [store]);
+    store.setOnUnauthorized(logout);
+  }, [store, logout]);
+
+  // Set up rate limit handler
+  useEffect(() => {
+    store.setOnRateLimited(() => setRateLimited(true));
+  }, [store, setRateLimited]);
+
+  // Initialize/reset when token or anonymous mode changes
+  useEffect(() => {
+    if (isAuthenticated && token) {
+      store.initialize(token);
+    } else if (isAnonymous) {
+      // Initialize in anonymous mode (no token, limited to public repos)
+      store.initializeAnonymous();
+    } else {
+      store.reset();
+    }
+  }, [store, token, isAuthenticated, isAnonymous]);
 
   // Auto-refresh PR list every 60 seconds
   useEffect(() => {
@@ -1816,7 +2258,9 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [store]);
 
-  return <GitHubContext.Provider value={store}>{children}</GitHubContext.Provider>;
+  return (
+    <GitHubContext.Provider value={store}>{children}</GitHubContext.Provider>
+  );
 }
 
 // ============================================================================

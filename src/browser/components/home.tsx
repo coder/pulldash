@@ -14,9 +14,11 @@ import {
   User,
   Users,
   RefreshCw,
+  Github,
 } from "lucide-react";
 import { cn } from "../cn";
 import { Skeleton } from "../ui/skeleton";
+import { UserHoverCard } from "../ui/user-hover-card";
 import {
   Pagination,
   PaginationContent,
@@ -33,6 +35,7 @@ import {
   usePRListActions,
   type PRSearchResult,
 } from "../contexts/github";
+import { useAuth } from "../contexts/auth";
 
 // ============================================================================
 // Types
@@ -54,6 +57,9 @@ interface SearchResult {
 // Filter mode type
 type FilterMode = "review-requested" | "authored" | "involves" | "all";
 
+// Special constant for "All Repos" global filter
+const ALL_REPOS_KEY = "__all_repos__";
+
 // Repository with its filter mode
 interface RepoFilter {
   name: string;
@@ -66,6 +72,11 @@ interface FilterConfig {
   state: "open" | "closed" | "all";
 }
 
+// Check if a filter is the special "All Repos" filter
+function isAllReposFilter(filter: RepoFilter): boolean {
+  return filter.name === ALL_REPOS_KEY;
+}
+
 // ============================================================================
 // Storage Helpers
 // ============================================================================
@@ -73,7 +84,8 @@ interface FilterConfig {
 const STORAGE_KEY = "pulldash_filter_config";
 
 const DEFAULT_CONFIG: FilterConfig = {
-  repos: [],
+  // Default to showing review requests across all repos
+  repos: [{ name: ALL_REPOS_KEY, mode: "review-requested" }],
   state: "open",
 };
 
@@ -93,6 +105,10 @@ function getFilterConfig(): FilterConfig {
           mode: parsed.mode || "review-requested",
         }));
         delete parsed.mode;
+      }
+      // Migration: if user has empty repos, give them the new default (All Repos)
+      if (parsed.repos && parsed.repos.length === 0) {
+        parsed.repos = DEFAULT_CONFIG.repos;
       }
       return { ...DEFAULT_CONFIG, ...parsed };
     }
@@ -130,30 +146,49 @@ function buildSearchQueries(config: FilterConfig): string[] {
     return [];
   }
 
-  // Group repos by mode
-  const byMode = new Map<FilterMode, string[]>();
-  for (const repo of config.repos) {
-    const existing = byMode.get(repo.mode) || [];
-    existing.push(repo.name);
-    byMode.set(repo.mode, existing);
-  }
-
   const stateFilter =
     config.state === "open"
       ? "is:open"
       : config.state === "closed"
         ? "is:closed"
         : "";
+
   const queries: string[] = [];
 
-  for (const [mode, repos] of byMode) {
+  // Separate "All Repos" filters from specific repo filters
+  const allReposFilters = config.repos.filter(isAllReposFilter);
+  const specificRepos = config.repos.filter((r) => !isAllReposFilter(r));
+
+  // Handle "All Repos" global filters (one query per mode)
+  for (const filter of allReposFilters) {
     const parts = ["is:pr"];
     if (stateFilter) parts.push(stateFilter);
-    // Multiple repo: qualifiers act as OR
-    parts.push(...repos.map((r) => `repo:${r}`));
-    const modeFilter = getModeFilter(mode);
+    const modeFilter = getModeFilter(filter.mode);
     if (modeFilter) parts.push(modeFilter);
-    queries.push(parts.join(" "));
+    // Note: "all" mode on All Repos would be too broad, so we skip it
+    if (filter.mode !== "all") {
+      queries.push(parts.join(" "));
+    }
+  }
+
+  // Group specific repos by mode
+  if (specificRepos.length > 0) {
+    const byMode = new Map<FilterMode, string[]>();
+    for (const repo of specificRepos) {
+      const existing = byMode.get(repo.mode) || [];
+      existing.push(repo.name);
+      byMode.set(repo.mode, existing);
+    }
+
+    for (const [mode, repos] of byMode) {
+      const parts = ["is:pr"];
+      if (stateFilter) parts.push(stateFilter);
+      // Multiple repo: qualifiers act as OR
+      parts.push(...repos.map((r) => `repo:${r}`));
+      const modeFilter = getModeFilter(mode);
+      if (modeFilter) parts.push(modeFilter);
+      queries.push(parts.join(" "));
+    }
   }
 
   return queries;
@@ -233,6 +268,7 @@ export function Home() {
   const openPRReviewTab = useOpenPRReviewTab();
   const { ready: githubReady, error: githubError } = useGitHubReady();
   const github = useGitHubSafe();
+  const { isAuthenticated, isAnonymous, setShowWelcomeDialog } = useAuth();
 
   // Data store
   const prList = usePRList();
@@ -245,10 +281,6 @@ export function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-
-  // Direct PR URL input
-  const [prUrl, setPrUrl] = useState("");
-  const [prUrlError, setPrUrlError] = useState("");
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -278,28 +310,6 @@ export function Home() {
   const prs = prList.items;
   const loadingPrs = prList.loading;
   const totalCount = prList.totalCount;
-
-  // Handle direct PR URL input
-  const handlePrUrlRedirect = useCallback(
-    (url: string) => {
-      const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-      if (match) {
-        const [, owner, repo, number] = match;
-        openPRReviewTab(owner, repo, parseInt(number, 10));
-        setPrUrl("");
-      } else {
-        setPrUrlError("Invalid GitHub PR URL");
-      }
-    },
-    [openPRReviewTab]
-  );
-
-  const handlePrUrlSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (prUrl.trim()) {
-      handlePrUrlRedirect(prUrl.trim());
-    }
-  };
 
   // Search repositories with debounce
   useEffect(() => {
@@ -384,7 +394,9 @@ export function Home() {
       return (
         <div className="h-full bg-background flex items-center justify-center">
           <div className="flex flex-col items-center gap-4">
-            <p className="text-destructive font-medium">Failed to connect to GitHub</p>
+            <p className="text-destructive font-medium">
+              Failed to connect to GitHub
+            </p>
             <p className="text-sm text-muted-foreground">{githubError}</p>
           </div>
         </div>
@@ -392,6 +404,9 @@ export function Home() {
     }
     return <HomeLoadingSkeleton />;
   }
+
+  // Check if user needs to auth to see PRs
+  const needsAuth = isAnonymous && !isAuthenticated;
 
   return (
     <div className="h-full bg-background flex flex-col overflow-hidden">
@@ -419,29 +434,52 @@ export function Home() {
         <div className="flex items-center gap-1.5 flex-wrap flex-1">
           {config.repos.length === 0 && (
             <span className="text-xs text-muted-foreground">
-              Add a repository to get started →
+              Add a filter to get started →
             </span>
           )}
           {config.repos.map((repo) => {
+            const isAllRepos = isAllReposFilter(repo);
             const modeOption = MODE_OPTIONS.find((m) => m.value === repo.mode)!;
             const isOpen = openRepoDropdown === repo.name;
+            // For "All Repos", exclude the "All PRs" mode since it would be too broad
+            const availableModes = isAllRepos
+              ? MODE_OPTIONS.filter((m) => m.value !== "all")
+              : MODE_OPTIONS;
 
             return (
               <div key={repo.name} className="relative">
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => {
                     setOpenRepoDropdown(isOpen ? null : repo.name);
                     setShowAddRepo(false);
                   }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setOpenRepoDropdown(isOpen ? null : repo.name);
+                      setShowAddRepo(false);
+                    }
+                  }}
                   className={cn(
-                    "inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-xs transition-colors border",
+                    "inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md text-xs transition-colors border cursor-pointer",
                     isOpen
                       ? "bg-muted border-border"
-                      : "bg-muted/50 border-transparent hover:bg-muted hover:border-border"
+                      : isAllRepos
+                        ? "bg-primary/10 border-primary/30 hover:bg-primary/20 hover:border-primary/50"
+                        : "bg-muted/50 border-transparent hover:bg-muted hover:border-border"
                   )}
                 >
-                  <modeOption.icon className="w-3 h-3 text-muted-foreground" />
-                  <span className="font-mono">{repo.name}</span>
+                  <modeOption.icon
+                    className={cn(
+                      "w-3 h-3",
+                      isAllRepos ? "text-primary" : "text-muted-foreground"
+                    )}
+                  />
+                  <span className={isAllRepos ? "font-medium" : "font-mono"}>
+                    {isAllRepos ? "All Repos" : repo.name}
+                  </span>
                   <ChevronDown className="w-3 h-3 text-muted-foreground" />
                   <button
                     onClick={(e) => {
@@ -452,11 +490,11 @@ export function Home() {
                   >
                     <X className="w-3 h-3" />
                   </button>
-                </button>
+                </div>
 
                 {isOpen && (
                   <div className="absolute top-full left-0 mt-1 w-56 bg-card border border-border rounded-lg shadow-xl z-30 overflow-hidden">
-                    {MODE_OPTIONS.map((option) => (
+                    {availableModes.map((option) => (
                       <button
                         key={option.value}
                         onClick={() => {
@@ -489,8 +527,20 @@ export function Home() {
           })}
         </div>
 
+        {/* Query Preview */}
+        {searchQueries.length > 0 && (
+          <div
+            className="text-xs text-muted-foreground font-mono truncate max-w-xs hidden lg:block"
+            title={searchQueries.join("\n")}
+          >
+            {searchQueries.length === 1
+              ? searchQueries[0]
+              : `${searchQueries.length} queries`}
+          </div>
+        )}
+
         {/* Add Repo Button */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             onClick={() => {
               setShowAddRepo(!showAddRepo);
@@ -534,6 +584,26 @@ export function Home() {
               </div>
 
               <div className="add-repo-dropdown max-h-64 overflow-auto">
+                {/* All Repos option - always shown at top when not already added */}
+                {!config.repos.some(isAllReposFilter) && !searchQuery && (
+                  <button
+                    onMouseDown={() => {
+                      handleAddRepo(ALL_REPOS_KEY);
+                      setShowAddRepo(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-primary/10 transition-colors text-left border-b border-border bg-primary/5"
+                  >
+                    <div className="w-4 h-4 rounded bg-primary/20 flex items-center justify-center shrink-0">
+                      <Users className="w-3 h-3 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-xs">All Repos</span>
+                      <span className="text-[10px] text-muted-foreground ml-1.5">
+                        PRs across all repositories
+                      </span>
+                    </div>
+                  </button>
+                )}
                 {searchResults.length > 0 ? (
                   searchResults.map((repo) => (
                     <button
@@ -574,35 +644,6 @@ export function Home() {
             </div>
           )}
         </div>
-
-        {/* PR URL input */}
-        <form onSubmit={handlePrUrlSubmit} className="max-w-[200px]">
-          <div className="relative">
-            <input
-              type="text"
-              value={prUrl}
-              onChange={(e) => {
-                setPrUrl(e.target.value);
-                setPrUrlError("");
-              }}
-              placeholder="PR URL..."
-              className="w-full h-7 pl-7 pr-3 rounded-md border border-border bg-muted/50 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent font-mono"
-            />
-            <GitPullRequest className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          </div>
-        </form>
-
-        {/* Query Preview */}
-        {searchQueries.length > 0 && (
-          <div
-            className="text-xs text-muted-foreground font-mono truncate max-w-xs hidden lg:block"
-            title={searchQueries.join("\n")}
-          >
-            {searchQueries.length === 1
-              ? searchQueries[0]
-              : `${searchQueries.length} queries`}
-          </div>
-        )}
       </div>
 
       {/* Main Content */}
@@ -650,8 +691,27 @@ export function Home() {
 
           {/* PR List */}
           <div className="flex-1 overflow-auto">
-            {/* Show skeleton when loading OR when repos configured but no items yet (initial fetch) */}
-            {(loadingPrs || (config.repos.length > 0 && prs.length === 0 && !prList.error)) ? (
+            {/* Show auth prompt for anonymous users */}
+            {needsAuth ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <GitPullRequest className="w-12 h-12 text-muted-foreground/30 mb-4" />
+                <p className="text-lg font-medium text-muted-foreground">
+                  Sign in to view your PRs
+                </p>
+                <p className="text-sm text-muted-foreground/70 mt-1 max-w-md">
+                  Authenticate with GitHub to see your review requests, authored
+                  PRs, and more
+                </p>
+                <button
+                  onClick={() => setShowWelcomeDialog(true)}
+                  className="flex items-center gap-2 px-4 py-2 mt-4 rounded-lg bg-foreground text-background font-medium text-sm hover:bg-foreground/90 transition-colors"
+                >
+                  <Github className="w-4 h-4" />
+                  Sign in with GitHub
+                </button>
+              </div>
+            ) : loadingPrs ||
+              (config.repos.length > 0 && prs.length === 0 && !prList.error) ? (
               <PRListSkeleton count={8} />
             ) : prs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -661,18 +721,16 @@ export function Home() {
                 </p>
                 <p className="text-sm text-muted-foreground/70 mt-1 max-w-md">
                   {config.repos.length === 0
-                    ? "Add a repository to get started, or change your filter mode"
-                    : "Try adjusting your filter settings"}
+                    ? "Add a filter to get started"
+                    : config.repos.some(isAllReposFilter)
+                      ? "No PRs match your current filters"
+                      : "Try adjusting your filter settings"}
                 </p>
               </div>
             ) : (
               <div className="divide-y divide-border">
                 {prs.map((pr) => (
-                  <PRListItem
-                    key={pr.id}
-                    pr={pr}
-                    onSelect={handleOpenPR}
-                  />
+                  <PRListItem key={pr.id} pr={pr} onSelect={handleOpenPR} />
                 ))}
               </div>
             )}
@@ -849,7 +907,11 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
           {pr.user && (
             <>
               <span>•</span>
-              <span>{pr.user.login}</span>
+              <UserHoverCard login={pr.user.login}>
+                <span className="hover:text-blue-400 hover:underline cursor-pointer">
+                  {pr.user.login}
+                </span>
+              </UserHoverCard>
             </>
           )}
           {pr.changedFiles !== undefined && (

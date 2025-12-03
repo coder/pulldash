@@ -5,6 +5,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import rehypeHighlight from "rehype-highlight";
 import { cn } from "../cn";
+import { isMac } from "./keycap";
 
 interface MarkdownProps {
   children: string;
@@ -80,11 +81,14 @@ export const MarkdownEditor = memo(function MarkdownEditor({
     }
   }, [autoFocus]);
 
-  // Switch back to write mode when content changes externally (like clearing)
+  // Switch back to write mode when content is cleared externally (like after submit)
+  const prevValueRef = useRef(value);
   useEffect(() => {
-    if (!value && activeTab === "preview") {
+    // Only switch if value was cleared (had content before, empty now)
+    if (prevValueRef.current && !value && activeTab === "preview") {
       setActiveTab("write");
     }
+    prevValueRef.current = value;
   }, [value, activeTab]);
 
   const handleTabChange = useCallback((tab: "write" | "preview") => {
@@ -121,7 +125,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   );
 
   return (
-    <div className="markdown-editor border border-border rounded-md overflow-hidden bg-background">
+    <div className="markdown-editor border border-border rounded-md overflow-hidden bg-background font-sans">
       {/* Tab bar */}
       <div className="flex items-center border-b border-border bg-muted/30">
         <button
@@ -173,10 +177,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
           style={{ minHeight }}
         />
       ) : (
-        <div
-          className="px-3 py-2 overflow-auto"
-          style={{ minHeight }}
-        >
+        <div className="px-3 py-2 overflow-auto" style={{ minHeight }}>
           {value.trim() ? (
             <Markdown className="text-sm">{value}</Markdown>
           ) : (
@@ -190,7 +191,15 @@ export const MarkdownEditor = memo(function MarkdownEditor({
       {/* Footer hint */}
       <div className="px-3 py-1.5 border-t border-border bg-muted/20">
         <p className="text-[10px] text-muted-foreground">
-          Supports Markdown. <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">⌘</kbd>+<kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">Enter</kbd> to submit
+          Supports Markdown.{" "}
+          <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">
+            {isMac ? "⌘" : "Ctrl"}
+          </kbd>
+          +
+          <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">
+            Enter
+          </kbd>{" "}
+          to submit
         </p>
       </div>
     </div>

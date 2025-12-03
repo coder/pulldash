@@ -27,7 +27,9 @@ interface CommandPaletteContextValue {
   setOpen: (open: boolean) => void;
 }
 
-const CommandPaletteContext = createContext<CommandPaletteContextValue | null>(null);
+const CommandPaletteContext = createContext<CommandPaletteContextValue | null>(
+  null
+);
 
 export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -58,7 +60,9 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
 export function useCommandPalette() {
   const context = useContext(CommandPaletteContext);
   if (!context) {
-    throw new Error("useCommandPalette must be used within CommandPaletteProvider");
+    throw new Error(
+      "useCommandPalette must be used within CommandPaletteProvider"
+    );
   }
   return context;
 }
@@ -571,4 +575,3 @@ const FileIcon = memo(function FileIcon({ extension }: FileIconProps) {
     <File className="w-4 h-4 text-muted-foreground group-data-[selected=true]:text-white shrink-0 transition-colors" />
   );
 });
-

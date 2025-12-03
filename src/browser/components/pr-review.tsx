@@ -46,7 +46,13 @@ import { PRHeader } from "./pr-header";
 import { FileTree } from "./file-tree";
 import { FileHeader } from "./file-header";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
-import { useGitHub, useGitHubSafe, useGitHubReady, usePRChecks } from "../contexts/github";
+import {
+  useGitHub,
+  useGitHubSafe,
+  useGitHubReady,
+  usePRChecks,
+} from "../contexts/github";
+import { useCanWrite, useAuth } from "../contexts/auth";
 import {
   PRReviewProvider,
   usePRReviewSelector,
@@ -84,9 +90,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
 } from "../ui/dropdown-menu";
+import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Keycap, KeycapGroup } from "../ui/keycap";
 import { Markdown, MarkdownEditor } from "../ui/markdown";
 import { CommandPalette, useCommandPalette } from "./command-palette";
@@ -224,7 +229,9 @@ export function PRReviewContent({
       return (
         <div className="flex items-center justify-center h-full">
           <div className="flex flex-col items-center gap-4">
-            <p className="text-destructive font-medium">Failed to connect to GitHub</p>
+            <p className="text-destructive font-medium">
+              Failed to connect to GitHub
+            </p>
             <p className="text-sm text-muted-foreground">{githubError}</p>
           </div>
         </div>
@@ -469,11 +476,43 @@ const FilePanel = memo(function FilePanel({ onOpenSearch }: FilePanelProps) {
 });
 
 // ============================================================================
+// Read-Only Banner
+// ============================================================================
+
+const ReadOnlyBanner = memo(function ReadOnlyBanner() {
+  const canWrite = useCanWrite();
+  const { startDeviceAuth } = useAuth();
+
+  if (canWrite) return null;
+
+  return (
+    <div className="shrink-0 bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between">
+      <div className="flex items-center gap-2 text-sm">
+        <Eye className="w-4 h-4 text-amber-500" />
+        <span className="text-amber-200">
+          <span className="font-medium">Read-only mode</span>
+          <span className="text-amber-200/70 ml-1.5">
+            – Sign in to comment and submit reviews
+          </span>
+        </span>
+      </div>
+      <button
+        onClick={startDeviceAuth}
+        className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 transition-colors"
+      >
+        Sign in with GitHub
+      </button>
+    </div>
+  );
+});
+
+// ============================================================================
 // Diff Panel (Main Content)
 // ============================================================================
 
 const DiffPanel = memo(function DiffPanel() {
   const store = usePRReviewStore();
+  const canWrite = useCanWrite();
   const pr = usePRReviewSelector((s) => s.pr);
   const files = usePRReviewSelector((s) => s.files);
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
@@ -497,7 +536,7 @@ const DiffPanel = memo(function DiffPanel() {
         <div className="shrink-0 border-b border-border bg-card/30 px-3 py-1.5 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Pull Request Overview</span>
+            <span className="text-sm font-medium">Overview</span>
           </div>
           <div className="flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">
@@ -513,9 +552,10 @@ const DiffPanel = memo(function DiffPanel() {
                 / {files.length} reviewed
               </span>
             </span>
-            <SubmitReviewDropdown />
+            {canWrite && <SubmitReviewDropdown />}
           </div>
         </div>
+        <ReadOnlyBanner />
         <PROverview />
       </main>
     );
@@ -574,9 +614,11 @@ const DiffPanel = memo(function DiffPanel() {
           {selectedFiles.size > 0 && (
             <span className="text-blue-400">{selectedFiles.size} selected</span>
           )}
-          <SubmitReviewDropdown />
+          {canWrite && <SubmitReviewDropdown />}
         </div>
       </div>
+
+      <ReadOnlyBanner />
 
       {currentFile ? (
         <div className="flex flex-col flex-1 min-h-0">
@@ -675,12 +717,14 @@ const KeybindsBar = memo(function KeybindsBar() {
                 <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
                   GOTO
                 </span>
-                <span className={cn(
-                  "px-1.5 py-0.5 rounded text-xs font-medium",
-                  gotoLineSide === "new" 
-                    ? "bg-green-500/20 text-green-400" 
-                    : "bg-orange-500/20 text-orange-400"
-                )}>
+                <span
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-xs font-medium",
+                    gotoLineSide === "new"
+                      ? "bg-green-500/20 text-green-400"
+                      : "bg-orange-500/20 text-orange-400"
+                  )}
+                >
                   {gotoLineSide === "new" ? "new" : "old"}
                 </span>
                 <span className="font-mono text-blue-400">
@@ -820,7 +864,11 @@ const KeybindsBar = memo(function KeybindsBar() {
 interface LineDragContextValue {
   isDragging: boolean;
   dragAnchor: number | null;
-  onDragStart: (lineNum: number, side: "old" | "new", shiftKey?: boolean) => void;
+  onDragStart: (
+    lineNum: number,
+    side: "old" | "new",
+    shiftKey?: boolean
+  ) => void;
   onDragEnter: (lineNum: number, side: "old" | "new") => void;
   onDragEnd: () => void;
   onClickFallback: (lineNum: number, side: "old" | "new") => void;
@@ -889,11 +937,17 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   const { expandSkipBlock, isExpanding } = useSkipBlockExpansion();
 
   // Selectors lifted to parent level - only subscriptions here instead of per-row
-  const focusedSkipBlockIndex = usePRReviewSelector((s) => s.focusedSkipBlockIndex);
+  const focusedSkipBlockIndex = usePRReviewSelector(
+    (s) => s.focusedSkipBlockIndex
+  );
   const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
-  const focusedPendingCommentId = usePRReviewSelector((s) => s.focusedPendingCommentId);
+  const focusedPendingCommentId = usePRReviewSelector(
+    (s) => s.focusedPendingCommentId
+  );
   const editingCommentId = usePRReviewSelector((s) => s.editingCommentId);
-  const editingPendingCommentId = usePRReviewSelector((s) => s.editingPendingCommentId);
+  const editingPendingCommentId = usePRReviewSelector(
+    (s) => s.editingPendingCommentId
+  );
   const replyingToCommentId = usePRReviewSelector((s) => s.replyingToCommentId);
 
   // Helper to get expanded lines for a skip block
@@ -1073,7 +1127,7 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   // Dynamic: Insert comment form into the correct position (only changes when commentingOnLine changes)
   const virtualRows = useMemo((): VirtualRowType[] => {
     if (!commentingOnLine) return staticRows;
-    
+
     // Find where to insert the comment form
     const targetLine = commentingOnLine.line;
     const insertIndex = staticRows.findIndex((row, idx) => {
@@ -1089,11 +1143,11 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     // Create new array with comment form inserted
     const result: VirtualRowType[] = [];
     let newIndex = 0;
-    
+
     for (let i = 0; i < staticRows.length; i++) {
       const row = staticRows[i];
       result.push({ ...row, index: newIndex++ });
-      
+
       // Insert comment form after the target line
       if (i === insertIndex) {
         result.push({
@@ -1158,9 +1212,13 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   const onDragStart = useCallback(
     (lineNum: number, side: "old" | "new", shiftKey?: boolean) => {
       const state = store.getSnapshot();
-      
+
       // Shift+click: extend selection from current focus to clicked line
-      if (shiftKey && state.focusedLine !== null && state.focusedLineSide === side) {
+      if (
+        shiftKey &&
+        state.focusedLine !== null &&
+        state.focusedLineSide === side
+      ) {
         // Keep the anchor at the original focused line, move focus to clicked line
         if (state.selectionAnchor === null) {
           // No existing anchor - use current focused line as anchor
@@ -1170,7 +1228,7 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
         // Don't start drag mode for shift+click
         return;
       }
-      
+
       // Normal click: start new selection
       isDraggingRef.current = true;
       dragAnchorRef.current = lineNum;
@@ -1331,7 +1389,15 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
       commentingRange,
       commentRangeLookup,
     }),
-    [isDraggingState, onDragStart, onDragEnter, onDragEnd, onClickFallback, commentingRange, commentRangeLookup]
+    [
+      isDraggingState,
+      onDragStart,
+      onDragEnter,
+      onDragEnd,
+      onClickFallback,
+      commentingRange,
+      commentRangeLookup,
+    ]
   );
 
   // Selection state for CSS-based highlighting (no per-row subscriptions)
@@ -1343,48 +1409,54 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   // Combined scroll + selection effect using RAF to prevent jitter
   const containerRef = useRef<HTMLDivElement>(null);
   const rafIdRef = useRef<number | null>(null);
-  
+
   useEffect(() => {
     // Cancel any pending RAF
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
     }
-    
+
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = null;
       const container = containerRef.current;
-      
+
       // 1. Update selection highlighting
       if (container) {
         // Clear previous selection
-        const prevSelected = container.querySelectorAll('[data-selected]');
-        prevSelected.forEach(el => {
-          el.removeAttribute('data-selected');
-          el.removeAttribute('data-sel-first');
-          el.removeAttribute('data-sel-last');
+        const prevSelected = container.querySelectorAll("[data-selected]");
+        prevSelected.forEach((el) => {
+          el.removeAttribute("data-selected");
+          el.removeAttribute("data-sel-first");
+          el.removeAttribute("data-sel-last");
         });
 
         if (focusedLine && focusedLineSide) {
           // Compute selection range
           let selStart = focusedLine;
           let selEnd = focusedLine;
-          if (selectionAnchor !== null && selectionAnchorSide === focusedLineSide) {
+          if (
+            selectionAnchor !== null &&
+            selectionAnchorSide === focusedLineSide
+          ) {
             selStart = Math.min(focusedLine, selectionAnchor);
             selEnd = Math.max(focusedLine, selectionAnchor);
           }
 
           // Mark selected rows
           for (let lineNum = selStart; lineNum <= selEnd; lineNum++) {
-            const row = container.querySelector(`[data-line-num="${lineNum}"][data-line-side="${focusedLineSide}"]`);
+            const row = container.querySelector(
+              `[data-line-num="${lineNum}"][data-line-side="${focusedLineSide}"]`
+            );
             if (row) {
-              row.setAttribute('data-selected', 'true');
-              if (lineNum === selStart) row.setAttribute('data-sel-first', 'true');
-              if (lineNum === selEnd) row.setAttribute('data-sel-last', 'true');
+              row.setAttribute("data-selected", "true");
+              if (lineNum === selStart)
+                row.setAttribute("data-sel-first", "true");
+              if (lineNum === selEnd) row.setAttribute("data-sel-last", "true");
             }
           }
         }
       }
-      
+
       // 2. Scroll to focused line (after selection update)
       if (focusedLine && !isDraggingState) {
         const rowIndex = lineNumToRowIndex.get(focusedLine);
@@ -1396,13 +1468,21 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
         }
       }
     });
-    
+
     return () => {
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
       }
     };
-  }, [focusedLine, focusedLineSide, selectionAnchor, selectionAnchorSide, isDraggingState, lineNumToRowIndex, virtualizer]);
+  }, [
+    focusedLine,
+    focusedLineSide,
+    selectionAnchor,
+    selectionAnchorSide,
+    isDraggingState,
+    lineNumToRowIndex,
+    virtualizer,
+  ]);
 
   return (
     <LineDragContext.Provider value={dragValue}>
@@ -1463,7 +1543,11 @@ interface VirtualRowRendererProps {
   editingCommentId: number | null;
   editingPendingCommentId: string | null;
   replyingToCommentId: number | null;
-  expandSkipBlock: (skipIndex: number, startLine: number, count: number) => void;
+  expandSkipBlock: (
+    skipIndex: number,
+    startLine: number,
+    count: number
+  ) => void;
   isExpanding: (skipIndex: number) => boolean;
 }
 
@@ -1532,10 +1616,10 @@ const DiffLineRow = memo(function DiffLineRow({
   lineNum,
 }: DiffLineRowProps) {
   const store = usePRReviewStore();
-  const { 
-    onDragStart, 
-    onDragEnter, 
-    onDragEnd, 
+  const {
+    onDragStart,
+    onDragEnter,
+    onDragEnd,
     onClickFallback,
     commentingRange,
     commentRangeLookup,
@@ -1588,39 +1672,48 @@ const DiffLineRow = memo(function DiffLineRow({
   }, [lineNum, lineSide, onClickFallback]);
 
   // Handle mousedown on content to catch shift+click before browser text selection
-  const handleContentMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!lineNum) return;
-    
-    const state = store.getSnapshot();
-    
-    // Shift+click: extend selection from current focus to clicked line
-    if (e.shiftKey && state.focusedLine !== null) {
-      e.preventDefault(); // Prevent browser text selection
-      if (state.selectionAnchor === null) {
-        store.setSelectionAnchor(state.focusedLine, state.focusedLineSide ?? lineSide);
+  const handleContentMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (!lineNum) return;
+
+      const state = store.getSnapshot();
+
+      // Shift+click: extend selection from current focus to clicked line
+      if (e.shiftKey && state.focusedLine !== null) {
+        e.preventDefault(); // Prevent browser text selection
+        if (state.selectionAnchor === null) {
+          store.setSelectionAnchor(
+            state.focusedLine,
+            state.focusedLineSide ?? lineSide
+          );
+        }
+        store.setFocusedLine(lineNum, lineSide);
+        return;
       }
-      store.setFocusedLine(lineNum, lineSide);
-      return;
-    }
-  }, [lineNum, lineSide, store]);
+    },
+    [lineNum, lineSide, store]
+  );
 
   // Click on code content to focus line (but not if user is selecting text)
-  const handleContentClick = useCallback((e: React.MouseEvent) => {
-    if (!lineNum) return;
+  const handleContentClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!lineNum) return;
 
-    // Shift+click is handled in mousedown
-    if (e.shiftKey) return;
+      // Shift+click is handled in mousedown
+      if (e.shiftKey) return;
 
-    // Check if user has made a text selection
-    const selection = window.getSelection();
-    if (selection && selection.toString().length > 0) {
-      return; // Don't focus if user is selecting text
-    }
+      // Check if user has made a text selection
+      const selection = window.getSelection();
+      if (selection && selection.toString().length > 0) {
+        return; // Don't focus if user is selecting text
+      }
 
-    // Normal click: focus the line (clear any selection)
-    store.setFocusedLine(lineNum, lineSide);
-    store.setSelectionAnchor(null, null);
-  }, [lineNum, lineSide, store]);
+      // Normal click: focus the line (clear any selection)
+      store.setFocusedLine(lineNum, lineSide);
+      store.setSelectionAnchor(null, null);
+    },
+    [lineNum, lineSide, store]
+  );
 
   // Styles for non-selection highlighting (selection is handled via CSS data attributes)
   const styles = useMemo(() => {
@@ -1815,6 +1908,8 @@ const InlineCommentForm = memo(function InlineCommentForm({
   startLine,
 }: InlineCommentFormProps) {
   const store = usePRReviewStore();
+  const canWrite = useCanWrite();
+  const { startDeviceAuth } = useAuth();
   const { addPendingComment } = useCommentActions();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1846,6 +1941,39 @@ const InlineCommentForm = memo(function InlineCommentForm({
   );
 
   const lineLabel = startLine ? `lines ${startLine}-${line}` : `line ${line}`;
+
+  // Show sign-in prompt for read-only users
+  if (!canWrite) {
+    return (
+      <div className="border-l-2 border-amber-500 bg-amber-500/5 p-4 mx-4 my-2 rounded-r-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm">
+            <MessageSquare className="w-4 h-4 text-amber-500" />
+            <span className="text-muted-foreground">
+              Comment on {lineLabel}
+            </span>
+          </div>
+          <button
+            onClick={store.cancelCommenting}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <span className="text-sm text-muted-foreground">
+            Sign in to leave comments
+          </span>
+          <button
+            onClick={startDeviceAuth}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            Sign in with GitHub
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="border-l-2 border-green-500 bg-green-500/5 p-4 mx-4 my-2 rounded-r-lg">
@@ -1907,6 +2035,7 @@ const CommentThread = memo(function CommentThread({
   replyingToCommentId,
 }: CommentThreadProps) {
   const store = usePRReviewStore();
+  const canWrite = useCanWrite();
   const { replyToComment, updateComment, deleteComment } = useCommentActions();
   const { resolveThread, unresolveThread } = useThreadActions();
   const [replyText, setReplyText] = useState("");
@@ -2019,7 +2148,7 @@ const CommentThread = memo(function CommentThread({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {threadId && (
+          {canWrite && threadId && (
             <button
               onClick={isResolved ? handleUnresolve : handleResolve}
               disabled={resolving}
@@ -2076,7 +2205,7 @@ const CommentThread = memo(function CommentThread({
             />
           ))}
 
-          {replyingTo && (
+          {canWrite && replyingTo && (
             <div className="px-4 py-3 border-t border-border/50">
               <MarkdownEditor
                 value={replyText}
@@ -2533,14 +2662,14 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen} modal={false}>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
+        <button className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
           <span>Submit review</span>
           {pendingCount > 0 && (
-            <span className="px-1.5 py-0.5 text-xs bg-green-500/50 rounded">
+            <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded">
               {pendingCount}
             </span>
           )}
-          <ChevronsUpDown className="w-4 h-4 opacity-70" />
+          <ChevronsUpDown className="w-3.5 h-3.5 opacity-70" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-[450px]">
@@ -2549,14 +2678,13 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
 
-        {/* Review body textarea */}
-        <div className="p-3">
-          <textarea
+        {/* Review body */}
+        <div className="p-3" onClick={(e) => e.stopPropagation()}>
+          <MarkdownEditor
             value={reviewBody}
-            onChange={(e) => store.setReviewBody(e.target.value)}
+            onChange={(v) => store.setReviewBody(v)}
             placeholder="Leave a comment"
-            className="w-full min-h-[80px] px-3 py-2 text-sm rounded-md border border-input bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring font-sans"
-            onClick={(e) => e.stopPropagation()}
+            minHeight="80px"
           />
         </div>
 
@@ -2647,57 +2775,62 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
         <DropdownMenuSeparator />
 
         {/* Review type radio options */}
-        <DropdownMenuRadioGroup
-          value={reviewType}
-          onValueChange={(v) => setReviewType(v as typeof reviewType)}
-        >
-          <DropdownMenuRadioItem value="COMMENT" className="cursor-pointer">
-            <div className="flex flex-col gap-0.5">
-              <span className="font-medium">Comment</span>
-              <span className="text-xs text-muted-foreground">
-                Submit general feedback without explicit approval.
-              </span>
-            </div>
-          </DropdownMenuRadioItem>
+        <div className="px-3 py-2">
+          <RadioGroup
+            value={reviewType}
+            onValueChange={(v) => setReviewType(v as typeof reviewType)}
+            className="gap-2"
+          >
+            <label className="flex items-start gap-3 cursor-pointer group">
+              <RadioGroupItem value="COMMENT" className="mt-0.5" />
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium text-sm">Comment</span>
+                <span className="text-xs text-muted-foreground">
+                  Submit general feedback without explicit approval.
+                </span>
+              </div>
+            </label>
 
-          {!isAuthor && (
-            <>
-              <DropdownMenuRadioItem value="APPROVE" className="cursor-pointer">
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-green-500">Approve</span>
-                  <span className="text-xs text-muted-foreground">
-                    Submit feedback and approve merging these changes.
-                  </span>
-                </div>
-              </DropdownMenuRadioItem>
+            {!isAuthor && (
+              <>
+                <label className="flex items-start gap-3 cursor-pointer group">
+                  <RadioGroupItem value="APPROVE" className="mt-0.5" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium text-sm text-green-500">
+                      Approve
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Submit feedback and approve merging these changes.
+                    </span>
+                  </div>
+                </label>
 
-              <DropdownMenuRadioItem
-                value="REQUEST_CHANGES"
-                className="cursor-pointer"
-              >
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-orange-500">
-                    Request changes
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Submit feedback suggesting changes.
-                  </span>
-                </div>
-              </DropdownMenuRadioItem>
-            </>
-          )}
-        </DropdownMenuRadioGroup>
+                <label className="flex items-start gap-3 cursor-pointer group">
+                  <RadioGroupItem value="REQUEST_CHANGES" className="mt-0.5" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium text-sm text-orange-500">
+                      Request changes
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Submit feedback suggesting changes.
+                    </span>
+                  </div>
+                </label>
+              </>
+            )}
+          </RadioGroup>
+        </div>
 
         <DropdownMenuSeparator />
 
         {/* Submit buttons */}
-        <div className="p-3 flex justify-end gap-2">
+        <div className="p-2 flex justify-end gap-2">
           <button
             onClick={(e) => {
               e.stopPropagation();
               setIsOpen(false);
             }}
-            className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
+            className="px-2 py-1 text-xs rounded-md hover:bg-muted transition-colors"
           >
             Cancel
           </button>
@@ -2708,7 +2841,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             }}
             disabled={submitting || (pendingCount === 0 && !reviewBody.trim())}
             className={cn(
-              "flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50",
+              "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50",
               reviewType === "APPROVE" &&
                 "bg-green-600 text-white hover:bg-green-700",
               reviewType === "REQUEST_CHANGES" &&
@@ -2718,13 +2851,13 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             )}
           >
             {submitting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : reviewType === "APPROVE" ? (
-              <Check className="w-4 h-4" />
+              <Check className="w-3.5 h-3.5" />
             ) : reviewType === "REQUEST_CHANGES" ? (
-              <XCircle className="w-4 h-4" />
+              <XCircle className="w-3.5 h-3.5" />
             ) : (
-              <MessageSquare className="w-4 h-4" />
+              <MessageSquare className="w-3.5 h-3.5" />
             )}
             Submit review
           </button>
@@ -2766,12 +2899,14 @@ function PRReviewSkeleton() {
           <Skeleton className="mx-2 mb-1 h-8" />
           <div className="border-t border-border/50 mt-1" />
           <div className="flex-1 p-2 space-y-1">
-            {[70, 55, 80, 45, 65, 90, 50, 75, 60, 85, 40, 70].map((width, i) => (
-              <div key={i} className="flex items-center gap-2 px-2 py-1">
-                <Skeleton className="w-4 h-4" />
-                <Skeleton className="h-4" style={{ width: `${width}%` }} />
-              </div>
-            ))}
+            {[70, 55, 80, 45, 65, 90, 50, 75, 60, 85, 40, 70].map(
+              (width, i) => (
+                <div key={i} className="flex items-center gap-2 px-2 py-1">
+                  <Skeleton className="w-4 h-4" />
+                  <Skeleton className="h-4" style={{ width: `${width}%` }} />
+                </div>
+              )
+            )}
           </div>
         </aside>
 
@@ -2796,7 +2931,10 @@ function PRReviewSkeleton() {
 }
 
 // Deterministic widths for skeleton lines to avoid re-render flicker
-const SKELETON_LINE_WIDTHS = [65, 45, 80, 30, 55, 70, 40, 85, 50, 60, 75, 35, 90, 45, 55, 70, 25, 80, 60, 50];
+const SKELETON_LINE_WIDTHS = [
+  65, 45, 80, 30, 55, 70, 40, 85, 50, 60, 75, 35, 90, 45, 55, 70, 25, 80, 60,
+  50,
+];
 
 function DiffSkeleton() {
   return (
@@ -2807,12 +2945,12 @@ function DiffSkeleton() {
           <div className="bg-muted/50 px-4 py-2 border-b border-border">
             <Skeleton className="h-4 w-48" />
           </div>
-          
+
           {/* Diff lines skeleton */}
           {SKELETON_LINE_WIDTHS.map((width, i) => (
-            <DiffLineSkeleton 
-              key={i} 
-              type={i % 7 === 3 ? 'add' : i % 7 === 5 ? 'remove' : 'normal'} 
+            <DiffLineSkeleton
+              key={i}
+              type={i % 7 === 3 ? "add" : i % 7 === 5 ? "remove" : "normal"}
               width={width}
             />
           ))}
@@ -2822,13 +2960,20 @@ function DiffSkeleton() {
   );
 }
 
-function DiffLineSkeleton({ type = 'normal', width }: { type?: 'add' | 'remove' | 'normal'; width: number }) {
-  const bgClass = type === 'add' 
-    ? 'bg-green-500/5' 
-    : type === 'remove' 
-      ? 'bg-orange-500/5' 
-      : '';
-  
+function DiffLineSkeleton({
+  type = "normal",
+  width,
+}: {
+  type?: "add" | "remove" | "normal";
+  width: number;
+}) {
+  const bgClass =
+    type === "add"
+      ? "bg-green-500/5"
+      : type === "remove"
+        ? "bg-orange-500/5"
+        : "";
+
   return (
     <div className={cn("flex h-5 min-h-5", bgClass)}>
       <div className="w-1 shrink-0" />

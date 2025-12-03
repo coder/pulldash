@@ -1,6 +1,6 @@
 /**
  * Diff Worker - Handles CPU-intensive diff parsing and syntax highlighting
- * 
+ *
  * This worker processes diffs off the main thread to maintain UI responsiveness.
  */
 
@@ -275,12 +275,13 @@ const buildInlineDiffSegments = (
   next: _Change,
   options: ParseOptions
 ): RawLineSegment[] => {
-  const segments: RawLineSegment[] = diffWords(current.content, next.content).map(
-    (token) => ({
-      value: token.value,
-      type: token.added ? "insert" : token.removed ? "delete" : "normal",
-    })
-  );
+  const segments: RawLineSegment[] = diffWords(
+    current.content,
+    next.content
+  ).map((token) => ({
+    value: token.value,
+    type: token.added ? "insert" : token.removed ? "delete" : "normal",
+  }));
 
   const result: RawLineSegment[] = [];
   const mergeIntoResult = (segment: RawLineSegment) => {
@@ -678,4 +679,3 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     } as WorkerResponse);
   }
 };
-

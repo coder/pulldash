@@ -1,6 +1,13 @@
-import { GitPullRequest, GitMerge, ExternalLink } from "lucide-react";
-import { memo } from "react";
+import {
+  GitPullRequest,
+  GitMerge,
+  ExternalLink,
+  Copy,
+  Check,
+} from "lucide-react";
+import { memo, useState, useCallback } from "react";
 import { cn } from "../cn";
+import { UserHoverCard } from "../ui/user-hover-card";
 import type { PullRequest } from "@/api/types";
 
 interface PRHeaderProps {
@@ -71,24 +78,22 @@ export const PRHeader = memo(function PRHeader({
       <div className="flex items-center gap-3 shrink-0">
         {/* Branch info */}
         <div className="text-[11px] text-muted-foreground font-mono hidden sm:flex items-center gap-1">
-          <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">
-            {pr.base.ref}
-          </code>
+          <BranchBadge branch={pr.base.ref} />
           <span>←</span>
-          <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">
-            {pr.head.ref}
-          </code>
+          <BranchBadge branch={pr.head.ref} />
         </div>
 
         {/* Author */}
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <img
-            src={pr.user.avatar_url}
-            alt={pr.user.login}
-            className="w-5 h-5 rounded-full"
-          />
-          <span className="hidden lg:inline">{pr.user.login}</span>
-        </div>
+        <UserHoverCard login={pr.user.login}>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+            <img
+              src={pr.user.avatar_url}
+              alt={pr.user.login}
+              className="w-5 h-5 rounded-full"
+            />
+            <span className="hidden lg:inline">{pr.user.login}</span>
+          </div>
+        </UserHoverCard>
 
         {/* External Link */}
         <a
@@ -104,3 +109,36 @@ export const PRHeader = memo(function PRHeader({
     </header>
   );
 });
+
+// ============================================================================
+// Branch Badge with Copy Button
+// ============================================================================
+
+function BranchBadge({ branch }: { branch: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(branch);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [branch]);
+
+  return (
+    <span className="inline-flex items-center gap-0.5 group">
+      <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">
+        {branch}
+      </code>
+      <button
+        onClick={handleCopy}
+        className="p-0.5 rounded text-muted-foreground hover:text-blue-400 hover:bg-blue-500/20 transition-colors opacity-0 group-hover:opacity-100"
+        title="Copy branch name"
+      >
+        {copied ? (
+          <Check className="w-3 h-3 text-green-500" />
+        ) : (
+          <Copy className="w-3 h-3" />
+        )}
+      </button>
+    </span>
+  );
+}

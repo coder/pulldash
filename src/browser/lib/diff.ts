@@ -1,6 +1,6 @@
 /**
  * Diff Service - Async API wrapper for the diff WebWorker
- * 
+ *
  * Usage:
  *   import { diffService } from './diff';
  *   const parsed = await diffService.parseDiff(patch, filename);
@@ -14,7 +14,13 @@ import type {
 } from "./diff-worker";
 
 // Re-export types for consumers
-export type { ParsedDiff, DiffLine, DiffHunk, DiffSkipBlock, LineSegment } from "./diff-worker";
+export type {
+  ParsedDiff,
+  DiffLine,
+  DiffHunk,
+  DiffSkipBlock,
+  LineSegment,
+} from "./diff-worker";
 
 // ============================================================================
 // Worker Pool
@@ -40,10 +46,7 @@ class DiffWorkerPool {
     this.initialized = true;
 
     for (let i = 0; i < POOL_SIZE; i++) {
-      const worker = new Worker(
-        "/lib/diff-worker.js",
-        { type: "module" }
-      );
+      const worker = new Worker("/lib/diff-worker.js", { type: "module" });
 
       worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
         const response = event.data;
@@ -175,7 +178,7 @@ function getCacheKey(
   const str = `${filename}|${previousFilename || ""}|${patch}`;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    hash = (hash << 5) - hash + char;
     hash = hash & hash;
   }
   return String(hash);
@@ -215,4 +218,3 @@ export async function parseDiffCached(
 export function clearDiffCache() {
   diffCache.clear();
 }
-

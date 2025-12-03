@@ -256,11 +256,18 @@ export function FileTree({
 
   // Scroll selected file into view
   const lastScrolledToRef = useRef<string | null>(null);
-  if (selectedFile && selectedIndex >= 0 && lastScrolledToRef.current !== selectedFile) {
+  if (
+    selectedFile &&
+    selectedIndex >= 0 &&
+    lastScrolledToRef.current !== selectedFile
+  ) {
     lastScrolledToRef.current = selectedFile;
     // Use requestAnimationFrame to ensure virtualizer is ready
     requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(selectedIndex, { align: "center", behavior: "auto" });
+      virtualizer.scrollToIndex(selectedIndex, {
+        align: "center",
+        behavior: "auto",
+      });
     });
   }
 
@@ -291,10 +298,7 @@ export function FileTree({
   }
 
   return (
-    <nav
-      ref={parentRef}
-      className="flex-1 overflow-auto py-2 themed-scrollbar"
-    >
+    <nav ref={parentRef} className="flex-1 overflow-auto py-2 themed-scrollbar">
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,
@@ -362,7 +366,8 @@ export function FileTree({
                       {allViewed ? (
                         <>
                           <EyeOff className="w-4 h-4 mr-2" />
-                          Mark all as unviewed ({filesInFolder?.length || 0}{" "}
+                          Mark all as unviewed ({filesInFolder?.length ||
+                            0}{" "}
                           files)
                         </>
                       ) : (
@@ -427,9 +432,7 @@ export function FileTree({
                           {commentCount}
                         </span>
                       )}
-                      {isViewed && (
-                        <Check className="w-3 h-3 text-green-500" />
-                      )}
+                      {isViewed && <Check className="w-3 h-3 text-green-500" />}
                     </div>
                   </button>
                 </ContextMenuTrigger>

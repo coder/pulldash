@@ -1,41 +1,15 @@
 import { Hono } from "hono";
-import { execSync } from "child_process";
 
 // ============================================================================
-// GitHub Token
+// GitHub OAuth App Configuration
 // ============================================================================
 
-let cachedToken: string | null = null;
-
-function getGitHubToken(): string {
-  if (cachedToken) return cachedToken;
-  try {
-    let token: string;
-
-    if (process.platform === "win32") {
-      // Windows: gh should be in PATH from installer
-      token = execSync("gh auth token", { encoding: "utf-8" }).trim();
-    } else {
-      // macOS/Linux: Use login shell to source user's profile for proper PATH
-      // This ensures gh is found even when app is launched from Finder/desktop
-      const shell = process.env.SHELL || "/bin/sh";
-      token = execSync(`${shell} -l -c "gh auth token"`, {
-        encoding: "utf-8",
-      }).trim();
-    }
-
-    cachedToken = token;
-    return cachedToken;
-  } catch (err) {
-    throw new Error(
-      "Failed to get GitHub token. Make sure gh CLI is authenticated: " +
-        (err as Error).message,
-      {
-        cause: err,
-      }
-    );
-  }
-}
+// OAuth App (not GitHub App) - enables simple user authentication
+// like the GitHub CLI, without requiring app installation on repos.
+// Users just authorize and get access to their repos based on scopes.
+const GITHUB_CLIENT_ID = "Ov23ct2e5eDCkITh5xlh";
+// Note: Client secret would be added here for OAuth web flow in the future
+// const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 
 // ============================================================================
 // API Routes
@@ -44,9 +18,79 @@ function getGitHubToken(): string {
 const api = new Hono()
   .basePath("/api")
 
-  // Token endpoint - provides GitHub token for client-side API calls
-  .get("/token", (c) => {
-    return c.json({ token: getGitHubToken() });
+  // Device Authorization - Step 1: Request device code
+  // Proxies to GitHub since their endpoint doesn't support CORS
+  // For OAuth Apps, we request scopes here. 'repo' gives full access to
+  // private repos - same as what the GitHub CLI uses.
+  .post("/auth/device/code", async (c) => {
+    try {
+      const response = await fetch("https://github.com/login/device/code", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          client_id: GITHUB_CLIENT_ID,
+          scope: "repo read:user",
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        return c.json(
+          { error: "Failed to initiate device authorization", details: error },
+          500
+        );
+      }
+
+      const data = await response.json();
+      return c.json(data);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  })
+
+  // Device Authorization - Step 2: Poll for access token
+  // Proxies to GitHub since their endpoint doesn't support CORS
+  .post("/auth/device/token", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { device_code } = body;
+
+      if (!device_code) {
+        return c.json({ error: "device_code is required" }, 400);
+      }
+
+      const response = await fetch(
+        "https://github.com/login/oauth/access_token",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            client_id: GITHUB_CLIENT_ID,
+            device_code,
+            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.text();
+        return c.json(
+          { error: "Failed to get access token", details: error },
+          500
+        );
+      }
+
+      const data = await response.json();
+      return c.json(data);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
   });
 
 export default api;

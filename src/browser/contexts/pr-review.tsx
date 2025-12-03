@@ -15,7 +15,11 @@ import type {
   ReviewComment,
   PendingReviewComment,
 } from "@/api/types";
-import { useGitHub, useGitHubSafe, type GitHubClient } from "@/browser/contexts/github";
+import {
+  useGitHub,
+  useGitHubSafe,
+  type GitHubClient,
+} from "@/browser/contexts/github";
 import { diffService } from "@/browser/lib/diff";
 
 // ============================================================================
@@ -32,24 +36,24 @@ function sortFilesLikeTree<T extends { filename: string }>(files: T[]): T[] {
   return [...files].sort((a, b) => {
     const aParts = a.filename.split("/");
     const bParts = b.filename.split("/");
-    
+
     // Compare path segments
     const minLen = Math.min(aParts.length, bParts.length);
-    
+
     for (let i = 0; i < minLen; i++) {
       const aIsLast = i === aParts.length - 1;
       const bIsLast = i === bParts.length - 1;
-      
+
       // If one is a file and other is folder at this level, folder comes first
       if (aIsLast !== bIsLast) {
         return aIsLast ? 1 : -1; // folder (not last) before file (last)
       }
-      
+
       // Both are same type at this level, compare names
       const cmp = aParts[i].localeCompare(bParts[i]);
       if (cmp !== 0) return cmp;
     }
-    
+
     // Paths are equal up to minLen, shorter path (folder) comes first
     return aParts.length - bParts.length;
   });
@@ -252,7 +256,7 @@ class PRReviewStore {
 
     // Sort files to match file tree order (folders first, then alphabetically)
     const sortedFiles = sortFilesLikeTree(initialState.files);
-    
+
     this.state = {
       ...initialState,
       files: sortedFiles,
@@ -340,7 +344,8 @@ class PRReviewStore {
   };
 
   selectFile = (filename: string) => {
-    if (this.state.selectedFile === filename && !this.state.showOverview) return;
+    if (this.state.selectedFile === filename && !this.state.showOverview)
+      return;
     // Track for shift+click range selection
     this.lastSelectedFile = filename;
     this.set({
@@ -581,7 +586,10 @@ class PRReviewStore {
 
     this.set({
       loadedDiffs: { ...this.state.loadedDiffs, [filename]: diff },
-      navigableItems: { ...this.state.navigableItems, [filename]: navigableItems },
+      navigableItems: {
+        ...this.state.navigableItems,
+        [filename]: navigableItems,
+      },
     });
   };
 
@@ -692,22 +700,28 @@ class PRReviewStore {
     type NavLine = { type: "line"; lineNum: number; side: "old" | "new" };
     type NavSkip = { type: "skip"; skipIndex: number };
     type NavItem = NavLine | NavSkip;
-    
+
     // Check if we can use pre-computed items (no expanded skip blocks)
-    const hasExpandedSkipBlocks = Object.keys(expandedSkipBlocks).some(
-      key => key.startsWith(`${selectedFile}:`)
+    const hasExpandedSkipBlocks = Object.keys(expandedSkipBlocks).some((key) =>
+      key.startsWith(`${selectedFile}:`)
     );
-    
+
     let navigableItems: NavItem[];
-    
+
     if (!hasExpandedSkipBlocks && precomputedItems[selectedFile]) {
       // Fast path: use pre-computed items
-      navigableItems = precomputedItems[selectedFile].map((item: NavigableItem) => {
-        if (item.type === "skip") {
-          return { type: "skip" as const, skipIndex: item.skipIndex! };
+      navigableItems = precomputedItems[selectedFile].map(
+        (item: NavigableItem) => {
+          if (item.type === "skip") {
+            return { type: "skip" as const, skipIndex: item.skipIndex! };
+          }
+          return {
+            type: "line" as const,
+            lineNum: item.lineNum!,
+            side: item.side!,
+          };
         }
-        return { type: "line" as const, lineNum: item.lineNum!, side: item.side! };
-      });
+      );
     } else {
       // Slow path: rebuild with expanded skip blocks
       navigableItems = [];
@@ -1125,7 +1139,8 @@ class PRReviewStore {
   };
 
   executeGotoLine = () => {
-    const { gotoLineInput, gotoLineSide, selectedFile, loadedDiffs } = this.state;
+    const { gotoLineInput, gotoLineSide, selectedFile, loadedDiffs } =
+      this.state;
     const targetLine = parseInt(gotoLineInput, 10);
     if (isNaN(targetLine)) {
       this.exitGotoMode();
@@ -1141,13 +1156,13 @@ class PRReviewStore {
     // Build navigable lines with the line number to use for focusing
     // The selection model uses: delete lines → "old" side, insert/context → "new" side
     // So when user picks "old" column on a context line, we still need to focus with "new" side
-    type NavLine = { 
-      searchNum: number;  // The number in the column the user selected
-      focusNum: number;   // The line number to use for focusing
-      focusSide: "old" | "new";  // The side to use for focusing
+    type NavLine = {
+      searchNum: number; // The number in the column the user selected
+      focusNum: number; // The line number to use for focusing
+      focusSide: "old" | "new"; // The side to use for focusing
     };
     const navigableLines: NavLine[] = [];
-    
+
     for (const hunk of diff.hunks) {
       if (hunk.type === "hunk") {
         for (const line of hunk.lines) {
@@ -1186,7 +1201,8 @@ class PRReviewStore {
 
     if (navigableLines.length > 0) {
       const closest = navigableLines.reduce((best, current) =>
-        Math.abs(current.searchNum - targetLine) < Math.abs(best.searchNum - targetLine)
+        Math.abs(current.searchNum - targetLine) <
+        Math.abs(best.searchNum - targetLine)
           ? current
           : best
       );
@@ -1230,7 +1246,7 @@ class PRReviewStore {
     for (const comment of comments) {
       if (!comment.path) continue;
       if (!lookup[comment.path]) lookup[comment.path] = new Set();
-      
+
       if (comment.start_line && comment.line) {
         for (let i = comment.start_line; i <= comment.line; i++) {
           lookup[comment.path].add(i);
@@ -1242,7 +1258,7 @@ class PRReviewStore {
     for (const comment of pendingComments) {
       if (!comment.path) continue;
       if (!lookup[comment.path]) lookup[comment.path] = new Set();
-      
+
       if (comment.start_line && comment.line) {
         for (let i = comment.start_line; i <= comment.line; i++) {
           lookup[comment.path].add(i);
@@ -2463,7 +2479,7 @@ export function usePendingReviewLoader() {
 
   useEffect(() => {
     if (!github) return;
-    
+
     const fetchPendingReview = async () => {
       try {
         const result = await github.getPendingReview(owner, repo, pr.number);
@@ -2623,7 +2639,12 @@ export function useCommentActions() {
 
   const updateComment = async (commentId: number, newBody: string) => {
     try {
-      const updatedComment = await github.updateComment(owner, repo, commentId, newBody);
+      const updatedComment = await github.updateComment(
+        owner,
+        repo,
+        commentId,
+        newBody
+      );
       store.updateComment(commentId, updatedComment as ReviewComment);
     } catch (error) {
       console.error("Failed to update comment:", error);
@@ -2641,9 +2662,15 @@ export function useCommentActions() {
 
   const replyToComment = async (commentId: number, body: string) => {
     try {
-      const newComment = await github.createPRComment(owner, repo, pr.number, body, {
-        reply_to_id: commentId,
-      });
+      const newComment = await github.createPRComment(
+        owner,
+        repo,
+        pr.number,
+        body,
+        {
+          reply_to_id: commentId,
+        }
+      );
       store.addReply(newComment as ReviewComment);
     } catch (error) {
       console.error("Failed to reply to comment:", error);
@@ -2746,7 +2773,12 @@ export function useSkipBlockExpansion() {
 
       try {
         // Fetch the file content from the head commit
-        const content = await github.getFileContent(owner, repo, selectedFile, pr.head.sha);
+        const content = await github.getFileContent(
+          owner,
+          repo,
+          selectedFile,
+          pr.head.sha
+        );
 
         if (!content) {
           console.error("Failed to fetch file for skip block expansion");
@@ -2831,7 +2863,12 @@ export function useFileCopyActions() {
 
   const copyFile = async (filename: string) => {
     try {
-      const content = await github.getFileContent(owner, repo, filename, pr.head.sha);
+      const content = await github.getFileContent(
+        owner,
+        repo,
+        filename,
+        pr.head.sha
+      );
       await navigator.clipboard.writeText(content);
     } catch (error) {
       console.error("Failed to copy file:", error);
@@ -2842,7 +2879,12 @@ export function useFileCopyActions() {
     try {
       const file = files.find((f) => f.filename === filename);
       const basePath = file?.previous_filename || filename;
-      const content = await github.getFileContent(owner, repo, basePath, pr.base.sha);
+      const content = await github.getFileContent(
+        owner,
+        repo,
+        basePath,
+        pr.base.sha
+      );
       await navigator.clipboard.writeText(content);
     } catch (error) {
       console.error("Failed to copy base version:", error);
