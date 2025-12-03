@@ -120,13 +120,24 @@ export const PROverview = memo(function PROverview() {
 
   // Action loading states
   const [closingPR, setClosingPR] = useState(false);
+  const [reopeningPR, setReopeningPR] = useState(false);
+  const [deletingBranch, setDeletingBranch] = useState(false);
+  const [branchDeleted, setBranchDeleted] = useState(false);
   const [convertingToDraft, setConvertingToDraft] = useState(false);
   const [markingReady, setMarkingReady] = useState(false);
   const [assigningSelf, setAssigningSelf] = useState(false);
 
-  // Repo permissions - check if user can push (merge) and if repo is archived
+  // Viewer permissions from GraphQL (more reliable than REST)
+  const [viewerPermission, setViewerPermission] = useState<string | null>(null);
+
+  // Repo permissions - use GraphQL viewerPermission as primary source
   const isArchived = pr.base?.repo?.archived ?? false;
-  const canPush = pr.base?.repo?.permissions?.push ?? false;
+  // WRITE, MAINTAIN, or ADMIN permissions allow merging
+  const canPush =
+    viewerPermission === "ADMIN" ||
+    viewerPermission === "MAINTAIN" ||
+    viewerPermission === "WRITE" ||
+    pr.base?.repo?.permissions?.push === true;
   const canMergeRepo = canWrite && canPush && !isArchived;
 
   // Reviewers and Assignees state
@@ -192,7 +203,7 @@ export const PROverview = memo(function PROverview() {
           conversationData,
           commitsData,
           timelineData,
-          reviewThreadsData,
+          reviewThreadsResult,
         ] = await Promise.all([
           github
             .getPRReviews(owner, repo, pr.number)
@@ -220,7 +231,10 @@ export const PROverview = memo(function PROverview() {
             .catch(() => [] as TimelineEvent[]),
           github
             .getReviewThreads(owner, repo, pr.number)
-            .catch(() => [] as ReviewThread[]),
+            .catch(() => ({
+              threads: [] as ReviewThread[],
+              viewerPermission: null,
+            })),
         ]);
 
         setReviews(reviewsData);
@@ -229,7 +243,8 @@ export const PROverview = memo(function PROverview() {
         setConversation(conversationData);
         setCommits(commitsData);
         setTimeline(timelineData);
-        setReviewThreads(reviewThreadsData);
+        setReviewThreads(reviewThreadsResult.threads);
+        setViewerPermission(reviewThreadsResult.viewerPermission);
       } finally {
         setLoading(false);
       }
@@ -388,6 +403,42 @@ export const PROverview = memo(function PROverview() {
       setClosingPR(false);
     }
   }, [github, owner, repo, pr.number, refetchPR]);
+
+  const handleReopenPR = useCallback(async () => {
+    setReopeningPR(true);
+    try {
+      await github.reopenPR(owner, repo, pr.number);
+      await refetchPR();
+    } catch (error) {
+      console.error("Failed to reopen PR:", error);
+    } finally {
+      setReopeningPR(false);
+    }
+  }, [github, owner, repo, pr.number, refetchPR]);
+
+  const handleDeleteBranch = useCallback(async () => {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete the branch "${pr.head.ref}"?`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingBranch(true);
+    try {
+      await github.deleteBranch(
+        pr.head.repo?.owner?.login ?? owner,
+        pr.head.repo?.name ?? repo,
+        pr.head.ref
+      );
+      setBranchDeleted(true);
+    } catch (error) {
+      console.error("Failed to delete branch:", error);
+    } finally {
+      setDeletingBranch(false);
+    }
+  }, [github, owner, repo, pr.head.ref, pr.head.repo]);
 
   const handleRequestReviewer = useCallback(
     async (login: string) => {
@@ -855,6 +906,67 @@ export const PROverview = memo(function PROverview() {
                       </div>
                     )}
                   </>
+                )}
+
+                {/* Closed with unmerged commits - show for closed, unmerged PRs */}
+                {pr.state === "closed" && !pr.merged && (
+                  <div className="border border-border rounded-md overflow-hidden">
+                    <div className="flex items-start gap-3 p-4 bg-card/30">
+                      <div className="p-2 rounded-full bg-purple-500/10 text-purple-400">
+                        <GitBranch className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold">
+                          Closed with unmerged commits
+                        </h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          This pull request is closed, but the{" "}
+                          <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                            {pr.head.ref}
+                          </code>{" "}
+                          branch has unmerged commits.
+                        </p>
+                      </div>
+                      {canMergeRepo && !branchDeleted && (
+                        <button
+                          onClick={handleDeleteBranch}
+                          disabled={deletingBranch}
+                          className="shrink-0 px-4 py-2 border border-border text-sm font-medium rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
+                        >
+                          {deletingBranch ? (
+                            <span className="flex items-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Deleting...
+                            </span>
+                          ) : (
+                            "Delete branch"
+                          )}
+                        </button>
+                      )}
+                      {branchDeleted && (
+                        <span className="shrink-0 px-4 py-2 text-sm text-green-400 flex items-center gap-2">
+                          <Check className="w-4 h-4" />
+                          Branch deleted
+                        </span>
+                      )}
+                    </div>
+                    {canMergeRepo && (
+                      <div className="px-4 py-3 border-t border-border bg-card/10 flex items-center justify-end">
+                        <button
+                          onClick={handleReopenPR}
+                          disabled={reopeningPR}
+                          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 transition-colors disabled:opacity-50"
+                        >
+                          {reopeningPR ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <GitPullRequest className="w-4 h-4" />
+                          )}
+                          {reopeningPR ? "Reopening..." : "Reopen pull request"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Add a comment - only show when user can write (comments allowed even without push) */}

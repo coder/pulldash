@@ -23,6 +23,10 @@ import {
 } from "@/browser/contexts/github";
 import { useTelemetry } from "@/browser/contexts/telemetry";
 import { diffService } from "@/browser/lib/diff";
+import {
+  MentionSuggestionsProvider,
+  type MentionUser,
+} from "@/browser/ui/markdown";
 
 // ============================================================================
 // File Sorting (match file tree order)
@@ -1634,9 +1638,60 @@ export function PRReviewProvider({
     storeRef.current?.setComments(comments);
   }, [comments]);
 
+  // Extract relevant users for @mention suggestions
+  // Priority: PR participants (author, reviewers, assignees, commenters)
+  const suggestedUsers = useMemo(() => {
+    const seen = new Set<string>();
+    const users: MentionUser[] = [];
+
+    const addUser = (
+      login: string | undefined,
+      avatar_url: string | undefined
+    ) => {
+      if (!login || seen.has(login.toLowerCase())) return;
+      seen.add(login.toLowerCase());
+      users.push({
+        login,
+        avatar_url: avatar_url || `https://github.com/${login}.png`,
+      });
+    };
+
+    // PR author first
+    if (pr.user) {
+      addUser(pr.user.login, pr.user.avatar_url);
+    }
+
+    // Assignees
+    for (const assignee of pr.assignees || []) {
+      addUser(assignee.login, assignee.avatar_url);
+    }
+
+    // Requested reviewers (can be users or teams)
+    for (const reviewer of pr.requested_reviewers || []) {
+      if ("login" in reviewer) {
+        addUser(reviewer.login, reviewer.avatar_url);
+      }
+    }
+
+    // Commenters (from review comments)
+    for (const comment of comments) {
+      if (comment.user) {
+        addUser(comment.user.login, comment.user.avatar_url);
+      }
+    }
+
+    return users;
+  }, [pr, comments]);
+
   return (
     <PRReviewContext.Provider value={storeRef.current}>
-      {children}
+      <MentionSuggestionsProvider
+        suggestedUsers={suggestedUsers}
+        owner={owner}
+        repo={repo}
+      >
+        {children}
+      </MentionSuggestionsProvider>
     </PRReviewContext.Provider>
   );
 }

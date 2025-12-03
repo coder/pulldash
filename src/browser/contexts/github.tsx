@@ -873,6 +873,35 @@ function createGitHubStore() {
     return promise;
   }
 
+  async function searchUsers(query: string) {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `search:users:${query}`;
+
+    type UserSearchResult = Awaited<
+      ReturnType<typeof octokit.request<"GET /search/users">>
+    >["data"];
+
+    const cached = cache.get<UserSearchResult>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<UserSearchResult>(cacheKey);
+    if (pending) return pending;
+
+    const promise = octokit
+      .request("GET /search/users", {
+        q: query,
+        per_page: 8,
+      })
+      .then((res) => {
+        cache.set(cacheKey, res.data);
+        return res.data;
+      });
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
   async function getPR(
     owner: string,
     repo: string,
@@ -1685,6 +1714,16 @@ function createGitHubStore() {
     return data;
   }
 
+  async function deleteBranch(owner: string, repo: string, branch: string) {
+    if (!octokit) throw new Error("Not initialized");
+
+    await octokit.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+      owner,
+      repo,
+      ref: `heads/${branch}`,
+    });
+  }
+
   async function getPRConversation(
     owner: string,
     repo: string,
@@ -1906,11 +1945,12 @@ function createGitHubStore() {
     owner: string,
     repo: string,
     number: number
-  ): Promise<ReviewThread[]> {
+  ): Promise<{ threads: ReviewThread[]; viewerPermission: string | null }> {
     if (!batcher) throw new Error("Not initialized");
 
     const data = await batcher.query<{
       repository: {
+        viewerPermission: string | null;
         pullRequest: {
           reviewThreads: { nodes: ReviewThread[] };
         };
@@ -1919,6 +1959,7 @@ function createGitHubStore() {
       `
       query ($owner: String!, $repo: String!, $number: Int!) {
         repository(owner: $owner, name: $repo) {
+          viewerPermission
           pullRequest(number: $number) {
             reviewThreads(first: 100) {
               nodes {
@@ -1950,7 +1991,10 @@ function createGitHubStore() {
       { owner, repo, number }
     );
 
-    return data.repository.pullRequest.reviewThreads.nodes;
+    return {
+      threads: data.repository.pullRequest.reviewThreads.nodes,
+      viewerPermission: data.repository.viewerPermission,
+    };
   }
 
   async function resolveThread(threadId: string): Promise<void> {
@@ -2170,6 +2214,7 @@ function createGitHubStore() {
     // API methods
     searchPRs,
     searchRepos,
+    searchUsers,
     getPR,
     getPRFiles,
     getPRComments,
@@ -2198,6 +2243,7 @@ function createGitHubStore() {
     updateBranch,
     closePR,
     reopenPR,
+    deleteBranch,
     // Reactions
     getIssueReactions,
     addIssueReaction,
