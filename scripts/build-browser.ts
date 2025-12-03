@@ -1,5 +1,6 @@
 import tailwind from "bun-plugin-tailwind";
 import { watch } from "fs";
+import { cp } from "fs/promises";
 import { resolve } from "path";
 
 const isWatch = process.argv.includes("--watch");
@@ -21,6 +22,13 @@ async function build() {
     }
     return false;
   }
+
+  // Make paths absolute to root in index.html
+  const indexPath = "./dist/browser/index.html";
+  const indexHtml = await Bun.file(indexPath).text();
+  await Bun.write(indexPath, indexHtml.replaceAll("./", "/"));
+
+  await cp(resolve(process.cwd(), "src", "browser", "logo.svg"), resolve(process.cwd(), "dist", "browser", "logo.svg"));
 
   // Build worker separately with document shim for Prism/refractor
   const workerResult = await Bun.build({
