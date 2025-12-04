@@ -524,13 +524,19 @@ export class PRReviewStore {
 
   toggleViewed = (filename: string) => {
     const next = new Set(this.state.viewedFiles);
-    if (next.has(filename)) {
+    const wasViewed = next.has(filename);
+    if (wasViewed) {
       next.delete(filename);
     } else {
       next.add(filename);
     }
     this.persistViewedFiles(next);
     this.set({ viewedFiles: next });
+
+    // When marking a file as viewed, navigate to the next file
+    if (!wasViewed && filename === this.state.selectedFile) {
+      this.navigateToFile("next");
+    }
   };
 
   toggleViewedMultiple = (filenames: string[]) => {

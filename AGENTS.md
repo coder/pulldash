@@ -15,6 +15,9 @@ Use `bun` for everything - package management, tests.
 
 Tests should be minimal, not conflict with each other, and not be race-prone.
 
+If you make changes to a file that has tests, you should ensure the tests pass and add a test-case if one does not already exist covering it.
+We do not want duplicative tiny tests, but we want cases to be covered.
+
 Good:
 
 - `import { test } from "bun:test"`

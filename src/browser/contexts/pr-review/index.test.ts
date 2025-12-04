@@ -224,6 +224,16 @@ test("toggleViewed unmarks viewed file", () => {
   expect(store.getSnapshot().viewedFiles.has("src/index.ts")).toBe(false);
 });
 
+test("toggleViewed navigates to next file when marking current file as viewed", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+
+  store.toggleViewed("src/index.ts");
+
+  expect(store.getSnapshot().viewedFiles.has("src/index.ts")).toBe(true);
+  expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
+});
+
 test("toggleViewedMultiple marks multiple files", () => {
   const store = createStore();
 
