@@ -29,7 +29,7 @@
     "fmt": "prettier --write --cache .",
     "fmt:check": "prettier --check .",
     "lint": "echo 'No linter configured yet'",
-    "test": "echo 'No tests configured yet'"
+    "test": "bun test"
   },
   "keywords": [
     "github",
