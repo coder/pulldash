@@ -1,8 +1,16 @@
-import { Check, FileCode, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Check,
+  FileCode,
+  ChevronLeft,
+  ChevronRight,
+  Columns2,
+  AlignJustify,
+} from "lucide-react";
 import { cn } from "../cn";
 import { Keycap } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/types";
 import { memo } from "react";
+import type { DiffViewMode } from "../contexts/pr-review";
 
 interface FileHeaderProps {
   file: PullRequestFile;
@@ -12,6 +20,8 @@ interface FileHeaderProps {
   totalFiles?: number;
   onPrevFile?: () => void;
   onNextFile?: () => void;
+  diffViewMode?: DiffViewMode;
+  onToggleDiffViewMode?: () => void;
 }
 
 export const FileHeader = memo(function FileHeader({
@@ -22,6 +32,8 @@ export const FileHeader = memo(function FileHeader({
   totalFiles,
   onPrevFile,
   onNextFile,
+  diffViewMode,
+  onToggleDiffViewMode,
 }: FileHeaderProps) {
   const fileStatusBadge = (() => {
     switch (file.status) {
@@ -92,19 +104,55 @@ export const FileHeader = memo(function FileHeader({
         )}
       </div>
 
-      <button
-        onClick={onToggleViewed}
-        className={cn(
-          "flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors shrink-0",
-          isViewed
-            ? "bg-green-500/20 text-green-500 hover:bg-green-500/30"
-            : "bg-muted hover:bg-muted/80 text-muted-foreground"
+      <div className="flex items-center gap-2">
+        {/* Split/Unified toggle */}
+        {onToggleDiffViewMode && (
+          <div className="flex items-center rounded-md border border-border bg-muted/30 p-0.5">
+            <button
+              onClick={() =>
+                diffViewMode !== "unified" && onToggleDiffViewMode()
+              }
+              className={cn(
+                "flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors",
+                diffViewMode === "unified"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Unified view"
+            >
+              <AlignJustify className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Unified</span>
+            </button>
+            <button
+              onClick={() => diffViewMode !== "split" && onToggleDiffViewMode()}
+              className={cn(
+                "flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors",
+                diffViewMode === "split"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Split view"
+            >
+              <Columns2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Split</span>
+            </button>
+          </div>
         )}
-      >
-        <Check className={cn("w-4 h-4", isViewed && "text-green-500")} />
-        {isViewed ? "Viewed" : "Mark as viewed"}
-        <Keycap keyName="v" size="xs" className="ml-1" />
-      </button>
+
+        <button
+          onClick={onToggleViewed}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors shrink-0",
+            isViewed
+              ? "bg-green-500/20 text-green-500 hover:bg-green-500/30"
+              : "bg-muted hover:bg-muted/80 text-muted-foreground"
+          )}
+        >
+          <Check className={cn("w-4 h-4", isViewed && "text-green-500")} />
+          {isViewed ? "Viewed" : "Mark as viewed"}
+          <Keycap keyName="v" size="xs" className="ml-1" />
+        </button>
+      </div>
     </div>
   );
 });

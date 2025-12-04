@@ -125,6 +125,8 @@ export interface NavigableItem {
   rowIndex: number;
 }
 
+export type DiffViewMode = "unified" | "split";
+
 interface PRReviewState {
   // Core data (immutable after init)
   pr: PullRequest;
@@ -136,6 +138,9 @@ interface PRReviewState {
   // ADMIN, MAINTAIN, WRITE can approve/request_changes
   // TRIAGE, READ can only comment
   viewerPermission: string | null;
+
+  // Diff view mode (unified or split) - global user preference
+  diffViewMode: DiffViewMode;
 
   // File navigation
   selectedFile: string | null;
@@ -193,6 +198,25 @@ interface PRReviewState {
 type Listener = () => void;
 type Selector<T> = (state: PRReviewState) => T;
 
+// Global storage key for diff view mode (user preference, not per-PR)
+const DIFF_VIEW_MODE_KEY = "pulldash_diff_view_mode";
+
+function getStoredDiffViewMode(): DiffViewMode {
+  try {
+    const stored = localStorage.getItem(DIFF_VIEW_MODE_KEY);
+    if (stored === "split" || stored === "unified") {
+      return stored;
+    }
+  } catch {}
+  return "unified"; // Default to unified view
+}
+
+function setStoredDiffViewMode(mode: DiffViewMode): void {
+  try {
+    localStorage.setItem(DIFF_VIEW_MODE_KEY, mode);
+  } catch {}
+}
+
 class PRReviewStore {
   private state: PRReviewState;
   private listeners = new Set<Listener>();
@@ -232,6 +256,7 @@ class PRReviewStore {
       | "showReviewPanel"
       | "submittingReview"
       | "currentUser"
+      | "diffViewMode"
     >
   ) {
     this.storageKey = `pr-${initialState.owner}-${initialState.repo}-${initialState.pr.number}`;
@@ -240,6 +265,7 @@ class PRReviewStore {
     let viewedFiles = new Set<string>();
     let pendingComments: LocalPendingComment[] = [];
     let reviewBody = "";
+    const diffViewMode = getStoredDiffViewMode();
 
     try {
       const stored = localStorage.getItem(`${this.storageKey}-viewed`);
@@ -275,6 +301,7 @@ class PRReviewStore {
       showOverview: true,
       viewedFiles,
       hideViewed: true,
+      diffViewMode,
       loadedDiffs: {},
       loadingFiles: new Set(),
       expandedSkipBlocks: {},
@@ -551,6 +578,21 @@ class PRReviewStore {
   };
 
   // ---------------------------------------------------------------------------
+  // Diff View Mode Actions
+  // ---------------------------------------------------------------------------
+
+  setDiffViewMode = (mode: DiffViewMode) => {
+    if (this.state.diffViewMode === mode) return;
+    setStoredDiffViewMode(mode);
+    this.set({ diffViewMode: mode });
+  };
+
+  toggleDiffViewMode = () => {
+    const newMode = this.state.diffViewMode === "unified" ? "split" : "unified";
+    this.setDiffViewMode(newMode);
+  };
+
+  // ---------------------------------------------------------------------------
   // Diff Loading Actions
   // ---------------------------------------------------------------------------
 
@@ -682,6 +724,73 @@ class PRReviewStore {
       selectionAnchor: null,
       selectionAnchorSide: null,
     });
+  };
+
+  // Switch between left (old) and right (new) sides in split view
+  navigateSide = (direction: "left" | "right") => {
+    const {
+      focusedLine,
+      focusedLineSide,
+      selectedFile,
+      loadedDiffs,
+      diffViewMode,
+      expandedSkipBlocks,
+    } = this.state;
+
+    // Only works in split view when a line is focused
+    if (diffViewMode !== "split") return;
+    if (focusedLine === null || focusedLineSide === null) return;
+
+    const targetSide = direction === "left" ? "old" : "new";
+    if (focusedLineSide === targetSide) return; // Already on target side
+
+    const diff = selectedFile ? loadedDiffs[selectedFile] : null;
+    if (!diff?.hunks) return;
+
+    // Helper to check if a line matches and handle switching
+    const trySwitch = (line: DiffLine): boolean => {
+      // Check if this is the line we're currently focused on
+      const matchesOld =
+        focusedLineSide === "old" && line.oldLineNumber === focusedLine;
+      const matchesNew =
+        focusedLineSide === "new" && line.newLineNumber === focusedLine;
+
+      if (!matchesOld && !matchesNew) return false;
+
+      // Only context/merged lines (type "normal") can be on both sides
+      // Delete lines only exist on old side, insert lines only on new side
+      if (line.type !== "normal") return true; // Found but can't switch
+
+      // Get the line number for the target side
+      const targetLineNum =
+        targetSide === "old" ? line.oldLineNumber : line.newLineNumber;
+      if (targetLineNum !== undefined) {
+        this.setFocusedLine(targetLineNum, targetSide);
+        this.setSelectionAnchor(null, null);
+      }
+      return true;
+    };
+
+    // Search in regular hunks
+    for (const hunk of diff.hunks) {
+      if (hunk.type !== "hunk") continue;
+      for (const line of hunk.lines) {
+        if (trySwitch(line)) return;
+      }
+    }
+
+    // Also search in expanded skip blocks
+    if (selectedFile) {
+      for (const key of Object.keys(expandedSkipBlocks)) {
+        if (!key.startsWith(`${selectedFile}:`)) continue;
+        const expandedLines = expandedSkipBlocks[key];
+        if (expandedLines) {
+          for (const line of expandedLines) {
+            if (trySwitch(line)) return;
+          }
+        }
+      }
+    }
   };
 
   navigateLine = (
@@ -1153,8 +1262,13 @@ class PRReviewStore {
   };
 
   executeGotoLine = () => {
-    const { gotoLineInput, gotoLineSide, selectedFile, loadedDiffs } =
-      this.state;
+    const {
+      gotoLineInput,
+      gotoLineSide,
+      selectedFile,
+      loadedDiffs,
+      diffViewMode,
+    } = this.state;
     const targetLine = parseInt(gotoLineInput, 10);
     if (isNaN(targetLine)) {
       this.exitGotoMode();
@@ -1168,8 +1282,8 @@ class PRReviewStore {
     }
 
     // Build navigable lines with the line number to use for focusing
-    // The selection model uses: delete lines → "old" side, insert/context → "new" side
-    // So when user picks "old" column on a context line, we still need to focus with "new" side
+    // In unified view: delete lines → "old" side, insert/context → "new" side
+    // In split view: respect the user's column choice since both sides are visible
     type NavLine = {
       searchNum: number; // The number in the column the user selected
       focusNum: number; // The line number to use for focusing
@@ -1181,7 +1295,7 @@ class PRReviewStore {
       if (hunk.type === "hunk") {
         for (const line of hunk.lines) {
           if (gotoLineSide === "old") {
-            // User wants to jump to a line number in the "old" column
+            // User wants to jump to a line number in the "old" column (left side in split)
             if (line.oldLineNumber !== undefined) {
               if (line.type === "delete") {
                 // Delete lines: focus with old side and oldLineNumber
@@ -1190,8 +1304,16 @@ class PRReviewStore {
                   focusNum: line.oldLineNumber,
                   focusSide: "old",
                 });
+              } else if (diffViewMode === "split") {
+                // Split view: context lines can be focused on either side
+                // User chose "old" so focus on the left side with oldLineNumber
+                navigableLines.push({
+                  searchNum: line.oldLineNumber,
+                  focusNum: line.oldLineNumber,
+                  focusSide: "old",
+                });
               } else {
-                // Context lines: have oldLineNumber but are focused with new side
+                // Unified view: context lines are focused with new side
                 navigableLines.push({
                   searchNum: line.oldLineNumber,
                   focusNum: line.newLineNumber!,
@@ -1200,7 +1322,7 @@ class PRReviewStore {
               }
             }
           } else {
-            // User wants to jump to a line number in the "new" column
+            // User wants to jump to a line number in the "new" column (right side in split)
             if (line.newLineNumber !== undefined) {
               navigableLines.push({
                 searchNum: line.newLineNumber,
@@ -2121,6 +2243,17 @@ export function useKeyboardNavigation() {
       if (e.key === "ArrowUp") {
         e.preventDefault();
         store.navigateLine("up", e.shiftKey, 1);
+        return;
+      }
+      // Left/Right arrows to switch between sides in split view
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        store.navigateSide("left");
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        store.navigateSide("right");
         return;
       }
 

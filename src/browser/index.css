@@ -238,6 +238,7 @@
 }
 
 /* CSS-based diff line selection - avoids per-row React re-renders */
+/* Unified view selection */
 .diff-line-row[data-selected="true"] {
   background: linear-gradient(#19273e, #19273e) !important;
   background-size: 100% calc(100% + 2px) !important;
@@ -259,6 +260,35 @@
     inset 0 -2px 0 rgb(59, 130, 246) !important;
 }
 .diff-line-row[data-sel-first="true"][data-sel-last="true"] {
+  box-shadow:
+    inset 2px 0 0 rgb(59, 130, 246),
+    inset -2px 0 0 rgb(59, 130, 246),
+    inset 0 2px 0 rgb(59, 130, 246),
+    inset 0 -2px 0 rgb(59, 130, 246) !important;
+}
+
+/* Split view selection */
+.split-diff-side[data-selected="true"] {
+  background: linear-gradient(#19273e, #19273e) !important;
+  background-size: 100% calc(100% + 2px) !important;
+  background-repeat: no-repeat !important;
+  box-shadow:
+    inset 2px 0 0 rgb(59, 130, 246),
+    inset -2px 0 0 rgb(59, 130, 246);
+}
+.split-diff-side[data-sel-first="true"] {
+  box-shadow:
+    inset 2px 0 0 rgb(59, 130, 246),
+    inset -2px 0 0 rgb(59, 130, 246),
+    inset 0 2px 0 rgb(59, 130, 246) !important;
+}
+.split-diff-side[data-sel-last="true"] {
+  box-shadow:
+    inset 2px 0 0 rgb(59, 130, 246),
+    inset -2px 0 0 rgb(59, 130, 246),
+    inset 0 -2px 0 rgb(59, 130, 246) !important;
+}
+.split-diff-side[data-sel-first="true"][data-sel-last="true"] {
   box-shadow:
     inset 2px 0 0 rgb(59, 130, 246),
     inset -2px 0 0 rgb(59, 130, 246),

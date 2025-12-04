@@ -432,7 +432,7 @@ const defaultOptions: ParseOptions = {
   maxDiffDistance: 30,
   maxChangeRatio: 0.45,
   mergeModifiedLines: true,
-  inlineMaxCharEdits: 4,
+  inlineMaxCharEdits: 8, // Increased to show more character-level diffs inline
 };
 
 export const parseDiff = (

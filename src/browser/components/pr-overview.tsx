@@ -69,6 +69,7 @@ import {
   type ReactionContent,
   type TimelineEvent,
   type ReviewThread,
+  type PullRequest,
 } from "../contexts/github";
 import { useCanWrite } from "../contexts/auth";
 import { useTelemetry } from "../contexts/telemetry";
@@ -208,7 +209,7 @@ export const PROverview = memo(function PROverview() {
           (run: { conclusion: string | null }) =>
             run.conclusion === "action_required"
         )
-        .map((run: { id: number; name: string; html_url: string }) => ({
+        .map((run: { id: number; name?: string | null; html_url: string }) => ({
           id: run.id,
           name: run.name || "Workflow",
           html_url: run.html_url,
@@ -1017,7 +1018,7 @@ export const PROverview = memo(function PROverview() {
                           key={`comment-${comment.id}`}
                           user={comment.user}
                           createdAt={comment.created_at}
-                          body={comment.body}
+                          body={comment.body ?? null}
                           reactions={reactions[`comment-${comment.id}`]}
                           onAddReaction={
                             canWrite

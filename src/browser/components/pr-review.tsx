@@ -87,6 +87,7 @@ import {
   type DiffLine,
   type DiffHunk,
   type DiffSkipBlock,
+  type DiffViewMode,
 } from "../contexts/pr-review";
 import {
   DropdownMenu,
@@ -628,6 +629,7 @@ const DiffPanel = memo(function DiffPanel() {
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
+  const diffViewMode = usePRReviewSelector((s) => s.diffViewMode);
 
   const currentFile = useCurrentFile();
   const parsedDiff = useCurrentDiff();
@@ -664,6 +666,8 @@ const DiffPanel = memo(function DiffPanel() {
                 totalFiles={files.length}
                 onPrevFile={() => store.navigateToPrevUnviewedFile()}
                 onNextFile={() => store.navigateToNextUnviewedFile()}
+                diffViewMode={diffViewMode}
+                onToggleDiffViewMode={() => store.toggleDiffViewMode()}
               />
             </div>
           </div>
@@ -671,7 +675,7 @@ const DiffPanel = memo(function DiffPanel() {
           {/* Scrollable diff content - DiffViewer handles its own virtualized scroll */}
           <div className="flex-1 min-h-0 flex flex-col">
             {parsedDiff && parsedDiff.hunks.length > 0 ? (
-              <DiffViewer diff={parsedDiff} />
+              <DiffViewer diff={parsedDiff} viewMode={diffViewMode} />
             ) : isLoading || (currentFile.patch && !parsedDiff) ? (
               // Show skeleton if loading OR if file has patch but diff isn't ready yet
               <DiffSkeleton />
@@ -929,6 +933,13 @@ function useLineDrag() {
 // Virtual Row Types for Flattened Diff
 // ============================================================================
 
+// Split line pair for side-by-side view
+interface SplitLinePair {
+  left: DiffLine | null; // Old (deletion/context)
+  right: DiffLine | null; // New (insertion/context)
+  lineNum: number | undefined; // Primary line number for comments
+}
+
 type VirtualRowType =
   | {
       type: "skip";
@@ -938,6 +949,7 @@ type VirtualRowType =
       index: number;
     }
   | { type: "line"; line: DiffLine; lineNum: number | undefined; index: number }
+  | { type: "split-line"; pair: SplitLinePair; index: number }
   | { type: "comment-form"; lineNum: number; startLine?: number; index: number }
   | { type: "pending-comment"; comment: LocalPendingComment; index: number }
   | {
@@ -954,9 +966,13 @@ type VirtualRowType =
 
 interface DiffViewerProps {
   diff: ParsedDiff;
+  viewMode: DiffViewMode;
 }
 
-const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
+const DiffViewer = memo(function DiffViewer({
+  diff,
+  viewMode,
+}: DiffViewerProps) {
   const hunks = diff?.hunks ?? [];
   const store = usePRReviewStore();
   const parentRef = useRef<HTMLDivElement>(null);
@@ -1086,12 +1102,99 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     return startLines;
   }, [hunks]);
 
+  // Helper to convert lines to split pairs for side-by-side view
+  const convertToSplitPairs = useCallback(
+    (lines: DiffLine[]): SplitLinePair[] => {
+      const pairs: SplitLinePair[] = [];
+      let i = 0;
+
+      while (i < lines.length) {
+        const line = lines[i];
+
+        if (line.type === "normal") {
+          // Context line - show on both sides
+          pairs.push({
+            left: line,
+            right: line,
+            lineNum: line.newLineNumber || line.oldLineNumber,
+          });
+          i++;
+        } else if (line.type === "delete") {
+          // Collect consecutive deletes
+          const deletes: DiffLine[] = [];
+          while (i < lines.length && lines[i].type === "delete") {
+            deletes.push(lines[i]);
+            i++;
+          }
+
+          // Collect consecutive inserts that follow
+          const inserts: DiffLine[] = [];
+          while (i < lines.length && lines[i].type === "insert") {
+            inserts.push(lines[i]);
+            i++;
+          }
+
+          // Pair them up
+          const maxLen = Math.max(deletes.length, inserts.length);
+          for (let j = 0; j < maxLen; j++) {
+            const del = deletes[j] || null;
+            const ins = inserts[j] || null;
+            pairs.push({
+              left: del,
+              right: ins,
+              lineNum: ins?.newLineNumber || del?.oldLineNumber,
+            });
+          }
+        } else if (line.type === "insert") {
+          // Standalone insert (no preceding delete)
+          pairs.push({
+            left: null,
+            right: line,
+            lineNum: line.newLineNumber,
+          });
+          i++;
+        }
+      }
+
+      return pairs;
+    },
+    []
+  );
+
   // Fix 5: Separate static rows (diff structure + comments) from dynamic overlays (comment form)
   // Static rows only change when diff or comments change
   const staticRows = useMemo((): VirtualRowType[] => {
     const rows: VirtualRowType[] = [];
     let index = 0;
     let skipIndex = 0;
+
+    // Helper to add comments after a line
+    const addCommentsForLine = (lineNum: number | undefined) => {
+      if (!lineNum) return;
+
+      const linePending = pendingCommentsByLine.get(lineNum);
+      if (linePending) {
+        for (const pending of linePending) {
+          rows.push({
+            type: "pending-comment",
+            comment: pending,
+            index: index++,
+          });
+        }
+      }
+
+      const threads = threadsByLine.get(lineNum);
+      if (threads) {
+        for (const thread of threads) {
+          rows.push({
+            type: "comment-thread",
+            comments: thread,
+            lineNum,
+            index: index++,
+          });
+        }
+      }
+    };
 
     for (const hunk of hunks) {
       if (hunk.type === "skip") {
@@ -1100,10 +1203,19 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
         const expandedLines = getExpandedLines(currentSkipIndex);
 
         if (expandedLines && expandedLines.length > 0) {
-          // Show expanded lines instead of skip block (no spacers needed)
-          for (const line of expandedLines) {
-            const lineNum = line.newLineNumber || line.oldLineNumber;
-            rows.push({ type: "line", line, lineNum, index: index++ });
+          // Show expanded lines
+          if (viewMode === "split") {
+            const pairs = convertToSplitPairs(expandedLines);
+            for (const pair of pairs) {
+              rows.push({ type: "split-line", pair, index: index++ });
+              addCommentsForLine(pair.lineNum);
+            }
+          } else {
+            for (const line of expandedLines) {
+              const lineNum = line.newLineNumber || line.oldLineNumber;
+              rows.push({ type: "line", line, lineNum, index: index++ });
+              addCommentsForLine(lineNum);
+            }
           }
         } else {
           // Show collapsed skip block with spacers
@@ -1122,35 +1234,19 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
           rows.push({ type: "skip-spacer", position: "after", index: index++ });
         }
       } else {
-        for (const line of hunk.lines) {
-          const lineNum = line.newLineNumber || line.oldLineNumber;
-          rows.push({ type: "line", line, lineNum, index: index++ });
-
-          // Add pending comments for this line
-          if (lineNum) {
-            const linePending = pendingCommentsByLine.get(lineNum);
-            if (linePending) {
-              for (const pending of linePending) {
-                rows.push({
-                  type: "pending-comment",
-                  comment: pending,
-                  index: index++,
-                });
-              }
-            }
-
-            // Add comment threads for this line
-            const threads = threadsByLine.get(lineNum);
-            if (threads) {
-              for (const thread of threads) {
-                rows.push({
-                  type: "comment-thread",
-                  comments: thread,
-                  lineNum,
-                  index: index++,
-                });
-              }
-            }
+        if (viewMode === "split") {
+          // Convert to split pairs
+          const pairs = convertToSplitPairs(hunk.lines);
+          for (const pair of pairs) {
+            rows.push({ type: "split-line", pair, index: index++ });
+            addCommentsForLine(pair.lineNum);
+          }
+        } else {
+          // Unified view - sequential lines
+          for (const line of hunk.lines) {
+            const lineNum = line.newLineNumber || line.oldLineNumber;
+            rows.push({ type: "line", line, lineNum, index: index++ });
+            addCommentsForLine(lineNum);
           }
         }
       }
@@ -1163,6 +1259,8 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     pendingCommentsByLine,
     threadsByLine,
     getExpandedLines,
+    viewMode,
+    convertToSplitPairs,
   ]);
 
   // Dynamic: Insert comment form into the correct position (only changes when commentingOnLine changes)
@@ -1171,9 +1269,11 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
 
     // Find where to insert the comment form
     const targetLine = commentingOnLine.line;
-    const insertIndex = staticRows.findIndex((row, idx) => {
+    const insertIndex = staticRows.findIndex((row) => {
       if (row.type === "line" && row.lineNum === targetLine) {
-        // Insert after this line (before any pending comments or threads on this line)
+        return true;
+      }
+      if (row.type === "split-line" && row.pair.lineNum === targetLine) {
         return true;
       }
       return false;
@@ -1204,15 +1304,43 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
   }, [staticRows, commentingOnLine]);
 
   // Create O(1) lookup map for line numbers -> row indices
+  // For split view, we need to map both old and new line numbers
   const lineNumToRowIndex = useMemo(() => {
-    const map = new Map<number, number>();
+    const map = new Map<string, number>(); // key: "lineNum:side"
     virtualRows.forEach((row, index) => {
       if (row.type === "line" && row.lineNum) {
-        map.set(row.lineNum, index);
+        // Unified view: map by lineNum and side
+        const side = row.line.type === "delete" ? "old" : "new";
+        map.set(`${row.lineNum}:${side}`, index);
+        // Also add without side for simpler lookups
+        map.set(`${row.lineNum}:any`, index);
+      } else if (row.type === "split-line") {
+        // Split view: map both old and new line numbers
+        const { left, right } = row.pair;
+        if (left?.oldLineNumber) {
+          map.set(`${left.oldLineNumber}:old`, index);
+          map.set(`${left.oldLineNumber}:any`, index);
+        }
+        if (right?.newLineNumber) {
+          map.set(`${right.newLineNumber}:new`, index);
+          map.set(`${right.newLineNumber}:any`, index);
+        }
       }
     });
     return map;
   }, [virtualRows]);
+
+  // Helper to get row index by line number and optional side
+  const getRowIndexForLine = useCallback(
+    (lineNum: number, side?: "old" | "new" | null) => {
+      if (side) {
+        const exact = lineNumToRowIndex.get(`${lineNum}:${side}`);
+        if (exact !== undefined) return exact;
+      }
+      return lineNumToRowIndex.get(`${lineNum}:any`);
+    },
+    [lineNumToRowIndex]
+  );
 
   // Estimate row heights for the virtualizer
   const estimateSize = useCallback(
@@ -1226,6 +1354,8 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
         case "skip":
           return 40;
         case "line":
+          return 20;
+        case "split-line":
           return 20;
         case "comment-form":
           return 180;
@@ -1393,17 +1523,32 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
         const distance = Math.abs(e.clientY - centerY);
 
         if (distance < closestDistance) {
-          // Get line number and side from the parent row's data
-          const row = el.closest("[data-index]");
-          if (row) {
-            const index = parseInt(row.getAttribute("data-index") || "-1", 10);
-            const virtualRow = virtualRows[index];
-            if (virtualRow?.type === "line" && virtualRow.lineNum) {
-              // Only consider lines on the same side as the drag
-              const rowSide = virtualRow.line.type === "delete" ? "old" : "new";
-              if (rowSide === dragSide) {
-                closestDistance = distance;
-                closestLine = virtualRow.lineNum;
+          // Get line number and side from the element or its parent
+          // In split view, the data attributes are on the side container
+          const sideContainer = el.closest("[data-line-side]");
+          if (sideContainer) {
+            const lineNum = sideContainer.getAttribute("data-line-num");
+            const side = sideContainer.getAttribute("data-line-side");
+            if (lineNum && side === dragSide) {
+              closestDistance = distance;
+              closestLine = parseInt(lineNum, 10);
+            }
+          } else {
+            // Unified view fallback
+            const row = el.closest("[data-index]");
+            if (row) {
+              const index = parseInt(
+                row.getAttribute("data-index") || "-1",
+                10
+              );
+              const virtualRow = virtualRows[index];
+              if (virtualRow?.type === "line" && virtualRow.lineNum) {
+                const rowSide =
+                  virtualRow.line.type === "delete" ? "old" : "new";
+                if (rowSide === dragSide) {
+                  closestDistance = distance;
+                  closestLine = virtualRow.lineNum;
+                }
               }
             }
           }
@@ -1500,7 +1645,7 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
 
       // 2. Scroll to focused line (after selection update)
       if (focusedLine && !isDraggingState) {
-        const rowIndex = lineNumToRowIndex.get(focusedLine);
+        const rowIndex = getRowIndexForLine(focusedLine, focusedLineSide);
         if (rowIndex !== undefined) {
           // Use "auto" alignment - only scrolls if needed, keeps row visible
           virtualizer.scrollToIndex(rowIndex, {
@@ -1521,7 +1666,7 @@ const DiffViewer = memo(function DiffViewer({ diff }: DiffViewerProps) {
     selectionAnchor,
     selectionAnchorSide,
     isDraggingState,
-    lineNumToRowIndex,
+    getRowIndexForLine,
     virtualizer,
   ]);
 
@@ -1619,6 +1764,8 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({
       );
     case "line":
       return <DiffLineRow line={row.line} lineNum={row.lineNum} />;
+    case "split-line":
+      return <SplitDiffLineRow pair={row.pair} />;
     case "comment-form":
       return <InlineCommentForm line={row.lineNum} startLine={row.startLine} />;
     case "pending-comment":
@@ -1832,18 +1979,229 @@ const DiffLineRow = memo(function DiffLineRow({
         onClick={handleContentClick}
       >
         <Tag className="no-underline">
-          {line.content.map((seg, i) => (
-            <span
-              key={i}
-              className={cn(
-                seg.type === "insert" && "bg-[var(--code-added)]/20",
-                seg.type === "delete" && "bg-[var(--code-removed)]/20"
-              )}
-              dangerouslySetInnerHTML={{ __html: seg.html }}
-            />
-          ))}
+          {line.content.map((seg, i) => {
+            // For tiny inline changes, use more prominent styling
+            const isTinyChange = seg.type !== "normal" && seg.html.length <= 3;
+            return (
+              <span
+                key={i}
+                className={cn(
+                  seg.type === "insert" &&
+                    "bg-[var(--code-added)]/20 text-green-400",
+                  seg.type === "delete" &&
+                    "bg-[var(--code-removed)]/20 text-orange-400 line-through decoration-orange-500/50",
+                  // Extra emphasis for tiny changes
+                  isTinyChange &&
+                    seg.type === "insert" &&
+                    "bg-[var(--code-added)]/40 font-semibold",
+                  isTinyChange &&
+                    seg.type === "delete" &&
+                    "bg-[var(--code-removed)]/40 font-semibold"
+                )}
+                dangerouslySetInnerHTML={{ __html: seg.html }}
+              />
+            );
+          })}
         </Tag>
       </div>
+    </div>
+  );
+});
+
+// ============================================================================
+// Split Diff Line Row (Side-by-side view)
+// ============================================================================
+
+interface SplitDiffLineRowProps {
+  pair: SplitLinePair;
+}
+
+const SplitDiffLineRow = memo(function SplitDiffLineRow({
+  pair,
+}: SplitDiffLineRowProps) {
+  const store = usePRReviewStore();
+  const {
+    onDragStart,
+    onDragEnter,
+    onDragEnd,
+    onClickFallback,
+    commentingRange,
+    commentRangeLookup,
+  } = useLineDrag();
+
+  const { left, right, lineNum } = pair;
+
+  // Compute commenting range state
+  const isInCommentingRange = useMemo(() => {
+    if (lineNum === undefined || !commentingRange) return false;
+    return lineNum >= commentingRange.start && lineNum <= commentingRange.end;
+  }, [lineNum, commentingRange]);
+
+  const hasCommentRange = useMemo(() => {
+    if (lineNum === undefined || !commentRangeLookup) return false;
+    return commentRangeLookup.has(lineNum);
+  }, [lineNum, commentRangeLookup]);
+
+  // Render one side of the split view
+  const renderSide = (
+    line: DiffLine | null,
+    side: "old" | "new",
+    lineNumber: number | undefined
+  ) => {
+    if (!line) {
+      // Empty cell
+      return (
+        <div className="flex flex-1 min-w-0 bg-muted/30 split-diff-side">
+          <div className="w-0.5 shrink-0" />
+          <div className="w-10 shrink-0 tabular-nums text-right opacity-30 pr-2 text-xs select-none pt-0.5 border-r border-border/30" />
+          <div className="flex-1" />
+        </div>
+      );
+    }
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+      if (lineNumber) {
+        e.preventDefault();
+        onDragStart(lineNumber, side, e.shiftKey);
+      }
+    };
+
+    const handleMouseUp = () => {
+      onDragEnd();
+    };
+
+    const handleMouseEnter = () => {
+      if (lineNumber) {
+        onDragEnter(lineNumber, side);
+      }
+    };
+
+    const handleClick = () => {
+      if (lineNumber) {
+        onClickFallback(lineNumber, side);
+      }
+    };
+
+    const handleContentMouseDown = (e: React.MouseEvent) => {
+      if (!lineNumber) return;
+      const state = store.getSnapshot();
+      if (e.shiftKey && state.focusedLine !== null) {
+        e.preventDefault();
+        if (state.selectionAnchor === null) {
+          store.setSelectionAnchor(
+            state.focusedLine,
+            state.focusedLineSide ?? side
+          );
+        }
+        store.setFocusedLine(lineNumber, side);
+        return;
+      }
+    };
+
+    const handleContentClick = (e: React.MouseEvent) => {
+      if (!lineNumber) return;
+      if (e.shiftKey) return;
+      const selection = window.getSelection();
+      if (selection && selection.toString().length > 0) return;
+      store.setFocusedLine(lineNumber, side);
+      store.setSelectionAnchor(null, null);
+    };
+
+    const isDelete = line.type === "delete";
+    const isInsert = line.type === "insert";
+    const Tag = isInsert ? "ins" : isDelete ? "del" : "span";
+
+    let bgColor: string | undefined;
+    if (isInCommentingRange) {
+      bgColor = "#19273e";
+    } else if (isInsert) {
+      bgColor = "#122218";
+    } else if (isDelete) {
+      bgColor = "#261710";
+    } else if (hasCommentRange) {
+      bgColor = "#1b1810";
+    }
+
+    const bgStyle: React.CSSProperties = bgColor
+      ? {
+          background: `linear-gradient(${bgColor}, ${bgColor})`,
+          backgroundSize: "100% calc(100% + 2px)",
+          backgroundRepeat: "no-repeat",
+        }
+      : {};
+
+    return (
+      <div
+        className="flex flex-1 min-w-0 split-diff-side"
+        style={bgStyle}
+        data-line-num={lineNumber}
+        data-line-side={side}
+      >
+        {/* Left border indicator */}
+        <div
+          className={cn(
+            "w-0.5 shrink-0 border-l-2 border-transparent",
+            isInsert && "!border-[var(--code-added)]/60",
+            isDelete && "!border-[var(--code-removed)]/80"
+          )}
+        />
+        {/* Line number */}
+        <div
+          data-line-gutter
+          className="w-10 shrink-0 tabular-nums text-right opacity-50 pr-2 text-xs select-none pt-0.5 cursor-pointer hover:bg-blue-500/20 border-r border-border/30"
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseEnter={handleMouseEnter}
+          onClick={handleClick}
+        >
+          {lineNumber || ""}
+        </div>
+        {/* Code content */}
+        <div
+          className="flex-1 whitespace-pre-wrap break-words pr-2 overflow-hidden pl-2 cursor-text"
+          onMouseDown={handleContentMouseDown}
+          onClick={handleContentClick}
+        >
+          <Tag className="no-underline">
+            {line.content.map((seg, i) => {
+              const isTinyChange =
+                seg.type !== "normal" && seg.html.length <= 3;
+              return (
+                <span
+                  key={i}
+                  className={cn(
+                    seg.type === "insert" &&
+                      "bg-[var(--code-added)]/20 text-green-400",
+                    seg.type === "delete" &&
+                      "bg-[var(--code-removed)]/20 text-orange-400 line-through decoration-orange-500/50",
+                    isTinyChange &&
+                      seg.type === "insert" &&
+                      "bg-[var(--code-added)]/40 font-semibold",
+                    isTinyChange &&
+                      seg.type === "delete" &&
+                      "bg-[var(--code-removed)]/40 font-semibold"
+                  )}
+                  dangerouslySetInnerHTML={{ __html: seg.html }}
+                />
+              );
+            })}
+          </Tag>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout split-diff-line-row font-mono text-[0.8rem]"
+      data-line-num={lineNum}
+    >
+      {/* Left side (old/delete) */}
+      {renderSide(left, "old", left?.oldLineNumber)}
+      {/* Divider */}
+      <div className="w-px bg-border/50 shrink-0" />
+      {/* Right side (new/insert) */}
+      {renderSide(right, "new", right?.newLineNumber)}
     </div>
   );
 });

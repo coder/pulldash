@@ -253,6 +253,10 @@ class RequestCache {
     promise.finally(() => this.pending.delete(key));
   }
 
+  clearPending(key: string): void {
+    this.pending.delete(key);
+  }
+
   invalidate(pattern?: string): void {
     if (!pattern) {
       // Clear all memory cache
@@ -582,7 +586,11 @@ function createGitHubStore() {
 
     try {
       const user = await promise;
-      setState({ currentUser: extractUserData(user) });
+      setState({
+        currentUser: extractUserData(
+          user as components["schemas"]["private-user"]
+        ),
+      });
     } catch {
       // Ignore - we may have stale data to show
     }
@@ -1536,22 +1544,38 @@ function createGitHubStore() {
       >(cacheKey);
     if (pending) return pending;
 
-    const promise = octokit
-      .paginate("GET /repos/{owner}/{repo}/labels", {
-        owner,
-        repo,
-        per_page: 100,
-      })
-      .then((labels) => {
-        const result = labels.map((l) => ({
-          name: l.name,
-          color: l.color,
-          description: l.description ?? null,
-        }));
-        cache.set(cacheKey, result);
-        cache.clearPending(cacheKey);
-        return result;
-      });
+    const promise = (async () => {
+      // Manually paginate to get all labels
+      const allLabels: Array<{
+        name: string;
+        color: string;
+        description: string | null;
+      }> = [];
+      let page = 1;
+      while (true) {
+        const { data: labels } = await octokit.request(
+          "GET /repos/{owner}/{repo}/labels",
+          {
+            owner,
+            repo,
+            per_page: 100,
+            page,
+          }
+        );
+        for (const l of labels) {
+          allLabels.push({
+            name: l.name,
+            color: l.color,
+            description: l.description ?? null,
+          });
+        }
+        if (labels.length < 100) break;
+        page++;
+      }
+      cache.set(cacheKey, allLabels);
+      cache.clearPending(cacheKey);
+      return allLabels;
+    })();
 
     cache.setPending(cacheKey, promise);
     return promise;
