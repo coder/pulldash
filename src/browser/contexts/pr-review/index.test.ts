@@ -635,3 +635,45 @@ test("navigateFromHash returns false for invalid file", () => {
 
   expect(result).toBe(false);
 });
+
+test("navigateFromHash handles GitHub-style pullrequestreview hash", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts"); // Start on a file view
+
+  const result = store.navigateFromHash("#pullrequestreview-12345");
+
+  expect(result).toBe(true);
+  const state = store.getSnapshot();
+  expect(state.showOverview).toBe(true);
+  expect(state.overviewScrollTarget).toBe("pullrequestreview-12345");
+});
+
+test("navigateFromHash handles GitHub-style issuecomment hash", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+
+  const result = store.navigateFromHash("#issuecomment-98765");
+
+  expect(result).toBe(true);
+  const state = store.getSnapshot();
+  expect(state.showOverview).toBe(true);
+  expect(state.overviewScrollTarget).toBe("issuecomment-98765");
+});
+
+test("getHashFromState returns overview scroll target when on overview", () => {
+  const store = createStore();
+  store.selectOverview("pullrequestreview-12345");
+
+  const hash = store.getHashFromState();
+
+  expect(hash).toBe("pullrequestreview-12345");
+});
+
+test("clearOverviewScrollTarget clears the target", () => {
+  const store = createStore();
+  store.selectOverview("pullrequestreview-12345");
+
+  store.clearOverviewScrollTarget();
+
+  expect(store.getSnapshot().overviewScrollTarget).toBeNull();
+});

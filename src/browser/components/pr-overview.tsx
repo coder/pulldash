@@ -179,6 +179,31 @@ export const PROverview = memo(function PROverview() {
     document.title = `${pr.title} · Pull Request #${pr.number} · Pulldash`;
   }, [pr.title, pr.number]);
 
+  // Scroll to target when overviewScrollTarget changes
+  const overviewScrollTarget = usePRReviewSelector(
+    (s) => s.overviewScrollTarget
+  );
+  useEffect(() => {
+    if (!overviewScrollTarget) return;
+
+    // Small delay to ensure the element is rendered
+    const timer = setTimeout(() => {
+      const element = document.getElementById(overviewScrollTarget);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+        // Flash highlight effect
+        element.classList.add("ring-2", "ring-blue-500/50");
+        setTimeout(() => {
+          element.classList.remove("ring-2", "ring-blue-500/50");
+        }, 2000);
+      }
+      // Clear the scroll target after scrolling
+      store.clearOverviewScrollTarget();
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [overviewScrollTarget, store]);
+
   // Manual refresh handler
   const handleRefreshChecks = useCallback(async () => {
     setRefreshingChecks(true);
@@ -832,6 +857,7 @@ export const PROverview = memo(function PROverview() {
                       return (
                         <CommentBox
                           key={`comment-${comment.id}`}
+                          id={`issuecomment-${comment.id}`}
                           user={comment.user}
                           createdAt={comment.created_at}
                           body={comment.body ?? null}
@@ -1789,6 +1815,7 @@ function LabelsSection({
 // ============================================================================
 
 function CommentBox({
+  id,
   user,
   createdAt,
   body,
@@ -1798,6 +1825,7 @@ function CommentBox({
   onRemoveReaction,
   currentUser,
 }: {
+  id?: string;
   user: { login: string; avatar_url: string } | null;
   createdAt: string;
   body: string | null;
@@ -1810,7 +1838,7 @@ function CommentBox({
   if (!user) return null;
 
   return (
-    <div className="border border-border rounded-md overflow-hidden">
+    <div id={id} className="border border-border rounded-md overflow-hidden">
       {/* Header */}
       <div
         className={cn(
@@ -1890,7 +1918,10 @@ function ReviewBox({ review }: { review: Review }) {
     }[review.state] || "bg-card/50";
 
   return (
-    <div className={cn("border rounded-md overflow-hidden", stateBg)}>
+    <div
+      id={`pullrequestreview-${review.id}`}
+      className={cn("border rounded-md overflow-hidden", stateBg)}
+    >
       <div className="flex items-center gap-2 px-4 py-2 text-sm border-b border-border">
         <UserHoverCard login={review.user.login}>
           <img

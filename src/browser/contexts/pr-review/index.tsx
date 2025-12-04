@@ -194,6 +194,8 @@ interface PRReviewState {
   selectedFile: string | null;
   selectedFiles: Set<string>;
   showOverview: boolean;
+  // Overview scroll target (GitHub-style hash: pullrequestreview-{id}, issuecomment-{id}, etc.)
+  overviewScrollTarget: string | null;
 
   // Viewed files
   viewedFiles: Set<string>;
@@ -357,6 +359,7 @@ export class PRReviewStore {
       selectedFile: null,
       selectedFiles: new Set(),
       showOverview: true,
+      overviewScrollTarget: null,
       viewedFiles,
       hideViewed: true,
       diffViewMode,
@@ -421,10 +424,16 @@ export class PRReviewStore {
   // File Navigation Actions
   // ---------------------------------------------------------------------------
 
-  selectOverview = () => {
-    if (this.state.showOverview) return;
+  selectOverview = (scrollTarget?: string) => {
+    // If already on overview and just updating scroll target
+    if (this.state.showOverview && scrollTarget) {
+      this.set({ overviewScrollTarget: scrollTarget });
+      return;
+    }
+    if (this.state.showOverview && !scrollTarget) return;
     this.set({
       showOverview: true,
+      overviewScrollTarget: scrollTarget ?? null,
       selectedFile: null,
       selectedFiles: new Set(),
       focusedLine: null,
@@ -440,6 +449,12 @@ export class PRReviewStore {
       focusedPendingCommentId: null,
       editingPendingCommentId: null,
     });
+  };
+
+  clearOverviewScrollTarget = () => {
+    if (this.state.overviewScrollTarget) {
+      this.set({ overviewScrollTarget: null });
+    }
   };
 
   selectFile = (filename: string) => {
@@ -1474,6 +1489,10 @@ export class PRReviewStore {
     this.recomputeCommentRangeLookup();
   };
 
+  setReviews = (reviews: Review[]) => {
+    this.set({ reviews });
+  };
+
   setPr = (pr: PullRequest) => {
     this.set({ pr });
   };
@@ -1680,6 +1699,7 @@ export class PRReviewStore {
   /**
    * Get the current navigation state as a URL hash string.
    * Format: #file=<path>&L<line> or #file=<path>&L<start>-<end> or #file=<path>&C<commentId>
+   * Also supports GitHub-style: #pullrequestreview-{id} or #issuecomment-{id}
    */
   getHashFromState = (): string => {
     const {
@@ -1688,7 +1708,14 @@ export class PRReviewStore {
       selectionAnchor,
       focusedCommentId,
       focusedPendingCommentId,
+      showOverview,
+      overviewScrollTarget,
     } = this.state;
+
+    // If we're on overview with a scroll target, use GitHub-style hash
+    if (showOverview && overviewScrollTarget) {
+      return overviewScrollTarget;
+    }
 
     if (!selectedFile) return "";
 
@@ -1716,6 +1743,7 @@ export class PRReviewStore {
   /**
    * Navigate to a state from a URL hash string.
    * Returns true if navigation was performed.
+   * Supports GitHub-style hashes: #pullrequestreview-{id}, #issuecomment-{id}, #discussion_r{id}
    */
   navigateFromHash = (hash: string): boolean => {
     if (!hash) return false;
@@ -1723,6 +1751,17 @@ export class PRReviewStore {
     // Remove leading # if present
     const hashStr = hash.startsWith("#") ? hash.slice(1) : hash;
     if (!hashStr) return false;
+
+    // Check for GitHub-style overview hashes first
+    const reviewMatch = hashStr.match(/^pullrequestreview-(\d+)$/);
+    const commentMatch = hashStr.match(/^issuecomment-(\d+)$/);
+    const discussionMatch = hashStr.match(/^discussion_r(\d+)$/);
+
+    if (reviewMatch || commentMatch || discussionMatch) {
+      // Navigate to overview with scroll target
+      this.selectOverview(hashStr);
+      return true;
+    }
 
     const params = new URLSearchParams(hashStr);
     const file = params.get("file");
