@@ -197,6 +197,7 @@ export function PRReviewContent({
   const [files, setFiles] = useState<PullRequestFile[]>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [viewerPermission, setViewerPermission] = useState<string | null>(null);
+  const [viewerCanMergeAsAdmin, setViewerCanMergeAsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -219,6 +220,7 @@ export function PRReviewContent({
             github.getReviewThreads(owner, repo, number).catch(() => ({
               threads: [],
               viewerPermission: null,
+              viewerCanMergeAsAdmin: false,
             })),
           ]);
 
@@ -226,6 +228,7 @@ export function PRReviewContent({
         setFiles(filesData);
         setComments(commentsData as ReviewComment[]);
         setViewerPermission(reviewThreadsResult.viewerPermission);
+        setViewerCanMergeAsAdmin(reviewThreadsResult.viewerCanMergeAsAdmin);
 
         // Track PR viewed
         track("pr_viewed", {

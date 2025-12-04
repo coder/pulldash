@@ -140,6 +140,8 @@ export const PROverview = memo(function PROverview() {
 
   // Viewer permissions from GraphQL (more reliable than REST)
   const [viewerPermission, setViewerPermission] = useState<string | null>(null);
+  // Whether the viewer can bypass branch protections (from GraphQL pullRequest.viewerCanMergeAsAdmin)
+  const [viewerCanMergeAsAdmin, setViewerCanMergeAsAdmin] = useState(false);
 
   // Repo permissions - use GraphQL viewerPermission as primary source
   const isArchived = pr.base?.repo?.archived ?? false;
@@ -272,6 +274,7 @@ export const PROverview = memo(function PROverview() {
           github.getReviewThreads(owner, repo, pr.number).catch(() => ({
             threads: [] as ReviewThread[],
             viewerPermission: null,
+            viewerCanMergeAsAdmin: false,
           })),
         ]);
 
@@ -294,6 +297,7 @@ export const PROverview = memo(function PROverview() {
         setTimeline(timelineData);
         setReviewThreads(reviewThreadsResult.threads);
         setViewerPermission(reviewThreadsResult.viewerPermission);
+        setViewerCanMergeAsAdmin(reviewThreadsResult.viewerCanMergeAsAdmin);
 
         // Check if branch was already deleted (and not restored) from timeline
         // Branch is deleted if there are more delete events than restore events
@@ -1107,7 +1111,7 @@ export const PROverview = memo(function PROverview() {
                       }
                       approvingWorkflows={approvingWorkflows}
                       onApproveWorkflows={handleApproveWorkflows}
-                      canBypassBranchProtections={viewerPermission === "ADMIN"}
+                      canBypassBranchProtections={viewerCanMergeAsAdmin}
                     />
                     {/* Still in progress - only show if NOT a draft and user can merge */}
                     {canMergeRepo && !pr.draft && (
@@ -3046,8 +3050,10 @@ function MergeSection({
             <p className="text-sm text-destructive">{mergeError}</p>
           )}
 
-          {/* Bypass rules checkbox - only show for users who can bypass branch protections */}
-          {canBypassBranchProtections && (
+          {/* Bypass rules checkbox - only show when:
+              1. User can bypass branch protections (viewerCanMergeAsAdmin)
+              2. AND there are actually unmet requirements (something to bypass) */}
+          {canBypassBranchProtections && overallStatus !== "success" && (
             <label className="flex items-start gap-2 cursor-pointer group">
               <Checkbox
                 checked={bypassRules}

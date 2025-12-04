@@ -2267,13 +2267,18 @@ function createGitHubStore() {
     owner: string,
     repo: string,
     number: number
-  ): Promise<{ threads: ReviewThread[]; viewerPermission: string | null }> {
+  ): Promise<{
+    threads: ReviewThread[];
+    viewerPermission: string | null;
+    viewerCanMergeAsAdmin: boolean;
+  }> {
     if (!batcher) throw new Error("Not initialized");
 
     const data = await batcher.query<{
       repository: {
         viewerPermission: string | null;
         pullRequest: {
+          viewerCanMergeAsAdmin: boolean;
           reviewThreads: { nodes: ReviewThread[] };
         };
       };
@@ -2283,6 +2288,7 @@ function createGitHubStore() {
         repository(owner: $owner, name: $repo) {
           viewerPermission
           pullRequest(number: $number) {
+            viewerCanMergeAsAdmin
             reviewThreads(first: 100) {
               nodes {
                 id
@@ -2316,6 +2322,7 @@ function createGitHubStore() {
     return {
       threads: data.repository.pullRequest.reviewThreads.nodes,
       viewerPermission: data.repository.viewerPermission,
+      viewerCanMergeAsAdmin: data.repository.pullRequest.viewerCanMergeAsAdmin,
     };
   }
 
