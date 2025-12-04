@@ -33,3 +33,7 @@ Bad:
 ## Linting
 
 Always run `bun typecheck` and `bun fmt` after changes to ensure that files are formatted and have no type errors.
+
+## Debugging
+
+If the user provides a PR identifier, you should use the `gh` CLI to inspect the API so we can fix our implementation if it appears incorrect.

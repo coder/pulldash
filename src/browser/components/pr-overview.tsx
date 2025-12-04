@@ -111,6 +111,8 @@ export const PROverview = memo(function PROverview() {
   const [workflowRunsAwaitingApproval, setWorkflowRunsAwaitingApproval] =
     useState<Array<{ id: number; name: string; html_url: string }>>([]);
   const [approvingWorkflows, setApprovingWorkflows] = useState(false);
+  // Track recently approved workflow IDs to filter out stale API responses
+  const recentlyApprovedWorkflowIds = useRef<Set<number>>(new Set());
   const [conversation, setConversation] = useState<IssueComment[]>([]);
   const [commits, setCommits] = useState<PRCommit[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -204,16 +206,35 @@ export const PROverview = memo(function PROverview() {
       setChecksLastUpdated(new Date());
 
       // Find workflow runs awaiting approval (fork PRs)
+      // Filter out recently approved workflows to prevent stale API data from reverting optimistic updates
       const awaitingApproval = workflowRunsData.workflow_runs
         .filter(
-          (run: { conclusion: string | null }) =>
-            run.conclusion === "action_required"
+          (run: { id: number; conclusion: string | null }) =>
+            run.conclusion === "action_required" &&
+            !recentlyApprovedWorkflowIds.current.has(run.id)
         )
         .map((run: { id: number; name?: string | null; html_url: string }) => ({
           id: run.id,
           name: run.name || "Workflow",
           html_url: run.html_url,
         }));
+
+      // Clear recently approved IDs that are no longer showing as action_required
+      // (meaning GitHub's API has caught up)
+      const currentActionRequiredIds = new Set(
+        workflowRunsData.workflow_runs
+          .filter(
+            (run: { conclusion: string | null }) =>
+              run.conclusion === "action_required"
+          )
+          .map((run: { id: number }) => run.id)
+      );
+      for (const id of recentlyApprovedWorkflowIds.current) {
+        if (!currentActionRequiredIds.has(id)) {
+          recentlyApprovedWorkflowIds.current.delete(id);
+        }
+      }
+
       setWorkflowRunsAwaitingApproval(awaitingApproval);
     } catch {
       // Ignore errors on refresh
@@ -345,29 +366,51 @@ export const PROverview = memo(function PROverview() {
         merge_method: mergeMethod,
       });
 
-      window.location.reload();
+      // Invalidate caches for data that changes after merge
+      // PR cache is already invalidated by mergePR, but also clear timeline
+      github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
+
+      // Refetch the PR to get merged state and update the store
+      const [updatedPR, updatedTimeline] = await Promise.all([
+        github.getPR(owner, repo, pr.number),
+        github
+          .getPRTimeline(owner, repo, pr.number)
+          .catch(() => [] as TimelineEvent[]),
+      ]);
+
+      store.setPr(updatedPR);
+      setTimeline(updatedTimeline);
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : "Failed to merge");
     } finally {
       setMerging(false);
     }
-  }, [github, owner, repo, pr.number, mergeMethod, track]);
+  }, [github, owner, repo, pr.number, mergeMethod, track, store]);
 
   const handleApproveWorkflows = useCallback(async () => {
     setApprovingWorkflows(true);
     try {
+      // Track which workflows we're approving to filter out stale API responses
+      const approvedIds = workflowRunsAwaitingApproval.map((run) => run.id);
+      for (const id of approvedIds) {
+        recentlyApprovedWorkflowIds.current.add(id);
+      }
+
+      // Optimistically clear the UI immediately
+      setWorkflowRunsAwaitingApproval([]);
+
       // Approve all workflow runs awaiting approval
       await Promise.all(
-        workflowRunsAwaitingApproval.map((run) =>
-          github.approveWorkflowRun(owner, repo, run.id)
-        )
+        approvedIds.map((id) => github.approveWorkflowRun(owner, repo, id))
       );
-      // Clear the list after approving
-      setWorkflowRunsAwaitingApproval([]);
-      // Refresh checks to get updated status
+
+      // Refresh checks to get updated status (recently approved IDs will be filtered out)
       await fetchChecks();
     } catch (e) {
       console.error("Failed to approve workflows:", e);
+      // On error, clear the recently approved tracking and re-fetch to restore actual state
+      recentlyApprovedWorkflowIds.current.clear();
+      await fetchChecks();
     } finally {
       setApprovingWorkflows(false);
     }
@@ -923,11 +966,32 @@ export const PROverview = memo(function PROverview() {
                   // Build unified timeline
                   type TimelineEntry =
                     | { type: "comment"; data: IssueComment; date: Date }
-                    | { type: "review"; data: Review; date: Date }
+                    | {
+                        type: "review";
+                        data: Review;
+                        threads: ReviewThread[];
+                        date: Date;
+                      }
                     | { type: "event"; data: TimelineEvent; date: Date }
                     | { type: "thread"; data: ReviewThread; date: Date };
 
                   const entries: TimelineEntry[] = [];
+
+                  // Build a map of review database ID -> threads that belong to it
+                  const threadsByReviewId = new Map<number, ReviewThread[]>();
+                  const orphanedThreads: ReviewThread[] = [];
+
+                  reviewThreads.forEach((thread) => {
+                    const reviewId = thread.pullRequestReview?.databaseId;
+                    if (reviewId) {
+                      const existing = threadsByReviewId.get(reviewId) || [];
+                      existing.push(thread);
+                      threadsByReviewId.set(reviewId, existing);
+                    } else {
+                      // Thread without associated review (shouldn't happen often)
+                      orphanedThreads.push(thread);
+                    }
+                  });
 
                   // Add comments
                   conversation.forEach((comment) => {
@@ -938,26 +1002,31 @@ export const PROverview = memo(function PROverview() {
                     });
                   });
 
-                  // Add ALL reviews to timeline - show APPROVED/CHANGES_REQUESTED always, COMMENTED only if they have a body
-                  // Note: we use `reviews` not `latestReviews` because latestReviews only keeps one review per user
+                  // Add ALL reviews to timeline with their associated threads
+                  // Show APPROVED/CHANGES_REQUESTED always, COMMENTED only if they have a body OR associated threads
                   reviews
-                    .filter(
-                      (r) =>
-                        r.submitted_at &&
-                        (r.body ||
-                          r.state === "APPROVED" ||
-                          r.state === "CHANGES_REQUESTED")
-                    )
+                    .filter((r) => {
+                      if (!r.submitted_at) return false;
+                      const hasThreads =
+                        (threadsByReviewId.get(r.id)?.length ?? 0) > 0;
+                      return (
+                        r.body ||
+                        r.state === "APPROVED" ||
+                        r.state === "CHANGES_REQUESTED" ||
+                        hasThreads
+                      );
+                    })
                     .forEach((review) => {
                       entries.push({
                         type: "review",
                         data: review,
+                        threads: threadsByReviewId.get(review.id) || [],
                         date: new Date(review.submitted_at!),
                       });
                     });
 
-                  // Add review threads (inline code comments)
-                  reviewThreads.forEach((thread) => {
+                  // Add orphaned threads (threads without a matching review in our list)
+                  orphanedThreads.forEach((thread) => {
                     const firstComment = thread.comments.nodes[0];
                     if (firstComment) {
                       entries.push({
@@ -1041,10 +1110,23 @@ export const PROverview = memo(function PROverview() {
                     }
                     if (entry.type === "review") {
                       return (
-                        <ReviewBox
-                          key={`review-${entry.data.id}`}
-                          review={entry.data}
-                        />
+                        <div key={`review-${entry.data.id}`}>
+                          <ReviewBox review={entry.data} />
+                          {/* Render associated threads under the review */}
+                          {entry.threads.map((thread) => (
+                            <ReviewThreadBox
+                              key={`thread-${thread.id}`}
+                              thread={thread}
+                              owner={owner}
+                              repo={repo}
+                              onReply={handleReplyToThread}
+                              onResolve={handleResolveThread}
+                              onUnresolve={handleUnresolveThread}
+                              canWrite={canWrite}
+                              currentUser={currentUser}
+                            />
+                          ))}
+                        </div>
                       );
                     }
                     if (entry.type === "event") {
@@ -1057,6 +1139,7 @@ export const PROverview = memo(function PROverview() {
                       );
                     }
                     if (entry.type === "thread") {
+                      // Orphaned thread (no associated review)
                       return (
                         <ReviewThreadBox
                           key={`thread-${entry.data.id}`}
@@ -2782,7 +2865,9 @@ function MergeSection({
                         alt={review.user?.login}
                         className="w-5 h-5 rounded-full"
                       />
-                      <span className="text-sm">{review.user?.login}</span>
+                      <span className="text-sm">
+                        {review.user?.login ?? ""}
+                      </span>
                       <ReviewStateIcon state={review.state} showTooltip />
                     </div>
                   ))}

@@ -108,6 +108,11 @@ export interface ReviewThread {
   id: string;
   isResolved: boolean;
   resolvedBy: { login: string; avatarUrl: string } | null;
+  // The review this thread belongs to (from first comment)
+  pullRequestReview: {
+    databaseId: number;
+    author: { login: string; avatarUrl: string } | null;
+  } | null;
   comments: {
     nodes: Array<{
       id: string;
@@ -2298,12 +2303,39 @@ function createGitHubStore() {
   }> {
     if (!batcher) throw new Error("Not initialized");
 
+    // Raw GraphQL response type (comments include pullRequestReview)
+    interface RawReviewThread {
+      id: string;
+      isResolved: boolean;
+      resolvedBy: { login: string; avatarUrl: string } | null;
+      comments: {
+        nodes: Array<{
+          id: string;
+          databaseId: number;
+          body: string;
+          path: string;
+          line: number | null;
+          originalLine: number | null;
+          startLine: number | null;
+          diffHunk: string | null;
+          author: { login: string; avatarUrl: string } | null;
+          createdAt: string;
+          updatedAt: string;
+          replyTo: { databaseId: number } | null;
+          pullRequestReview: {
+            databaseId: number;
+            author: { login: string; avatarUrl: string } | null;
+          } | null;
+        }>;
+      };
+    }
+
     const data = await batcher.query<{
       repository: {
         viewerPermission: string | null;
         pullRequest: {
           viewerCanMergeAsAdmin: boolean;
-          reviewThreads: { nodes: ReviewThread[] };
+          reviewThreads: { nodes: RawReviewThread[] };
         };
       };
     }>(
@@ -2332,6 +2364,10 @@ function createGitHubStore() {
                     createdAt
                     updatedAt
                     replyTo { databaseId }
+                    pullRequestReview {
+                      databaseId
+                      author { login avatarUrl }
+                    }
                   }
                 }
               }
@@ -2343,8 +2379,19 @@ function createGitHubStore() {
       { owner, repo, number }
     );
 
+    // Extract pullRequestReview from first comment into thread object
+    const threads = data.repository.pullRequest.reviewThreads.nodes.map(
+      (thread) => {
+        const firstComment = thread.comments.nodes[0];
+        return {
+          ...thread,
+          pullRequestReview: firstComment?.pullRequestReview ?? null,
+        };
+      }
+    );
+
     return {
-      threads: data.repository.pullRequest.reviewThreads.nodes,
+      threads,
       viewerPermission: data.repository.viewerPermission,
       viewerCanMergeAsAdmin: data.repository.pullRequest.viewerCanMergeAsAdmin,
     };
