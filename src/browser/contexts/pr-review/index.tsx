@@ -17,6 +17,16 @@ import {
   MentionSuggestionsProvider,
   type MentionUser,
 } from "@/browser/ui/markdown";
+import {
+  type GitHubStore,
+  type Review,
+  type IssueComment,
+  type CheckRun,
+  type CombinedStatus,
+  type PRCommit,
+  type TimelineEvent,
+  type ReviewThread,
+} from "@/browser/contexts/github";
 
 // ============================================================================
 // File Sorting (match file tree order)
@@ -119,8 +129,24 @@ export interface NavigableItem {
 
 export type DiffViewMode = "unified" | "split";
 
+// Checks data structure
+export interface ChecksData {
+  checkRuns: CheckRun[];
+  status: CombinedStatus;
+}
+
+// Workflow run awaiting approval
+export interface WorkflowRunAwaitingApproval {
+  id: number;
+  name: string;
+  html_url: string;
+}
+
+// Merge method type
+export type MergeMethod = "merge" | "squash" | "rebase";
+
 interface PRReviewState {
-  // Core data (immutable after init)
+  // Core data
   pr: PullRequest;
   files: PullRequestFile[];
   owner: string;
@@ -130,6 +156,36 @@ interface PRReviewState {
   // ADMIN, MAINTAIN, WRITE can approve/request_changes
   // TRIAGE, READ can only comment
   viewerPermission: string | null;
+  viewerCanMergeAsAdmin: boolean;
+
+  // PR data (fetched after initial load)
+  reviews: Review[];
+  reviewThreads: ReviewThread[];
+  timeline: TimelineEvent[];
+  conversation: IssueComment[];
+  commits: PRCommit[];
+  checks: ChecksData | null;
+  checksLastUpdated: Date | null;
+  workflowRunsAwaitingApproval: WorkflowRunAwaitingApproval[];
+  branchDeleted: boolean;
+
+  // Loading states
+  loading: boolean;
+  loadingChecks: boolean;
+
+  // Merge state
+  merging: boolean;
+  mergeMethod: MergeMethod;
+  mergeError: string | null;
+
+  // PR action states
+  closingPR: boolean;
+  reopeningPR: boolean;
+  deletingBranch: boolean;
+  restoringBranch: boolean;
+  convertingToDraft: boolean;
+  markingReady: boolean;
+  approvingWorkflows: boolean;
 
   // Diff view mode (unified or split) - global user preference
   diffViewMode: DiffViewMode;
@@ -213,44 +269,22 @@ export class PRReviewStore {
   private state: PRReviewState;
   private listeners = new Set<Listener>();
   private storageKey: string;
+  private github: GitHubStore;
+  // Track recently approved workflow IDs to filter out stale API responses
+  private recentlyApprovedWorkflowIds = new Set<number>();
 
   constructor(
-    initialState: Omit<
-      PRReviewState,
-      | "viewedFiles"
-      | "hideViewed"
-      | "loadedDiffs"
-      | "loadingFiles"
-      | "expandedSkipBlocks"
-      | "expandingSkipBlocks"
-      | "navigableItems"
-      | "commentRangeLookup"
-      | "selectedFile"
-      | "showOverview"
-      | "selectedFiles"
-      | "focusedLine"
-      | "focusedLineSide"
-      | "selectionAnchor"
-      | "selectionAnchorSide"
-      | "focusedSkipBlockIndex"
-      | "commentingOnLine"
-      | "gotoLineMode"
-      | "gotoLineInput"
-      | "gotoLineSide"
-      | "focusedCommentId"
-      | "editingCommentId"
-      | "replyingToCommentId"
-      | "focusedPendingCommentId"
-      | "editingPendingCommentId"
-      | "pendingReviewId"
-      | "pendingComments"
-      | "reviewBody"
-      | "showReviewPanel"
-      | "submittingReview"
-      | "currentUser"
-      | "diffViewMode"
-    >
+    github: GitHubStore,
+    initialState: {
+      pr: PullRequest;
+      files: PullRequestFile[];
+      comments: ReviewComment[];
+      owner: string;
+      repo: string;
+      viewerPermission: string | null;
+    }
   ) {
+    this.github = github;
     this.storageKey = `pr-${initialState.owner}-${initialState.repo}-${initialState.pr.number}`;
 
     // Load viewed files from localStorage
@@ -288,6 +322,38 @@ export class PRReviewStore {
     this.state = {
       ...initialState,
       files: sortedFiles,
+      viewerCanMergeAsAdmin: false,
+
+      // PR data (loaded separately)
+      reviews: [],
+      reviewThreads: [],
+      timeline: [],
+      conversation: [],
+      commits: [],
+      checks: null,
+      checksLastUpdated: null,
+      workflowRunsAwaitingApproval: [],
+      branchDeleted: false,
+
+      // Loading states
+      loading: true,
+      loadingChecks: false,
+
+      // Merge state
+      merging: false,
+      mergeMethod: "squash",
+      mergeError: null,
+
+      // PR action states
+      closingPR: false,
+      reopeningPR: false,
+      deletingBranch: false,
+      restoringBranch: false,
+      convertingToDraft: false,
+      markingReady: false,
+      approvingWorkflows: false,
+
+      // UI state
       selectedFile: null,
       selectedFiles: new Set(),
       showOverview: true,
@@ -1726,6 +1792,462 @@ export class PRReviewStore {
 
     return true;
   };
+
+  // ---------------------------------------------------------------------------
+  // Data Loading
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Load all PR data (reviews, timeline, checks, etc.)
+   * Called after the store is created to populate data.
+   */
+  loadPRData = async (): Promise<void> => {
+    const { owner, repo, pr } = this.state;
+
+    try {
+      const [
+        reviewsData,
+        checksData,
+        workflowRunsData,
+        conversationData,
+        commitsData,
+        timelineData,
+        reviewThreadsResult,
+      ] = await Promise.all([
+        this.github
+          .getPRReviews(owner, repo, pr.number)
+          .catch(() => [] as Review[]),
+        this.github.getPRChecks(owner, repo, pr.head.sha).catch(() => null),
+        this.github.getWorkflowRuns(owner, repo, pr.head.sha).catch(() => ({
+          workflow_runs: [] as Array<{
+            id: number;
+            name: string;
+            conclusion: string | null;
+            html_url: string;
+          }>,
+        })),
+        this.github
+          .getPRConversation(owner, repo, pr.number)
+          .catch(() => [] as IssueComment[]),
+        this.github
+          .getPRCommits(owner, repo, pr.number)
+          .catch(() => [] as PRCommit[]),
+        this.github
+          .getPRTimeline(owner, repo, pr.number)
+          .catch(() => [] as TimelineEvent[]),
+        this.github.getReviewThreads(owner, repo, pr.number).catch(() => ({
+          threads: [] as ReviewThread[],
+          viewerPermission: null,
+          viewerCanMergeAsAdmin: false,
+        })),
+      ]);
+
+      // Find workflow runs awaiting approval (fork PRs)
+      const awaitingApproval = workflowRunsData.workflow_runs
+        .filter(
+          (run) =>
+            run.conclusion === "action_required" &&
+            !this.recentlyApprovedWorkflowIds.has(run.id)
+        )
+        .map((run) => ({
+          id: run.id,
+          name: run.name || "Workflow",
+          html_url: run.html_url,
+        }));
+
+      // Check if branch was already deleted from timeline
+      const deleteCount = timelineData.filter(
+        (event) => (event as { event?: string }).event === "head_ref_deleted"
+      ).length;
+      const restoreCount = timelineData.filter(
+        (event) => (event as { event?: string }).event === "head_ref_restored"
+      ).length;
+
+      this.set({
+        reviews: reviewsData,
+        checks: checksData,
+        checksLastUpdated: new Date(),
+        workflowRunsAwaitingApproval: awaitingApproval,
+        conversation: conversationData,
+        commits: commitsData,
+        timeline: timelineData,
+        reviewThreads: reviewThreadsResult.threads,
+        viewerPermission:
+          reviewThreadsResult.viewerPermission ?? this.state.viewerPermission,
+        viewerCanMergeAsAdmin: reviewThreadsResult.viewerCanMergeAsAdmin,
+        branchDeleted: deleteCount > restoreCount,
+        loading: false,
+      });
+    } catch (error) {
+      console.error("Failed to load PR data:", error);
+      this.set({ loading: false });
+    }
+  };
+
+  /**
+   * Refresh just the checks data
+   */
+  refreshChecks = async (): Promise<void> => {
+    const { owner, repo, pr } = this.state;
+
+    this.set({ loadingChecks: true });
+
+    try {
+      const [checksData, workflowRunsData] = await Promise.all([
+        this.github.getPRChecks(owner, repo, pr.head.sha).catch(() => null),
+        this.github.getWorkflowRuns(owner, repo, pr.head.sha).catch(() => ({
+          workflow_runs: [] as Array<{
+            id: number;
+            name: string;
+            conclusion: string | null;
+            html_url: string;
+          }>,
+        })),
+      ]);
+
+      // Find workflow runs awaiting approval, filtering recently approved
+      const awaitingApproval = workflowRunsData.workflow_runs
+        .filter(
+          (run) =>
+            run.conclusion === "action_required" &&
+            !this.recentlyApprovedWorkflowIds.has(run.id)
+        )
+        .map((run) => ({
+          id: run.id,
+          name: run.name || "Workflow",
+          html_url: run.html_url,
+        }));
+
+      this.set({
+        checks: checksData,
+        checksLastUpdated: new Date(),
+        workflowRunsAwaitingApproval: awaitingApproval,
+        loadingChecks: false,
+      });
+    } catch (error) {
+      console.error("Failed to refresh checks:", error);
+      this.set({ loadingChecks: false });
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // PR Mutations
+  // ---------------------------------------------------------------------------
+
+  setMergeMethod = (method: MergeMethod) => {
+    this.set({ mergeMethod: method });
+  };
+
+  /**
+   * Merge the PR. Handles the full flow:
+   * - API call
+   * - Cache invalidation
+   * - State update
+   */
+  mergePR = async (): Promise<boolean> => {
+    const { owner, repo, pr, mergeMethod } = this.state;
+
+    this.set({ merging: true, mergeError: null });
+
+    try {
+      await this.github.mergePR(owner, repo, pr.number, {
+        merge_method: mergeMethod,
+      });
+
+      // Invalidate timeline cache and refetch
+      this.github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
+
+      // Refetch PR and timeline to get updated state
+      const [updatedPR, updatedTimeline] = await Promise.all([
+        this.github.getPR(owner, repo, pr.number),
+        this.github
+          .getPRTimeline(owner, repo, pr.number)
+          .catch(() => [] as TimelineEvent[]),
+      ]);
+
+      this.set({
+        pr: updatedPR,
+        timeline: updatedTimeline,
+        merging: false,
+      });
+
+      return true;
+    } catch (e) {
+      this.set({
+        mergeError: e instanceof Error ? e.message : "Failed to merge",
+        merging: false,
+      });
+      return false;
+    }
+  };
+
+  /**
+   * Close the PR
+   */
+  closePR = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+
+    this.set({ closingPR: true });
+
+    try {
+      await this.github.closePR(owner, repo, pr.number);
+
+      // Refetch PR and timeline
+      const [updatedPR, updatedTimeline] = await Promise.all([
+        this.github.getPR(owner, repo, pr.number),
+        this.github
+          .getPRTimeline(owner, repo, pr.number)
+          .catch(() => [] as TimelineEvent[]),
+      ]);
+
+      this.set({
+        pr: updatedPR,
+        timeline: updatedTimeline,
+        closingPR: false,
+      });
+
+      return true;
+    } catch (e) {
+      console.error("Failed to close PR:", e);
+      this.set({ closingPR: false });
+      return false;
+    }
+  };
+
+  /**
+   * Reopen the PR
+   */
+  reopenPR = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+
+    this.set({ reopeningPR: true });
+
+    try {
+      await this.github.reopenPR(owner, repo, pr.number);
+
+      // Refetch PR and timeline
+      const [updatedPR, updatedTimeline] = await Promise.all([
+        this.github.getPR(owner, repo, pr.number),
+        this.github
+          .getPRTimeline(owner, repo, pr.number)
+          .catch(() => [] as TimelineEvent[]),
+      ]);
+
+      this.set({
+        pr: updatedPR,
+        timeline: updatedTimeline,
+        reopeningPR: false,
+      });
+
+      return true;
+    } catch (e) {
+      console.error("Failed to reopen PR:", e);
+      this.set({ reopeningPR: false });
+      return false;
+    }
+  };
+
+  /**
+   * Delete the head branch
+   */
+  deleteBranch = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+
+    this.set({ deletingBranch: true });
+
+    try {
+      await this.github.deleteBranch(owner, repo, pr.head.ref);
+
+      // Refetch timeline to show delete event
+      const updatedTimeline = await this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .catch(() => [] as TimelineEvent[]);
+
+      this.set({
+        branchDeleted: true,
+        timeline: updatedTimeline,
+        deletingBranch: false,
+      });
+
+      return true;
+    } catch (e) {
+      console.error("Failed to delete branch:", e);
+      this.set({ deletingBranch: false });
+      return false;
+    }
+  };
+
+  /**
+   * Restore a deleted branch
+   */
+  restoreBranch = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+
+    this.set({ restoringBranch: true });
+
+    try {
+      await this.github.restoreBranch(owner, repo, pr.head.ref, pr.head.sha);
+
+      // Refetch timeline to show restore event
+      const updatedTimeline = await this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .catch(() => [] as TimelineEvent[]);
+
+      this.set({
+        branchDeleted: false,
+        timeline: updatedTimeline,
+        restoringBranch: false,
+      });
+
+      return true;
+    } catch (e) {
+      console.error("Failed to restore branch:", e);
+      this.set({ restoringBranch: false });
+      return false;
+    }
+  };
+
+  /**
+   * Convert PR to draft
+   */
+  convertToDraft = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+
+    this.set({ convertingToDraft: true });
+
+    try {
+      await this.github.convertToDraft(owner, repo, pr.number);
+
+      // Refetch PR to get updated draft state
+      const updatedPR = await this.github.getPR(owner, repo, pr.number);
+
+      this.set({
+        pr: updatedPR,
+        convertingToDraft: false,
+      });
+
+      return true;
+    } catch (e) {
+      console.error("Failed to convert to draft:", e);
+      this.set({ convertingToDraft: false });
+      return false;
+    }
+  };
+
+  /**
+   * Mark PR ready for review
+   */
+  markReadyForReview = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+
+    this.set({ markingReady: true });
+
+    try {
+      await this.github.markReadyForReview(owner, repo, pr.number);
+
+      // Refetch PR to get updated draft state
+      const updatedPR = await this.github.getPR(owner, repo, pr.number);
+
+      this.set({
+        pr: updatedPR,
+        markingReady: false,
+      });
+
+      return true;
+    } catch (e) {
+      console.error("Failed to mark ready:", e);
+      this.set({ markingReady: false });
+      return false;
+    }
+  };
+
+  /**
+   * Approve workflow runs awaiting approval
+   */
+  approveWorkflows = async (): Promise<boolean> => {
+    const { owner, repo, workflowRunsAwaitingApproval } = this.state;
+
+    if (workflowRunsAwaitingApproval.length === 0) return true;
+
+    this.set({ approvingWorkflows: true });
+
+    try {
+      // Track which workflows we're approving
+      const approvedIds = workflowRunsAwaitingApproval.map((run) => run.id);
+      for (const id of approvedIds) {
+        this.recentlyApprovedWorkflowIds.add(id);
+      }
+
+      // Optimistically clear the UI
+      this.set({ workflowRunsAwaitingApproval: [] });
+
+      // Approve all workflow runs
+      await Promise.all(
+        approvedIds.map((id) => this.github.approveWorkflowRun(owner, repo, id))
+      );
+
+      // Refresh checks to get updated status
+      await this.refreshChecks();
+
+      this.set({ approvingWorkflows: false });
+      return true;
+    } catch (e) {
+      console.error("Failed to approve workflows:", e);
+      // On error, clear tracking and refresh to restore actual state
+      this.recentlyApprovedWorkflowIds.clear();
+      await this.refreshChecks();
+      this.set({ approvingWorkflows: false });
+      return false;
+    }
+  };
+
+  /**
+   * Update the branch (merge base into head)
+   */
+  updateBranch = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+
+    try {
+      await this.github.updateBranch(owner, repo, pr.number);
+
+      // Refetch PR to get updated state
+      const updatedPR = await this.github.getPR(owner, repo, pr.number);
+
+      this.set({ pr: updatedPR });
+
+      return true;
+    } catch (e) {
+      console.error("Failed to update branch:", e);
+      return false;
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // State Setters (for component updates)
+  // ---------------------------------------------------------------------------
+
+  setConversation = (conversation: IssueComment[]) => {
+    this.set({ conversation });
+  };
+
+  addConversationComment = (comment: IssueComment) => {
+    this.set({ conversation: [...this.state.conversation, comment] });
+  };
+
+  setReviewThreads = (threads: ReviewThread[]) => {
+    this.set({ reviewThreads: threads });
+  };
+
+  updateReviewThread = (
+    threadId: string,
+    updater: (thread: ReviewThread) => ReviewThread
+  ) => {
+    this.set({
+      reviewThreads: this.state.reviewThreads.map((t) =>
+        t.id === threadId ? updater(t) : t
+      ),
+    });
+  };
 }
 
 // ============================================================================
@@ -1739,6 +2261,7 @@ const PRReviewContext = createContext<PRReviewStore | null>(null);
 // ============================================================================
 
 interface PRReviewProviderProps {
+  github: GitHubStore;
   pr: PullRequest;
   files: PullRequestFile[];
   comments: ReviewComment[];
@@ -1749,6 +2272,7 @@ interface PRReviewProviderProps {
 }
 
 export function PRReviewProvider({
+  github,
   pr,
   files,
   comments,
@@ -1760,7 +2284,7 @@ export function PRReviewProvider({
   // Create store once and keep it stable
   const storeRef = useRef<PRReviewStore | null>(null);
   if (!storeRef.current) {
-    storeRef.current = new PRReviewStore({
+    storeRef.current = new PRReviewStore(github, {
       pr,
       files,
       comments,
@@ -1769,6 +2293,11 @@ export function PRReviewProvider({
       viewerPermission,
     });
   }
+
+  // Load PR data after store creation
+  useEffect(() => {
+    storeRef.current?.loadPRData();
+  }, []);
 
   // Sync comments from props (for when they're refreshed from server)
   useEffect(() => {

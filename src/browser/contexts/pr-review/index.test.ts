@@ -1,6 +1,7 @@
 import { test, expect, beforeEach } from "bun:test";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import { PRReviewStore, sortFilesLikeTree } from "./index";
+import type { GitHubStore } from "@/browser/contexts/github";
 
 // Mock localStorage
 const storage = new Map<string, string>();
@@ -12,6 +13,37 @@ globalThis.localStorage = {
   key: () => null,
   length: 0,
 };
+
+// Mock GitHub store (minimal implementation for tests)
+function createMockGitHubStore(): GitHubStore {
+  return {
+    getPRReviews: async () => [],
+    getPRChecks: async () => ({
+      checkRuns: [],
+      status: { state: "", statuses: [] },
+    }),
+    getWorkflowRuns: async () => ({ workflow_runs: [] }),
+    getPRConversation: async () => [],
+    getPRCommits: async () => [],
+    getPRTimeline: async () => [],
+    getReviewThreads: async () => ({
+      threads: [],
+      viewerPermission: null,
+      viewerCanMergeAsAdmin: false,
+    }),
+    invalidateCache: () => {},
+    getPR: async () => createMockPR(),
+    mergePR: async () => ({ merged: true }),
+    closePR: async () => {},
+    reopenPR: async () => {},
+    deleteBranch: async () => {},
+    restoreBranch: async () => {},
+    convertToDraft: async () => {},
+    markReadyForReview: async () => {},
+    approveWorkflowRun: async () => {},
+    updateBranch: async () => {},
+  } as unknown as GitHubStore;
+}
 
 // ============================================================================
 // Test Fixtures
@@ -68,7 +100,7 @@ function createStore(overrides?: {
   files?: PullRequestFile[];
   comments?: ReviewComment[];
 }) {
-  return new PRReviewStore({
+  return new PRReviewStore(createMockGitHubStore(), {
     pr: createMockPR(),
     files: overrides?.files ?? [
       createMockFile("src/index.ts"),

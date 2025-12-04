@@ -100,51 +100,48 @@ export const PROverview = memo(function PROverview() {
   const files = usePRReviewSelector((s) => s.files);
   const currentUser = useCurrentUser()?.login ?? null;
 
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [reviewThreads, setReviewThreads] = useState<ReviewThread[]>([]);
-  const [checks, setChecks] = useState<{
-    checkRuns: CheckRun[];
-    status: CombinedStatus;
-  } | null>(null);
-  const [checksLastUpdated, setChecksLastUpdated] = useState<Date | null>(null);
-  const [refreshingChecks, setRefreshingChecks] = useState(false);
-  const [workflowRunsAwaitingApproval, setWorkflowRunsAwaitingApproval] =
-    useState<Array<{ id: number; name: string; html_url: string }>>([]);
-  const [approvingWorkflows, setApprovingWorkflows] = useState(false);
-  // Track recently approved workflow IDs to filter out stale API responses
-  const recentlyApprovedWorkflowIds = useRef<Set<number>>(new Set());
-  const [conversation, setConversation] = useState<IssueComment[]>([]);
-  const [commits, setCommits] = useState<PRCommit[]>([]);
-  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabType>("conversation");
-
-  // Merge state
-  const [merging, setMerging] = useState(false);
-  const [mergeMethod, setMergeMethod] = useState<"merge" | "squash" | "rebase">(
-    "squash"
+  // Read PR data from store
+  const reviews = usePRReviewSelector((s) => s.reviews);
+  const reviewThreads = usePRReviewSelector((s) => s.reviewThreads);
+  const checks = usePRReviewSelector((s) => s.checks);
+  const checksLastUpdated = usePRReviewSelector((s) => s.checksLastUpdated);
+  const loadingChecks = usePRReviewSelector((s) => s.loadingChecks);
+  const workflowRunsAwaitingApproval = usePRReviewSelector(
+    (s) => s.workflowRunsAwaitingApproval
   );
-  const [showMergeOptions, setShowMergeOptions] = useState(false);
-  const [mergeError, setMergeError] = useState<string | null>(null);
+  const approvingWorkflows = usePRReviewSelector((s) => s.approvingWorkflows);
+  const timeline = usePRReviewSelector((s) => s.timeline);
+  const commits = usePRReviewSelector((s) => s.commits);
+  const conversation = usePRReviewSelector((s) => s.conversation);
+  const loading = usePRReviewSelector((s) => s.loading);
+  const branchDeleted = usePRReviewSelector((s) => s.branchDeleted);
 
-  // Comment state
+  // Merge state from store
+  const merging = usePRReviewSelector((s) => s.merging);
+  const mergeMethod = usePRReviewSelector((s) => s.mergeMethod);
+  const mergeError = usePRReviewSelector((s) => s.mergeError);
+
+  // Action loading states from store
+  const closingPR = usePRReviewSelector((s) => s.closingPR);
+  const reopeningPR = usePRReviewSelector((s) => s.reopeningPR);
+  const deletingBranch = usePRReviewSelector((s) => s.deletingBranch);
+  const restoringBranch = usePRReviewSelector((s) => s.restoringBranch);
+  const convertingToDraft = usePRReviewSelector((s) => s.convertingToDraft);
+  const markingReady = usePRReviewSelector((s) => s.markingReady);
+
+  // Viewer permissions from store
+  const viewerPermission = usePRReviewSelector((s) => s.viewerPermission);
+  const viewerCanMergeAsAdmin = usePRReviewSelector(
+    (s) => s.viewerCanMergeAsAdmin
+  );
+
+  // Local UI state (not in store)
+  const [activeTab, setActiveTab] = useState<TabType>("conversation");
+  const [showMergeOptions, setShowMergeOptions] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
-
-  // Action loading states
-  const [closingPR, setClosingPR] = useState(false);
-  const [reopeningPR, setReopeningPR] = useState(false);
-  const [deletingBranch, setDeletingBranch] = useState(false);
-  const [branchDeleted, setBranchDeleted] = useState(false);
-  const [restoringBranch, setRestoringBranch] = useState(false);
-  const [convertingToDraft, setConvertingToDraft] = useState(false);
-  const [markingReady, setMarkingReady] = useState(false);
   const [assigningSelf, setAssigningSelf] = useState(false);
-
-  // Viewer permissions from GraphQL (more reliable than REST)
-  const [viewerPermission, setViewerPermission] = useState<string | null>(null);
-  // Whether the viewer can bypass branch protections (from GraphQL pullRequest.viewerCanMergeAsAdmin)
-  const [viewerCanMergeAsAdmin, setViewerCanMergeAsAdmin] = useState(false);
+  const [refreshingChecks, setRefreshingChecks] = useState(false);
 
   // Repo permissions - use GraphQL viewerPermission as primary source
   const isArchived = pr.base?.repo?.archived ?? false;
@@ -182,239 +179,40 @@ export const PROverview = memo(function PROverview() {
     document.title = `${pr.title} · Pull Request #${pr.number} · Pulldash`;
   }, [pr.title, pr.number]);
 
-  // Fetch checks function (used for both initial load and refresh)
-  const fetchChecks = useCallback(async () => {
-    try {
-      const [checksData, workflowRunsData] = await Promise.all([
-        github.getPRChecks(owner, repo, pr.head.sha).catch(() => ({
-          checkRuns: [] as CheckRun[],
-          status: {
-            state: "",
-            sha: "",
-            total_count: 0,
-            statuses: [],
-            repository: {} as CombinedStatus["repository"],
-            commit_url: "",
-            url: "",
-          } as CombinedStatus,
-        })),
-        github.getWorkflowRuns(owner, repo, pr.head.sha).catch(() => ({
-          workflow_runs: [],
-        })),
-      ]);
-      setChecks(checksData);
-      setChecksLastUpdated(new Date());
-
-      // Find workflow runs awaiting approval (fork PRs)
-      // Filter out recently approved workflows to prevent stale API data from reverting optimistic updates
-      const awaitingApproval = workflowRunsData.workflow_runs
-        .filter(
-          (run: { id: number; conclusion: string | null }) =>
-            run.conclusion === "action_required" &&
-            !recentlyApprovedWorkflowIds.current.has(run.id)
-        )
-        .map((run: { id: number; name?: string | null; html_url: string }) => ({
-          id: run.id,
-          name: run.name || "Workflow",
-          html_url: run.html_url,
-        }));
-
-      // Clear recently approved IDs that are no longer showing as action_required
-      // (meaning GitHub's API has caught up)
-      const currentActionRequiredIds = new Set(
-        workflowRunsData.workflow_runs
-          .filter(
-            (run: { conclusion: string | null }) =>
-              run.conclusion === "action_required"
-          )
-          .map((run: { id: number }) => run.id)
-      );
-      for (const id of recentlyApprovedWorkflowIds.current) {
-        if (!currentActionRequiredIds.has(id)) {
-          recentlyApprovedWorkflowIds.current.delete(id);
-        }
-      }
-
-      setWorkflowRunsAwaitingApproval(awaitingApproval);
-    } catch {
-      // Ignore errors on refresh
-    }
-  }, [github, owner, repo, pr.head.sha]);
-
   // Manual refresh handler
   const handleRefreshChecks = useCallback(async () => {
     setRefreshingChecks(true);
-    await fetchChecks();
+    await store.refreshChecks();
     setRefreshingChecks(false);
-  }, [fetchChecks]);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const [
-          reviewsData,
-          checksData,
-          workflowRunsData,
-          conversationData,
-          commitsData,
-          timelineData,
-          reviewThreadsResult,
-        ] = await Promise.all([
-          github
-            .getPRReviews(owner, repo, pr.number)
-            .catch(() => [] as Review[]),
-          github.getPRChecks(owner, repo, pr.head.sha).catch(() => ({
-            checkRuns: [] as CheckRun[],
-            status: {
-              state: "",
-              sha: "",
-              total_count: 0,
-              statuses: [],
-              repository: {} as CombinedStatus["repository"],
-              commit_url: "",
-              url: "",
-            } as CombinedStatus,
-          })),
-          github.getWorkflowRuns(owner, repo, pr.head.sha).catch(() => ({
-            workflow_runs: [] as Array<{
-              id: number;
-              name: string;
-              conclusion: string | null;
-              html_url: string;
-            }>,
-          })),
-          github
-            .getPRConversation(owner, repo, pr.number)
-            .catch(() => [] as IssueComment[]),
-          github
-            .getPRCommits(owner, repo, pr.number)
-            .catch(() => [] as PRCommit[]),
-          github
-            .getPRTimeline(owner, repo, pr.number)
-            .catch(() => [] as TimelineEvent[]),
-          github.getReviewThreads(owner, repo, pr.number).catch(() => ({
-            threads: [] as ReviewThread[],
-            viewerPermission: null,
-            viewerCanMergeAsAdmin: false,
-          })),
-        ]);
-
-        setReviews(reviewsData);
-        setChecks(checksData);
-        setChecksLastUpdated(new Date());
-
-        // Find workflow runs awaiting approval (fork PRs)
-        const awaitingApproval = workflowRunsData.workflow_runs
-          .filter((run) => run.conclusion === "action_required")
-          .map((run) => ({
-            id: run.id,
-            name: run.name || "Workflow",
-            html_url: run.html_url,
-          }));
-        setWorkflowRunsAwaitingApproval(awaitingApproval);
-
-        setConversation(conversationData);
-        setCommits(commitsData);
-        setTimeline(timelineData);
-        setReviewThreads(reviewThreadsResult.threads);
-        setViewerPermission(reviewThreadsResult.viewerPermission);
-        setViewerCanMergeAsAdmin(reviewThreadsResult.viewerCanMergeAsAdmin);
-
-        // Check if branch was already deleted (and not restored) from timeline
-        // Branch is deleted if there are more delete events than restore events
-        const deleteCount = timelineData.filter(
-          (event) => (event as { event?: string }).event === "head_ref_deleted"
-        ).length;
-        const restoreCount = timelineData.filter(
-          (event) => (event as { event?: string }).event === "head_ref_restored"
-        ).length;
-        setBranchDeleted(deleteCount > restoreCount);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [github, owner, repo, pr.number, pr.head.sha]);
+  }, [store]);
 
   // Auto-refresh checks every 30 seconds when PR is open
   useEffect(() => {
     if (pr.state !== "open" || pr.merged) return;
 
     const interval = setInterval(() => {
-      fetchChecks();
+      store.refreshChecks();
     }, 30_000);
 
     return () => clearInterval(interval);
-  }, [fetchChecks, pr.state, pr.merged]);
+  }, [store, pr.state, pr.merged]);
 
   const handleMerge = useCallback(async () => {
-    setMerging(true);
-    setMergeError(null);
-
-    try {
-      await github.mergePR(owner, repo, pr.number, {
-        merge_method: mergeMethod,
-      });
-
+    const success = await store.mergePR();
+    if (success) {
       // Track PR merged
       track("pr_merged", {
         pr_number: pr.number,
         owner,
         repo,
-        merge_method: mergeMethod,
+        merge_method: store.getSnapshot().mergeMethod,
       });
-
-      // Invalidate caches for data that changes after merge
-      // PR cache is already invalidated by mergePR, but also clear timeline
-      github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
-
-      // Refetch the PR to get merged state and update the store
-      const [updatedPR, updatedTimeline] = await Promise.all([
-        github.getPR(owner, repo, pr.number),
-        github
-          .getPRTimeline(owner, repo, pr.number)
-          .catch(() => [] as TimelineEvent[]),
-      ]);
-
-      store.setPr(updatedPR);
-      setTimeline(updatedTimeline);
-    } catch (e) {
-      setMergeError(e instanceof Error ? e.message : "Failed to merge");
-    } finally {
-      setMerging(false);
     }
-  }, [github, owner, repo, pr.number, mergeMethod, track, store]);
+  }, [store, track, pr.number, owner, repo]);
 
   const handleApproveWorkflows = useCallback(async () => {
-    setApprovingWorkflows(true);
-    try {
-      // Track which workflows we're approving to filter out stale API responses
-      const approvedIds = workflowRunsAwaitingApproval.map((run) => run.id);
-      for (const id of approvedIds) {
-        recentlyApprovedWorkflowIds.current.add(id);
-      }
-
-      // Optimistically clear the UI immediately
-      setWorkflowRunsAwaitingApproval([]);
-
-      // Approve all workflow runs awaiting approval
-      await Promise.all(
-        approvedIds.map((id) => github.approveWorkflowRun(owner, repo, id))
-      );
-
-      // Refresh checks to get updated status (recently approved IDs will be filtered out)
-      await fetchChecks();
-    } catch (e) {
-      console.error("Failed to approve workflows:", e);
-      // On error, clear the recently approved tracking and re-fetch to restore actual state
-      recentlyApprovedWorkflowIds.current.clear();
-      await fetchChecks();
-    } finally {
-      setApprovingWorkflows(false);
-    }
-  }, [github, owner, repo, workflowRunsAwaitingApproval, fetchChecks]);
+    await store.approveWorkflows();
+  }, [store]);
 
   const handleAddComment = useCallback(async () => {
     if (!commentText.trim()) return;
@@ -427,18 +225,18 @@ export const PROverview = memo(function PROverview() {
         pr.number,
         commentText
       );
-      setConversation((prev) => [...prev, newComment]);
+      store.addConversationComment(newComment);
       setCommentText("");
     } catch (error) {
       console.error("Failed to add comment:", error);
     } finally {
       setSubmittingComment(false);
     }
-  }, [github, owner, repo, pr.number, commentText]);
+  }, [github, owner, repo, pr.number, commentText, store]);
 
   const handleUpdateBranch = useCallback(async () => {
-    await github.updateBranch(owner, repo, pr.number);
-  }, [github, owner, repo, pr.number]);
+    await store.updateBranch();
+  }, [store]);
 
   // Fetch collaborators when picker is opened
   const fetchCollaborators = useCallback(async () => {
@@ -502,74 +300,50 @@ export const PROverview = memo(function PROverview() {
   }, [github, owner, repo, pr.number, store]);
 
   const handleConvertToDraft = useCallback(async () => {
-    setConvertingToDraft(true);
-    try {
-      await github.convertToDraft(owner, repo, pr.number);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to convert to draft:", error);
-    } finally {
-      setConvertingToDraft(false);
-    }
-  }, [github, owner, repo, pr.number, refetchPR]);
+    await store.convertToDraft();
+  }, [store]);
 
   const handleMarkReadyForReview = useCallback(async () => {
-    setMarkingReady(true);
-    try {
-      await github.markReadyForReview(owner, repo, pr.number);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to mark ready for review:", error);
-    } finally {
-      setMarkingReady(false);
-    }
-  }, [github, owner, repo, pr.number, refetchPR]);
+    await store.markReadyForReview();
+  }, [store]);
 
   const handleClosePR = useCallback(async () => {
-    setClosingPR(true);
-    try {
-      // Post comment first if there's one typed (like GitHub does)
-      if (commentText.trim()) {
+    // Post comment first if there's one typed (like GitHub does)
+    if (commentText.trim()) {
+      try {
         const newComment = await github.createPRConversationComment(
           owner,
           repo,
           pr.number,
           commentText
         );
-        setConversation((prev) => [...prev, newComment]);
+        store.addConversationComment(newComment);
         setCommentText("");
+      } catch (error) {
+        console.error("Failed to add comment:", error);
       }
-      await github.closePR(owner, repo, pr.number);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to close PR:", error);
-    } finally {
-      setClosingPR(false);
     }
-  }, [github, owner, repo, pr.number, refetchPR, commentText]);
+    await store.closePR();
+  }, [github, owner, repo, pr.number, commentText, store]);
 
   const handleReopenPR = useCallback(async () => {
-    setReopeningPR(true);
-    try {
-      // Post comment first if there's one typed (like GitHub does)
-      if (commentText.trim()) {
+    // Post comment first if there's one typed (like GitHub does)
+    if (commentText.trim()) {
+      try {
         const newComment = await github.createPRConversationComment(
           owner,
           repo,
           pr.number,
           commentText
         );
-        setConversation((prev) => [...prev, newComment]);
+        store.addConversationComment(newComment);
         setCommentText("");
+      } catch (error) {
+        console.error("Failed to add comment:", error);
       }
-      await github.reopenPR(owner, repo, pr.number);
-      await refetchPR();
-    } catch (error) {
-      console.error("Failed to reopen PR:", error);
-    } finally {
-      setReopeningPR(false);
     }
-  }, [github, owner, repo, pr.number, refetchPR, commentText]);
+    await store.reopenPR();
+  }, [github, owner, repo, pr.number, commentText, store]);
 
   const handleDeleteBranch = useCallback(async () => {
     if (
@@ -579,38 +353,12 @@ export const PROverview = memo(function PROverview() {
     ) {
       return;
     }
-
-    setDeletingBranch(true);
-    try {
-      await github.deleteBranch(
-        pr.head.repo?.owner?.login ?? owner,
-        pr.head.repo?.name ?? repo,
-        pr.head.ref
-      );
-      setBranchDeleted(true);
-    } catch (error) {
-      console.error("Failed to delete branch:", error);
-    } finally {
-      setDeletingBranch(false);
-    }
-  }, [github, owner, repo, pr.head.ref, pr.head.repo]);
+    await store.deleteBranch();
+  }, [store, pr.head.ref]);
 
   const handleRestoreBranch = useCallback(async () => {
-    setRestoringBranch(true);
-    try {
-      await github.restoreBranch(
-        pr.head.repo?.owner?.login ?? owner,
-        pr.head.repo?.name ?? repo,
-        pr.head.ref,
-        pr.head.sha
-      );
-      setBranchDeleted(false);
-    } catch (error) {
-      console.error("Failed to restore branch:", error);
-    } finally {
-      setRestoringBranch(false);
-    }
-  }, [github, owner, repo, pr.head.ref, pr.head.repo, pr.head.sha]);
+    await store.restoreBranch();
+  }, [store]);
 
   const handleRequestReviewer = useCallback(
     async (login: string) => {
@@ -807,12 +555,12 @@ export const PROverview = memo(function PROverview() {
         });
         // Refresh threads to show new comment
         const result = await github.getReviewThreads(owner, repo, pr.number);
-        setReviewThreads(result.threads);
+        store.setReviewThreads(result.threads);
       } catch (error) {
         console.error("Failed to reply to thread:", error);
       }
     },
-    [github, owner, repo, pr.number]
+    [github, owner, repo, pr.number, store]
   );
 
   const handleResolveThread = useCallback(
@@ -820,14 +568,12 @@ export const PROverview = memo(function PROverview() {
       try {
         await github.resolveThread(threadId);
         // Update local state
-        setReviewThreads((prev) =>
-          prev.map((t) => (t.id === threadId ? { ...t, isResolved: true } : t))
-        );
+        store.updateReviewThread(threadId, (t) => ({ ...t, isResolved: true }));
       } catch (error) {
         console.error("Failed to resolve thread:", error);
       }
     },
-    [github]
+    [github, store]
   );
 
   const handleUnresolveThread = useCallback(
@@ -835,14 +581,15 @@ export const PROverview = memo(function PROverview() {
       try {
         await github.unresolveThread(threadId);
         // Update local state
-        setReviewThreads((prev) =>
-          prev.map((t) => (t.id === threadId ? { ...t, isResolved: false } : t))
-        );
+        store.updateReviewThread(threadId, (t) => ({
+          ...t,
+          isResolved: false,
+        }));
       } catch (error) {
         console.error("Failed to unresolve thread:", error);
       }
     },
-    [github]
+    [github, store]
   );
 
   // Calculate check status
@@ -1183,7 +930,7 @@ export const PROverview = memo(function PROverview() {
                       mergeError={mergeError}
                       latestReviews={latestReviews}
                       onMerge={handleMerge}
-                      onSetMergeMethod={setMergeMethod}
+                      onSetMergeMethod={store.setMergeMethod}
                       onToggleMergeOptions={() =>
                         setShowMergeOptions(!showMergeOptions)
                       }

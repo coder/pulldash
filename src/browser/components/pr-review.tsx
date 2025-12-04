@@ -284,6 +284,7 @@ export function PRReviewContent({
 
   return (
     <PRReviewProvider
+      github={github}
       pr={pr}
       files={files}
       comments={comments}
