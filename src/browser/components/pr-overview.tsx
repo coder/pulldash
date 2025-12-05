@@ -57,6 +57,7 @@ import {
   usePRReviewStore,
   getTimeAgo,
 } from "../contexts/pr-review";
+import { parseDiffCached, type ParsedDiff } from "../lib/diff";
 import {
   useGitHub,
   useCurrentUser,
@@ -145,13 +146,16 @@ export const PROverview = memo(function PROverview() {
 
   // Repo permissions - use GraphQL viewerPermission as primary source
   const isArchived = pr.base?.repo?.archived ?? false;
-  // WRITE, MAINTAIN, or ADMIN permissions allow merging
-  const canPush =
+  // WRITE, MAINTAIN, or ADMIN permissions allow merging and resolving threads
+  const hasWritePermission =
     viewerPermission === "ADMIN" ||
     viewerPermission === "MAINTAIN" ||
-    viewerPermission === "WRITE" ||
-    pr.base?.repo?.permissions?.push === true;
+    viewerPermission === "WRITE";
+  const canPush =
+    hasWritePermission || pr.base?.repo?.permissions?.push === true;
   const canMergeRepo = canWrite && canPush && !isArchived;
+  // Resolving threads requires write permission to the repo
+  const canResolveThread = canWrite && hasWritePermission;
 
   // Reviewers and Assignees state
   const [collaborators, setCollaborators] = useState<
@@ -571,6 +575,52 @@ export const PROverview = memo(function PROverview() {
     [github, owner, repo]
   );
 
+  // Review comment reactions (different from issue comments)
+  const handleAddReviewCommentReaction = useCallback(
+    async (commentId: number, content: ReactionContent) => {
+      try {
+        const newReaction = await github.addReviewCommentReaction(
+          owner,
+          repo,
+          commentId,
+          content
+        );
+        setReactions((prev) => ({
+          ...prev,
+          [`review-comment-${commentId}`]: [
+            ...(prev[`review-comment-${commentId}`] || []),
+            newReaction,
+          ],
+        }));
+      } catch (error) {
+        console.error("Failed to add review comment reaction:", error);
+      }
+    },
+    [github, owner, repo]
+  );
+
+  const handleRemoveReviewCommentReaction = useCallback(
+    async (commentId: number, reactionId: number) => {
+      try {
+        await github.deleteReviewCommentReaction(
+          owner,
+          repo,
+          commentId,
+          reactionId
+        );
+        setReactions((prev) => ({
+          ...prev,
+          [`review-comment-${commentId}`]: (
+            prev[`review-comment-${commentId}`] || []
+          ).filter((r) => r.id !== reactionId),
+        }));
+      } catch (error) {
+        console.error("Failed to remove review comment reaction:", error);
+      }
+    },
+    [github, owner, repo]
+  );
+
   // Thread actions (reply, resolve, unresolve)
   const handleReplyToThread = useCallback(
     async (threadId: string, commentId: number, body: string) => {
@@ -734,7 +784,7 @@ export const PROverview = memo(function PROverview() {
                 />
 
                 {/* Timeline - merge comments, reviews, and events by date */}
-                <div className="relative">
+                <div className="relative space-y-6">
                   {/* Vertical timeline line - z-0 so content appears above it */}
                   <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-muted-foreground/30 -translate-x-1/2 z-0" />
 
@@ -893,7 +943,10 @@ export const PROverview = memo(function PROverview() {
                       }
                       if (entry.type === "review") {
                         return (
-                          <div key={`review-${entry.data.id}`}>
+                          <div
+                            key={`review-${entry.data.id}`}
+                            className="space-y-3"
+                          >
                             <ReviewBox review={entry.data} />
                             {/* Render associated threads under the review */}
                             {entry.threads.map((thread) => (
@@ -907,6 +960,18 @@ export const PROverview = memo(function PROverview() {
                                 onUnresolve={handleUnresolveThread}
                                 canWrite={canWrite}
                                 currentUser={currentUser}
+                                onAddReaction={handleAddReviewCommentReaction}
+                                onRemoveReaction={
+                                  handleRemoveReviewCommentReaction
+                                }
+                                reactions={Object.fromEntries(
+                                  thread.comments.nodes.map((c) => [
+                                    c.databaseId,
+                                    reactions[
+                                      `review-comment-${c.databaseId}`
+                                    ] || [],
+                                  ])
+                                )}
                               />
                             ))}
                           </div>
@@ -944,7 +1009,17 @@ export const PROverview = memo(function PROverview() {
                             onResolve={handleResolveThread}
                             onUnresolve={handleUnresolveThread}
                             canWrite={canWrite}
+                            canResolveThread={canResolveThread}
                             currentUser={currentUser}
+                            onAddReaction={handleAddReviewCommentReaction}
+                            onRemoveReaction={handleRemoveReviewCommentReaction}
+                            reactions={Object.fromEntries(
+                              entry.data.comments.nodes.map((c) => [
+                                c.databaseId,
+                                reactions[`review-comment-${c.databaseId}`] ||
+                                  [],
+                              ])
+                            )}
                           />
                         );
                       }
@@ -2126,7 +2201,11 @@ function ReviewThreadBox({
   onResolve,
   onUnresolve,
   canWrite,
+  canResolveThread,
   currentUser,
+  onAddReaction,
+  onRemoveReaction,
+  reactions,
 }: {
   thread: ReviewThread;
   owner: string;
@@ -2139,19 +2218,38 @@ function ReviewThreadBox({
   onResolve?: (threadId: string) => Promise<void>;
   onUnresolve?: (threadId: string) => Promise<void>;
   canWrite?: boolean;
+  /** Whether user can resolve/unresolve threads (requires WRITE, MAINTAIN, or ADMIN permission) */
+  canResolveThread?: boolean;
   currentUser?: string | null;
+  onAddReaction?: (commentId: number, content: ReactionContent) => void;
+  onRemoveReaction?: (commentId: number, reactionId: number) => void;
+  reactions?: Record<number, Reaction[]>;
 }) {
   const [replyText, setReplyText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [showReplyBox, setShowReplyBox] = useState(false);
   const [showResolved, setShowResolved] = useState(false);
+  const [parsedDiff, setParsedDiff] = useState<ParsedDiff | null>(null);
   const comments = thread.comments.nodes;
   if (comments.length === 0) return null;
 
   const firstComment = comments[0];
   const filePath = firstComment.path;
   const diffHunk = firstComment.diffHunk;
+
+  // Parse diff hunk with syntax highlighting using the worker
+  // Note: The worker already adds git diff headers, so we pass diffHunk directly
+  useEffect(() => {
+    if (!diffHunk) {
+      setParsedDiff(null);
+      return;
+    }
+
+    parseDiffCached(diffHunk, filePath)
+      .then(setParsedDiff)
+      .catch(console.error);
+  }, [diffHunk, filePath]);
 
   // If resolved and not expanded, show collapsed view
   if (thread.isResolved && !showResolved) {
@@ -2202,47 +2300,8 @@ function ReviewThreadBox({
     }
   };
 
-  // Parse diff hunk to get line numbers and content
-  const parseDiffHunk = (hunk: string | null) => {
-    if (!hunk) return [];
-
-    const lines = hunk.split("\n");
-    const result: Array<{
-      type: "header" | "context" | "addition" | "deletion";
-      content: string;
-      oldLine?: number;
-      newLine?: number;
-    }> = [];
-
-    let oldLine = 0;
-    let newLine = 0;
-
-    for (const line of lines) {
-      if (line.startsWith("@@")) {
-        const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-        if (match) {
-          oldLine = parseInt(match[1], 10);
-          newLine = parseInt(match[2], 10);
-        }
-        result.push({ type: "header", content: line });
-      } else if (line.startsWith("+")) {
-        result.push({ type: "addition", content: line.slice(1), newLine });
-        newLine++;
-      } else if (line.startsWith("-")) {
-        result.push({ type: "deletion", content: line.slice(1), oldLine });
-        oldLine++;
-      } else {
-        const content = line.startsWith(" ") ? line.slice(1) : line;
-        result.push({ type: "context", content, oldLine, newLine });
-        oldLine++;
-        newLine++;
-      }
-    }
-
-    return result;
-  };
-
-  const diffLines = parseDiffHunk(diffHunk);
+  // Get diff lines from parsed diff (first hunk)
+  const diffHunkData = parsedDiff?.hunks.find((h) => h.type === "hunk") ?? null;
 
   return (
     <div
@@ -2274,53 +2333,46 @@ function ReviewThreadBox({
         )}
       </div>
 
-      {/* Code context (diff hunk) */}
-      {diffLines.length > 0 && (
+      {/* Code context (diff hunk) with syntax highlighting */}
+      {diffHunkData && diffHunkData.type === "hunk" && (
         <div className="bg-[#0d1117] border-b border-border overflow-x-auto">
           <table className="w-full text-xs font-mono">
             <tbody>
-              {diffLines.map((line, i) => (
+              {diffHunkData.lines.map((line, i) => (
                 <tr
                   key={i}
                   className={cn(
-                    line.type === "addition" && "bg-green-500/15",
-                    line.type === "deletion" && "bg-red-500/15",
-                    line.type === "header" && "bg-blue-500/10 text-blue-400"
+                    line.type === "insert" && "bg-green-500/15",
+                    line.type === "delete" && "bg-red-500/15"
                   )}
                 >
-                  {line.type === "header" ? (
-                    <td
-                      colSpan={3}
-                      className="px-2 py-0.5 text-muted-foreground"
+                  <td className="w-10 text-right px-2 py-0.5 text-muted-foreground select-none border-r border-border/50">
+                    {line.type !== "insert" ? line.oldLineNumber : ""}
+                  </td>
+                  <td className="w-10 text-right px-2 py-0.5 text-muted-foreground select-none border-r border-border/50">
+                    {line.type !== "delete" ? line.newLineNumber : ""}
+                  </td>
+                  <td className="px-2 py-0.5 whitespace-pre">
+                    <span
+                      className={cn(
+                        "select-none mr-1",
+                        line.type === "insert" && "text-green-400",
+                        line.type === "delete" && "text-red-400"
+                      )}
                     >
-                      {line.content}
-                    </td>
-                  ) : (
-                    <>
-                      <td className="w-10 text-right px-2 py-0.5 text-muted-foreground select-none border-r border-border/50">
-                        {line.type !== "addition" ? line.oldLine : ""}
-                      </td>
-                      <td className="w-10 text-right px-2 py-0.5 text-muted-foreground select-none border-r border-border/50">
-                        {line.type !== "deletion" ? line.newLine : ""}
-                      </td>
-                      <td className="px-2 py-0.5 whitespace-pre">
-                        <span
-                          className={cn(
-                            "select-none mr-1",
-                            line.type === "addition" && "text-green-400",
-                            line.type === "deletion" && "text-red-400"
-                          )}
-                        >
-                          {line.type === "addition"
-                            ? "+"
-                            : line.type === "deletion"
-                              ? "-"
-                              : " "}
-                        </span>
-                        {line.content}
-                      </td>
-                    </>
-                  )}
+                      {line.type === "insert"
+                        ? "+"
+                        : line.type === "delete"
+                          ? "-"
+                          : " "}
+                    </span>
+                    {line.content.map((seg, j) => (
+                      <span
+                        key={j}
+                        dangerouslySetInnerHTML={{ __html: seg.html }}
+                      />
+                    ))}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2362,11 +2414,23 @@ function ReviewThreadBox({
             <div className="mt-2">
               <Markdown>{comment.body}</Markdown>
             </div>
-            {/* Emoji reactions placeholder */}
+            {/* Emoji reactions */}
             <div className="mt-3">
-              <button className="inline-flex items-center justify-center w-7 h-7 text-xs rounded-full border border-border hover:border-blue-500/50 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
-                <Smile className="w-4 h-4" />
-              </button>
+              <EmojiReactions
+                reactions={reactions?.[comment.databaseId] || []}
+                onAddReaction={
+                  canWrite && onAddReaction
+                    ? (content) => onAddReaction(comment.databaseId, content)
+                    : undefined
+                }
+                onRemoveReaction={
+                  canWrite && onRemoveReaction
+                    ? (reactionId) =>
+                        onRemoveReaction(comment.databaseId, reactionId)
+                    : undefined
+                }
+                currentUser={currentUser}
+              />
             </div>
           </div>
         ))}
