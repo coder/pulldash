@@ -263,6 +263,16 @@ export const PROverview = memo(function PROverview() {
     }
   }, [github, owner, repo, pr.number, commentText, store]);
 
+  const handleCommentKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        handleAddComment();
+      }
+    },
+    [handleAddComment]
+  );
+
   const handleUpdateBranch = useCallback(async () => {
     await store.updateBranch();
   }, [store]);
@@ -1270,6 +1280,7 @@ export const PROverview = memo(function PROverview() {
                       <MarkdownEditor
                         value={commentText}
                         onChange={setCommentText}
+                        onKeyDown={handleCommentKeyDown}
                         placeholder="Add your comment here..."
                         minHeight="100px"
                       />

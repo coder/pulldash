@@ -62,13 +62,18 @@ export function useReviewActions() {
         files_reviewed: state.viewedFiles.size,
       });
 
-      // Refresh comments and reviews
-      const [newComments, reviews] = await Promise.all([
+      // Invalidate timeline cache so we get fresh data
+      github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
+
+      // Refresh comments, reviews, and timeline
+      const [newComments, reviews, timeline] = await Promise.all([
         github.getPRComments(owner, repo, pr.number),
         github.getPRReviews(owner, repo, pr.number),
+        github.getPRTimeline(owner, repo, pr.number),
       ]);
       store.setComments(newComments as ReviewComment[]);
       store.setReviews(reviews);
+      store.setTimeline(timeline);
 
       // If we got the review ID from REST, use it; otherwise find the latest review
       let scrollTarget: string | undefined;

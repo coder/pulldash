@@ -1736,6 +1736,10 @@ export class PRReviewStore {
     this.set({ reviews });
   };
 
+  setTimeline = (timeline: TimelineEvent[]) => {
+    this.set({ timeline });
+  };
+
   setPr = (pr: PullRequest) => {
     this.set({ pr });
   };
