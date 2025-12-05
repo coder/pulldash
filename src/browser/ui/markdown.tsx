@@ -32,8 +32,13 @@ import {
   Quote,
   Heading2,
   Smile,
+  X,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
+import { Dialog, DialogContent, DialogTitle } from "./dialog";
 
 interface MarkdownProps {
   children: string;
@@ -49,6 +54,202 @@ interface MarkdownProps {
 
 // Pattern to match @mentions (GitHub-style: @username)
 const MENTION_REGEX = /@([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})/g;
+
+// ============================================================================
+// Image Preview Context & Modal
+// ============================================================================
+
+interface ImagePreviewContextValue {
+  openPreview: (src: string, alt?: string) => void;
+}
+
+const ImagePreviewContext = createContext<ImagePreviewContextValue | null>(
+  null
+);
+
+function useImagePreview() {
+  return useContext(ImagePreviewContext);
+}
+
+function ImagePreviewProvider({ children }: { children: ReactNode }) {
+  const [previewImage, setPreviewImage] = useState<{
+    src: string;
+    alt?: string;
+  } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [scrollStart, setScrollStart] = useState({ x: 0, y: 0 });
+
+  const openPreview = useCallback((src: string, alt?: string) => {
+    setPreviewImage({ src, alt });
+    setZoom(1);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewImage(null);
+    setZoom(1);
+  }, []);
+
+  // Pan/drag handlers
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (zoom <= 1 || !containerRef.current) return;
+      e.preventDefault();
+      setIsDragging(true);
+      setDragStart({ x: e.clientX, y: e.clientY });
+      setScrollStart({
+        x: containerRef.current.scrollLeft,
+        y: containerRef.current.scrollTop,
+      });
+    },
+    [zoom]
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging || !containerRef.current) return;
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      containerRef.current.scrollLeft = scrollStart.x - dx;
+      containerRef.current.scrollTop = scrollStart.y - dy;
+    },
+    [isDragging, dragStart, scrollStart]
+  );
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => Math.min(z + 0.25, 4));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => Math.max(z - 0.25, 0.25));
+  }, []);
+
+  const handleResetZoom = useCallback(() => {
+    setZoom(1);
+  }, []);
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    if (!previewImage) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closePreview();
+      } else if (e.key === "+" || e.key === "=") {
+        handleZoomIn();
+      } else if (e.key === "-") {
+        handleZoomOut();
+      } else if (e.key === "0") {
+        handleResetZoom();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    previewImage,
+    closePreview,
+    handleZoomIn,
+    handleZoomOut,
+    handleResetZoom,
+  ]);
+
+  const contextValue = useMemo(() => ({ openPreview }), [openPreview]);
+
+  return (
+    <ImagePreviewContext.Provider value={contextValue}>
+      {children}
+      <Dialog open={!!previewImage} onOpenChange={() => closePreview()}>
+        <DialogContent
+          className="!max-w-[90vw] max-h-[90vh] w-auto h-auto p-0 bg-black/95 border-border/50 overflow-hidden flex flex-col gap-0 sm:!max-w-[90vw]"
+          showCloseButton={false}
+        >
+          <DialogTitle className="sr-only">
+            {previewImage?.alt || "Image preview"}
+          </DialogTitle>
+          {previewImage && (
+            <>
+              {/* Toolbar */}
+              <div className="flex items-center justify-between px-3 py-2 bg-black/50 border-b border-white/10">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={handleZoomOut}
+                    className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+                    title="Zoom out (-)"
+                  >
+                    <ZoomOut className="w-4 h-4" />
+                  </button>
+                  <span className="text-xs text-white/70 font-mono min-w-[4ch] text-center px-1">
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  <button
+                    onClick={handleZoomIn}
+                    className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+                    title="Zoom in (+)"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleResetZoom}
+                    className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors ml-1"
+                    title="Reset zoom (0)"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
+                </div>
+                {previewImage.alt && (
+                  <span className="text-xs text-white/60 truncate max-w-[40%] px-2">
+                    {previewImage.alt}
+                  </span>
+                )}
+                <button
+                  onClick={closePreview}
+                  className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+                  title="Close (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Image container */}
+              <div
+                ref={containerRef}
+                className={cn(
+                  "overflow-auto flex-1 flex items-center justify-center p-4 min-h-0",
+                  zoom > 1 && (isDragging ? "cursor-grabbing" : "cursor-grab")
+                )}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+              >
+                <img
+                  src={previewImage.src}
+                  alt={previewImage.alt || "Preview"}
+                  className={cn(
+                    "max-w-[85vw] max-h-[80vh] object-contain transition-transform duration-150 select-none",
+                    zoom > 1 && "pointer-events-none"
+                  )}
+                  style={{
+                    transform: `scale(${zoom})`,
+                    transformOrigin: "center center",
+                  }}
+                  draggable={false}
+                />
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </ImagePreviewContext.Provider>
+  );
+}
 
 // ============================================================================
 // HTML with Mentions Component
@@ -143,14 +344,28 @@ function parseNode(node: Node): HtmlNode | null {
 
 function HtmlWithMentions({ html }: { html: string }) {
   const nodes = useMemo(() => parseHtmlToNodes(html), [html]);
-  return <>{renderNodes(nodes)}</>;
+  const imagePreview = useImagePreview();
+
+  const rendered = useMemo(
+    () => renderNodes(nodes, imagePreview?.openPreview),
+    [nodes, imagePreview]
+  );
+
+  return <>{rendered}</>;
 }
 
-function renderNodes(nodes: HtmlNode[]): React.ReactNode {
-  return nodes.map((node, index) => renderNode(node, index));
+function renderNodes(
+  nodes: HtmlNode[],
+  openPreview?: (src: string, alt?: string) => void
+): React.ReactNode {
+  return nodes.map((node, index) => renderNode(node, index, openPreview));
 }
 
-function renderNode(node: HtmlNode, key: number): React.ReactNode {
+function renderNode(
+  node: HtmlNode,
+  key: number,
+  openPreview?: (src: string, alt?: string) => void
+): React.ReactNode {
   if (node.type === "text") {
     return node.content;
   }
@@ -215,11 +430,36 @@ function renderNode(node: HtmlNode, key: number): React.ReactNode {
       "wbr",
     ]);
 
+    // Special handling for images - make them clickable for preview
+    if (node.tag === "img" && openPreview) {
+      const src = node.attributes?.src;
+      const alt = node.attributes?.alt;
+      if (src) {
+        return (
+          <img
+            key={key}
+            {...(safeAttributes as React.ImgHTMLAttributes<HTMLImageElement>)}
+            className={cn(
+              safeAttributes.className as string,
+              "cursor-pointer hover:opacity-90 transition-opacity"
+            )}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openPreview(src, alt);
+            }}
+          />
+        );
+      }
+    }
+
     if (voidElements.has(node.tag)) {
       return createElement(node.tag, { key, ...safeAttributes });
     }
 
-    const children = node.children ? renderNodes(node.children) : null;
+    const children = node.children
+      ? renderNodes(node.children, openPreview)
+      : null;
     return createElement(node.tag, { key, ...safeAttributes }, children);
   }
 
@@ -247,7 +487,7 @@ export const Markdown = memo(function Markdown({
   // If pre-rendered HTML is provided (from GitHub's API with signed attachment URLs), use it
   if (html) {
     return (
-      <>
+      <ImagePreviewProvider>
         {isEmpty && emptyState}
         <div
           ref={containerRef}
@@ -255,7 +495,7 @@ export const Markdown = memo(function Markdown({
         >
           <HtmlWithMentions html={html} />
         </div>
-      </>
+      </ImagePreviewProvider>
     );
   }
   // Parse the content to find @mentions and wrap them
