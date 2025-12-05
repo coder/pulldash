@@ -1870,7 +1870,15 @@ function CommentBox({
       {/* Body */}
       <div className="p-4">
         {body ? (
-          <Markdown>{body}</Markdown>
+          <Markdown
+            emptyState={
+              <p className="text-sm text-muted-foreground italic">
+                No description provided.
+              </p>
+            }
+          >
+            {body}
+          </Markdown>
         ) : (
           <p className="text-sm text-muted-foreground italic">
             No description provided.

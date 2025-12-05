@@ -37,6 +37,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 interface MarkdownProps {
   children: string;
   className?: string;
+  emptyState?: React.ReactNode;
 }
 
 // Pattern to match @mentions (GitHub-style: @username)
@@ -46,7 +47,18 @@ const MENTION_REGEX = /@([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})/g;
 export const Markdown = memo(function Markdown({
   children,
   className,
+  emptyState,
 }: MarkdownProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isEmpty, setIsEmpty] = useState(false);
+
+  // Check if rendered content is empty after mount
+  useEffect(() => {
+    if (containerRef.current && emptyState) {
+      const text = containerRef.current.textContent?.trim() || "";
+      setIsEmpty(text.length === 0);
+    }
+  }, [children, emptyState]);
   // Parse the content to find @mentions and wrap them
   const processedContent = useMemo(() => {
     // Split by @mentions but keep the mentions
@@ -81,7 +93,52 @@ export const Markdown = memo(function Markdown({
 
   if (!hasMentions) {
     return (
-      <div className={cn("markdown-body", className)}>
+      <>
+        {isEmpty && emptyState}
+        <div
+          ref={containerRef}
+          className={cn("markdown-body", className, isEmpty && "hidden")}
+        >
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkGemoji]}
+            rehypePlugins={[
+              rehypeRaw,
+              rehypeSanitize,
+              [rehypeHighlight, { detect: true, ignoreMissing: true }],
+            ]}
+            components={{
+              // Custom link handling - open external links in new tab
+              a: ({ href, children, ...props }) => {
+                const isExternal = href?.startsWith("http");
+                return (
+                  <a
+                    href={href}
+                    target={isExternal ? "_blank" : undefined}
+                    rel={isExternal ? "noopener noreferrer" : undefined}
+                    {...props}
+                  >
+                    {children}
+                  </a>
+                );
+              },
+            }}
+          >
+            {children}
+          </ReactMarkdown>
+        </div>
+      </>
+    );
+  }
+
+  // Render with mentions wrapped in hover cards
+  // We need to process mentions within the markdown, so we'll use a custom component
+  return (
+    <>
+      {isEmpty && emptyState}
+      <div
+        ref={containerRef}
+        className={cn("markdown-body", className, isEmpty && "hidden")}
+      >
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkGemoji]}
           rehypePlugins={[
@@ -104,58 +161,25 @@ export const Markdown = memo(function Markdown({
                 </a>
               );
             },
+            // Process text nodes to find and wrap @mentions
+            p: ({ children, ...props }) => {
+              return <p {...props}>{processChildren(children)}</p>;
+            },
+            li: ({ children, ...props }) => {
+              return <li {...props}>{processChildren(children)}</li>;
+            },
+            td: ({ children, ...props }) => {
+              return <td {...props}>{processChildren(children)}</td>;
+            },
+            th: ({ children, ...props }) => {
+              return <th {...props}>{processChildren(children)}</th>;
+            },
           }}
         >
           {children}
         </ReactMarkdown>
       </div>
-    );
-  }
-
-  // Render with mentions wrapped in hover cards
-  // We need to process mentions within the markdown, so we'll use a custom component
-  return (
-    <div className={cn("markdown-body", className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkGemoji]}
-        rehypePlugins={[
-          rehypeRaw,
-          rehypeSanitize,
-          [rehypeHighlight, { detect: true, ignoreMissing: true }],
-        ]}
-        components={{
-          // Custom link handling - open external links in new tab
-          a: ({ href, children, ...props }) => {
-            const isExternal = href?.startsWith("http");
-            return (
-              <a
-                href={href}
-                target={isExternal ? "_blank" : undefined}
-                rel={isExternal ? "noopener noreferrer" : undefined}
-                {...props}
-              >
-                {children}
-              </a>
-            );
-          },
-          // Process text nodes to find and wrap @mentions
-          p: ({ children, ...props }) => {
-            return <p {...props}>{processChildren(children)}</p>;
-          },
-          li: ({ children, ...props }) => {
-            return <li {...props}>{processChildren(children)}</li>;
-          },
-          td: ({ children, ...props }) => {
-            return <td {...props}>{processChildren(children)}</td>;
-          },
-          th: ({ children, ...props }) => {
-            return <th {...props}>{processChildren(children)}</th>;
-          },
-        }}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
+    </>
   );
 });
 
