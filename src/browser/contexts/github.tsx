@@ -12,14 +12,26 @@ import type { components } from "@octokit/openapi-types";
 import { useAuth } from "./auth";
 
 // Re-export types
-export type PullRequest = components["schemas"]["pull-request"];
+// Extended PullRequest with body_html from GitHub's HTML media type
+export type PullRequest = components["schemas"]["pull-request"] & {
+  body_html?: string;
+};
 export type PullRequestFile = components["schemas"]["diff-entry"];
+// Extended ReviewComment with body_html from GitHub's HTML media type
 export type ReviewComment =
-  components["schemas"]["pull-request-review-comment"];
-export type Review = components["schemas"]["pull-request-review"];
+  components["schemas"]["pull-request-review-comment"] & {
+    body_html?: string;
+  };
+// Extended Review with body_html from GitHub's HTML media type
+export type Review = components["schemas"]["pull-request-review"] & {
+  body_html?: string;
+};
 export type CheckRun = components["schemas"]["check-run"];
 export type CombinedStatus = components["schemas"]["combined-commit-status"];
-export type IssueComment = components["schemas"]["issue-comment"];
+// Extended IssueComment with body_html from GitHub's HTML media type
+export type IssueComment = components["schemas"]["issue-comment"] & {
+  body_html?: string;
+};
 export type PRCommit = components["schemas"]["commit"];
 export type Collaborator = components["schemas"]["collaborator"];
 export type Reaction = components["schemas"]["reaction"];
@@ -118,6 +130,8 @@ export interface ReviewThread {
       id: string;
       databaseId: number;
       body: string;
+      /** Pre-rendered HTML with signed attachment URLs from GitHub's GraphQL API */
+      bodyHTML?: string;
       path: string;
       line: number | null;
       originalLine: number | null;
@@ -1009,10 +1023,14 @@ function createGitHubStore() {
         owner,
         repo,
         pull_number: number,
+        headers: {
+          // Request full media type to get both body and body_html with signed attachment URLs
+          accept: "application/vnd.github.full+json",
+        },
       })
       .then((res) => {
-        cache.set(cacheKey, res.data);
-        return res.data;
+        cache.set(cacheKey, res.data as PullRequest);
+        return res.data as PullRequest;
       });
 
     cache.setPending(cacheKey, promise);
@@ -1090,9 +1108,13 @@ function createGitHubStore() {
             pull_number: number,
             per_page: 100,
             page,
+            headers: {
+              // Request full media type to get both body and body_html with signed attachment URLs
+              accept: "application/vnd.github.full+json",
+            },
           }
         );
-        comments.push(...data);
+        comments.push(...(data as ReviewComment[]));
         if (data.length < 100) break;
         page++;
       }
@@ -1175,10 +1197,14 @@ function createGitHubStore() {
         owner,
         repo,
         pull_number: number,
+        headers: {
+          // Request full media type to get both body and body_html with signed attachment URLs
+          accept: "application/vnd.github.full+json",
+        },
       })
       .then((res) => {
-        cache.set(cacheKey, res.data);
-        return res.data;
+        cache.set(cacheKey, res.data as Review[]);
+        return res.data as Review[];
       });
 
     cache.setPending(cacheKey, promise);
@@ -2001,10 +2027,14 @@ function createGitHubStore() {
         owner,
         repo,
         issue_number: number,
+        headers: {
+          // Request full media type to get both body and body_html with signed attachment URLs
+          accept: "application/vnd.github.full+json",
+        },
       })
       .then((res) => {
-        cache.set(cacheKey, res.data);
-        return res.data;
+        cache.set(cacheKey, res.data as IssueComment[]);
+        return res.data as IssueComment[];
       });
 
     cache.setPending(cacheKey, promise);
@@ -2321,6 +2351,7 @@ function createGitHubStore() {
           id: string;
           databaseId: number;
           body: string;
+          bodyHTML: string;
           path: string;
           line: number | null;
           originalLine: number | null;
@@ -2363,6 +2394,7 @@ function createGitHubStore() {
                     id
                     databaseId
                     body
+                    bodyHTML
                     path
                     line
                     originalLine

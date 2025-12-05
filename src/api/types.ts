@@ -1,7 +1,10 @@
 import { components } from "@octokit/openapi-types";
 
 // REST API types - re-exported from Octokit schemas
-export type PullRequest = components["schemas"]["pull-request"];
+// Extended types include body_html from GitHub's HTML media type (application/vnd.github.html+json)
+export type PullRequest = components["schemas"]["pull-request"] & {
+  body_html?: string;
+};
 export type PullRequestFile = components["schemas"]["diff-entry"];
 export type ReviewComment =
   components["schemas"]["pull-request-review-comment"] & {
@@ -9,11 +12,17 @@ export type ReviewComment =
     pull_request_review_thread_id?: string;
     is_resolved?: boolean;
     resolved_by?: { login: string; avatar_url: string } | null;
+    /** Pre-rendered HTML with signed attachment URLs from GitHub's API */
+    body_html?: string;
   };
-export type Review = components["schemas"]["pull-request-review"];
+export type Review = components["schemas"]["pull-request-review"] & {
+  body_html?: string;
+};
 export type CheckRun = components["schemas"]["check-run"];
 export type CombinedStatus = components["schemas"]["combined-commit-status"];
-export type IssueComment = components["schemas"]["issue-comment"];
+export type IssueComment = components["schemas"]["issue-comment"] & {
+  body_html?: string;
+};
 export type GitHubUser = components["schemas"]["public-user"];
 
 // GraphQL-only types (not in REST API schemas)
@@ -34,6 +43,8 @@ export interface ReviewThread {
     id: string;
     databaseId: number;
     body: string;
+    /** Pre-rendered HTML with signed attachment URLs from GitHub's GraphQL API */
+    bodyHTML?: string;
     path: string;
     line: number | null;
     originalLine: number | null;

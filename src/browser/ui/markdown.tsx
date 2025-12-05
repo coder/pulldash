@@ -7,6 +7,7 @@ import {
   useMemo,
   createContext,
   useContext,
+  createElement,
   type ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -38,16 +39,199 @@ interface MarkdownProps {
   children: string;
   className?: string;
   emptyState?: React.ReactNode;
+  /**
+   * Pre-rendered HTML from GitHub's API (via Accept: application/vnd.github.full+json).
+   * When provided, this will be rendered instead of parsing markdown.
+   * This is needed for private user-attachments which have signed URLs in the HTML.
+   */
+  html?: string;
 }
 
 // Pattern to match @mentions (GitHub-style: @username)
 const MENTION_REGEX = /@([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})/g;
+
+// ============================================================================
+// HTML with Mentions Component
+// ============================================================================
+// Parses GitHub's pre-rendered HTML and replaces user-mention links with our
+// UserHoverCard component for a rich hover experience.
+
+interface HtmlNode {
+  type: "text" | "element" | "mention";
+  content?: string;
+  tag?: string;
+  attributes?: Record<string, string>;
+  children?: HtmlNode[];
+  login?: string;
+}
+
+// Convert CSS string like "color: red; margin-top: 10px" to React style object
+function parseStyleString(styleStr: string): Record<string, string> {
+  const style: Record<string, string> = {};
+  if (!styleStr) return style;
+
+  styleStr.split(";").forEach((declaration) => {
+    const [property, value] = declaration.split(":").map((s) => s.trim());
+    if (property && value) {
+      // Convert kebab-case to camelCase (e.g., margin-top -> marginTop)
+      const camelCase = property.replace(/-([a-z])/g, (_, letter) =>
+        letter.toUpperCase()
+      );
+      style[camelCase] = value;
+    }
+  });
+
+  return style;
+}
+
+function parseHtmlToNodes(html: string): HtmlNode[] {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  return parseNodeList(doc.body.childNodes);
+}
+
+function parseNodeList(nodes: NodeListOf<ChildNode>): HtmlNode[] {
+  const result: HtmlNode[] = [];
+  nodes.forEach((node) => {
+    const parsed = parseNode(node);
+    if (parsed) result.push(parsed);
+  });
+  return result;
+}
+
+function parseNode(node: Node): HtmlNode | null {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent || "";
+    if (!text) return null;
+    return { type: "text", content: text };
+  }
+
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+
+    // Check if this is a GitHub user-mention link
+    if (tag === "a" && el.classList.contains("user-mention")) {
+      const href = el.getAttribute("href") || "";
+      // Extract username from href like "https://github.com/username"
+      const match = href.match(/github\.com\/([a-zA-Z0-9-]+)$/);
+      if (match) {
+        return {
+          type: "mention",
+          login: match[1],
+          content: el.textContent || `@${match[1]}`,
+        };
+      }
+    }
+
+    // Build attributes map
+    const attributes: Record<string, string> = {};
+    for (const attr of Array.from(el.attributes)) {
+      attributes[attr.name] = attr.value;
+    }
+
+    return {
+      type: "element",
+      tag,
+      attributes,
+      children: parseNodeList(el.childNodes),
+    };
+  }
+
+  return null;
+}
+
+function HtmlWithMentions({ html }: { html: string }) {
+  const nodes = useMemo(() => parseHtmlToNodes(html), [html]);
+  return <>{renderNodes(nodes)}</>;
+}
+
+function renderNodes(nodes: HtmlNode[]): React.ReactNode {
+  return nodes.map((node, index) => renderNode(node, index));
+}
+
+function renderNode(node: HtmlNode, key: number): React.ReactNode {
+  if (node.type === "text") {
+    return node.content;
+  }
+
+  if (node.type === "mention" && node.login) {
+    return (
+      <UserHoverCard key={key} login={node.login}>
+        <a
+          href={`https://github.com/${node.login}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="user-mention text-blue-400 hover:underline font-medium"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {node.content}
+        </a>
+      </UserHoverCard>
+    );
+  }
+
+  if (node.type === "element" && node.tag) {
+    // Filter out problematic attributes that React doesn't like
+    const safeAttributes: Record<string, unknown> = {};
+    if (node.attributes) {
+      for (const [attrName, attrValue] of Object.entries(node.attributes)) {
+        // Skip data-* attributes that GitHub adds for their hovercard system
+        if (
+          attrName.startsWith("data-hovercard") ||
+          attrName.startsWith("data-octo")
+        ) {
+          continue;
+        }
+        // Convert class to className
+        if (attrName === "class") {
+          safeAttributes.className = attrValue;
+        } else if (attrName === "for") {
+          safeAttributes.htmlFor = attrValue;
+        } else if (attrName === "style") {
+          // Convert CSS string to React style object
+          safeAttributes.style = parseStyleString(attrValue);
+        } else {
+          safeAttributes[attrName] = attrValue;
+        }
+      }
+    }
+
+    // Handle void elements (self-closing) - they cannot have children
+    const voidElements = new Set([
+      "area",
+      "base",
+      "br",
+      "col",
+      "embed",
+      "hr",
+      "img",
+      "input",
+      "link",
+      "meta",
+      "param",
+      "source",
+      "track",
+      "wbr",
+    ]);
+
+    if (voidElements.has(node.tag)) {
+      return createElement(node.tag, { key, ...safeAttributes });
+    }
+
+    const children = node.children ? renderNodes(node.children) : null;
+    return createElement(node.tag, { key, ...safeAttributes }, children);
+  }
+
+  return null;
+}
 
 // GitHub-style markdown rendering with @mention support
 export const Markdown = memo(function Markdown({
   children,
   className,
   emptyState,
+  html,
 }: MarkdownProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isEmpty, setIsEmpty] = useState(false);
@@ -58,7 +242,22 @@ export const Markdown = memo(function Markdown({
       const text = containerRef.current.textContent?.trim() || "";
       setIsEmpty(text.length === 0);
     }
-  }, [children, emptyState]);
+  }, [children, html, emptyState]);
+
+  // If pre-rendered HTML is provided (from GitHub's API with signed attachment URLs), use it
+  if (html) {
+    return (
+      <>
+        {isEmpty && emptyState}
+        <div
+          ref={containerRef}
+          className={cn("markdown-body", className, isEmpty && "hidden")}
+        >
+          <HtmlWithMentions html={html} />
+        </div>
+      </>
+    );
+  }
   // Parse the content to find @mentions and wrap them
   const processedContent = useMemo(() => {
     // Split by @mentions but keep the mentions

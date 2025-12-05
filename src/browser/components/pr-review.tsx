@@ -2885,7 +2885,7 @@ const CommentItem = memo(function CommentItem({
           ) : (
             <>
               <div className="mt-1 text-sm text-foreground/90">
-                <Markdown>{comment.body}</Markdown>
+                <Markdown html={comment.body_html}>{comment.body}</Markdown>
               </div>
 
               {/* Reactions */}

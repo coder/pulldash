@@ -922,6 +922,7 @@ export const PROverview = memo(function PROverview() {
                   user={pr.user}
                   createdAt={pr.created_at}
                   body={pr.body}
+                  bodyHtml={pr.body_html}
                   isAuthor
                   reactions={reactions.issue}
                   onAddReaction={canWrite ? handleAddPRReaction : undefined}
@@ -1066,6 +1067,7 @@ export const PROverview = memo(function PROverview() {
                             user={comment.user}
                             createdAt={comment.created_at}
                             body={comment.body ?? null}
+                            bodyHtml={comment.body_html}
                             reactions={reactions[`comment-${comment.id}`]}
                             onAddReaction={
                               canWrite
@@ -2093,6 +2095,7 @@ function CommentBox({
   user,
   createdAt,
   body,
+  bodyHtml,
   isAuthor,
   reactions,
   onAddReaction,
@@ -2103,6 +2106,8 @@ function CommentBox({
   user: { login: string; avatar_url: string } | null;
   createdAt: string;
   body: string | null;
+  /** Pre-rendered HTML with signed attachment URLs from GitHub's API */
+  bodyHtml?: string;
   isAuthor?: boolean;
   reactions?: Reaction[];
   onAddReaction?: (content: ReactionContent) => void;
@@ -2146,15 +2151,16 @@ function CommentBox({
       </div>
       {/* Body */}
       <div className="p-4 bg-card">
-        {body ? (
+        {body || bodyHtml ? (
           <Markdown
+            html={bodyHtml}
             emptyState={
               <p className="text-sm text-muted-foreground italic">
                 No description provided.
               </p>
             }
           >
-            {body}
+            {body ?? ""}
           </Markdown>
         ) : (
           <p className="text-sm text-muted-foreground italic">
@@ -2301,7 +2307,7 @@ function ReviewBox({ review }: { review: Review }) {
             )}
           </div>
           <div className="p-4 bg-card">
-            <Markdown>{review.body}</Markdown>
+            <Markdown html={review.body_html}>{review.body}</Markdown>
           </div>
         </div>
       )}
@@ -2621,7 +2627,7 @@ function ReviewThreadBox({
               </span>
             </div>
             <div className="mt-2">
-              <Markdown>{comment.body}</Markdown>
+              <Markdown html={comment.bodyHTML}>{comment.body}</Markdown>
             </div>
             {/* Emoji reactions */}
             <div className="mt-3">
