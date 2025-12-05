@@ -399,66 +399,204 @@ export const PROverview = memo(function PROverview() {
     await store.restoreBranch();
   }, [store]);
 
+  // Helper to refetch timeline after mutations
+  const refetchTimeline = useCallback(() => {
+    github
+      .getPRTimeline(owner, repo, pr.number)
+      .then((timeline) => store.setTimeline(timeline))
+      .catch(() => {});
+  }, [github, owner, repo, pr.number, store]);
+
   const handleRequestReviewer = useCallback(
     async (login: string) => {
+      // Find the collaborator to get avatar_url
+      const collaborator = collaborators.find((c) => c.login === login);
       try {
+        // 1. Request GitHub to add reviewer
         await github.requestReviewers(owner, repo, pr.number, [login]);
-        await refetchPR();
+
+        // 2. Update our state with the known change
+        const newReviewer = {
+          login,
+          avatar_url: collaborator?.avatar_url ?? "",
+          id: 0,
+          node_id: "",
+          gravatar_id: "",
+          url: "",
+          html_url: "",
+          followers_url: "",
+          following_url: "",
+          gists_url: "",
+          starred_url: "",
+          subscriptions_url: "",
+          organizations_url: "",
+          repos_url: "",
+          events_url: "",
+          received_events_url: "",
+          type: "User" as const,
+          site_admin: false,
+          user_view_type: "public" as const,
+        };
+        store.setPr({
+          ...pr,
+          requested_reviewers: [...(pr.requested_reviewers ?? []), newReviewer],
+        });
+
+        // 3. Invalidate cache so future fetches get fresh data
+        github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+
+        // 4. Refetch timeline (reviewer request creates event)
+        refetchTimeline();
       } catch (error) {
         console.error("Failed to request reviewer:", error);
       }
     },
-    [github, owner, repo, pr.number, refetchPR]
+    [github, owner, repo, pr, store, collaborators, refetchTimeline]
   );
 
   const handleRemoveReviewer = useCallback(
     async (login: string) => {
       try {
+        // 1. Request GitHub to remove reviewer
         await github.removeReviewers(owner, repo, pr.number, [login]);
-        await refetchPR();
+
+        // 2. Update our state with the known change
+        store.setPr({
+          ...pr,
+          requested_reviewers: (pr.requested_reviewers ?? []).filter(
+            (r) => r.login !== login
+          ),
+        });
+
+        // 3. Invalidate cache so future fetches get fresh data
+        github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+
+        // 4. Refetch timeline
+        refetchTimeline();
       } catch (error) {
         console.error("Failed to remove reviewer:", error);
       }
     },
-    [github, owner, repo, pr.number, refetchPR]
+    [github, owner, repo, pr, store, refetchTimeline]
   );
 
   const handleAddAssignee = useCallback(
     async (login: string) => {
+      // Find the collaborator to get avatar_url
+      const collaborator = collaborators.find((c) => c.login === login);
       try {
+        // 1. Request GitHub to add assignee
         await github.addAssignees(owner, repo, pr.number, [login]);
-        await refetchPR();
+
+        // 2. Update our state with the known change
+        const newAssignee = {
+          login,
+          avatar_url: collaborator?.avatar_url ?? "",
+          id: 0,
+          node_id: "",
+          gravatar_id: "",
+          url: "",
+          html_url: "",
+          followers_url: "",
+          following_url: "",
+          gists_url: "",
+          starred_url: "",
+          subscriptions_url: "",
+          organizations_url: "",
+          repos_url: "",
+          events_url: "",
+          received_events_url: "",
+          type: "User" as const,
+          site_admin: false,
+          user_view_type: "public" as const,
+        };
+        store.setPr({
+          ...pr,
+          assignees: [...(pr.assignees ?? []), newAssignee],
+        });
+
+        // 3. Invalidate cache so future fetches get fresh data
+        github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+
+        // 4. Refetch timeline (assignee change creates event)
+        refetchTimeline();
       } catch (error) {
         console.error("Failed to add assignee:", error);
       }
     },
-    [github, owner, repo, pr.number, refetchPR]
+    [github, owner, repo, pr, store, collaborators, refetchTimeline]
   );
 
   const handleRemoveAssignee = useCallback(
     async (login: string) => {
       try {
+        // 1. Request GitHub to remove assignee
         await github.removeAssignees(owner, repo, pr.number, [login]);
-        await refetchPR();
+
+        // 2. Update our state with the known change
+        store.setPr({
+          ...pr,
+          assignees: (pr.assignees ?? []).filter((a) => a.login !== login),
+        });
+
+        // 3. Invalidate cache so future fetches get fresh data
+        github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+
+        // 4. Refetch timeline
+        refetchTimeline();
       } catch (error) {
         console.error("Failed to remove assignee:", error);
       }
     },
-    [github, owner, repo, pr.number, refetchPR]
+    [github, owner, repo, pr, store, refetchTimeline]
   );
 
   const handleAssignSelf = useCallback(async () => {
     if (!currentUser) return;
+
     setAssigningSelf(true);
     try {
+      // 1. Request GitHub to add assignee
       await github.addAssignees(owner, repo, pr.number, [currentUser]);
-      await refetchPR();
+
+      // 2. Update our state with the known change
+      const newAssignee = {
+        login: currentUser,
+        avatar_url: "",
+        id: 0,
+        node_id: "",
+        gravatar_id: "",
+        url: "",
+        html_url: "",
+        followers_url: "",
+        following_url: "",
+        gists_url: "",
+        starred_url: "",
+        subscriptions_url: "",
+        organizations_url: "",
+        repos_url: "",
+        events_url: "",
+        received_events_url: "",
+        type: "User" as const,
+        site_admin: false,
+        user_view_type: "public" as const,
+      };
+      store.setPr({
+        ...pr,
+        assignees: [...(pr.assignees ?? []), newAssignee],
+      });
+
+      // 3. Invalidate cache so future fetches get fresh data
+      github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+
+      // 4. Refetch timeline
+      refetchTimeline();
     } catch (error) {
       console.error("Failed to assign self:", error);
     } finally {
       setAssigningSelf(false);
     }
-  }, [github, owner, repo, pr.number, currentUser, refetchPR]);
+  }, [github, owner, repo, pr, currentUser, store, refetchTimeline]);
 
   // Reaction state - keyed by "issue" for PR body or comment ID
   const [reactions, setReactions] = useState<Record<string, Reaction[]>>({});
@@ -1639,7 +1777,44 @@ export const PROverview = memo(function PROverview() {
               pr={pr}
               owner={owner}
               repo={repo}
-              onUpdate={refetchPR}
+              onLabelToggle={async (labelName, labelColor, hasLabel) => {
+                try {
+                  // 1. Request GitHub to toggle label
+                  if (hasLabel) {
+                    await github.removeLabel(owner, repo, pr.number, labelName);
+                  } else {
+                    await github.addLabels(owner, repo, pr.number, [labelName]);
+                  }
+
+                  // 2. Update our state with the known change
+                  const newLabels = hasLabel
+                    ? pr.labels.filter((l) => l.name !== labelName)
+                    : [
+                        ...pr.labels,
+                        {
+                          id: 0,
+                          node_id: "",
+                          url: "",
+                          name: labelName,
+                          color: labelColor,
+                          default: false,
+                          description: null,
+                        },
+                      ];
+                  store.setPr({ ...pr, labels: newLabels });
+
+                  // 3. Invalidate cache so future fetches get fresh data
+                  github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+
+                  // 4. Refetch timeline (label change creates event)
+                  github
+                    .getPRTimeline(owner, repo, pr.number)
+                    .then((timeline) => store.setTimeline(timeline))
+                    .catch(() => {});
+                } catch (error) {
+                  console.error("Failed to toggle label:", error);
+                }
+              }}
               canWrite={canMergeRepo}
             />
 
@@ -1754,15 +1929,14 @@ function SidebarSection({
 // ============================================================================
 
 interface LabelsSectionProps {
-  pr: {
-    labels: Array<{ name: string; color: string }>;
-    state: string;
-    merged?: boolean;
-    number: number;
-  };
+  pr: PullRequest;
   owner: string;
   repo: string;
-  onUpdate: () => Promise<void>;
+  onLabelToggle: (
+    labelName: string,
+    labelColor: string,
+    hasLabel: boolean
+  ) => Promise<void>;
   canWrite?: boolean;
 }
 
@@ -1770,7 +1944,7 @@ function LabelsSection({
   pr,
   owner,
   repo,
-  onUpdate,
+  onLabelToggle,
   canWrite = true,
 }: LabelsSectionProps) {
   const github = useGitHub();
@@ -1808,20 +1982,11 @@ function LabelsSection({
   }, [showPicker, fetchLabels]);
 
   const handleToggleLabel = useCallback(
-    async (labelName: string) => {
-      try {
-        const hasLabel = pr.labels.some((l) => l.name === labelName);
-        if (hasLabel) {
-          await github.removeLabel(owner, repo, pr.number, labelName);
-        } else {
-          await github.addLabels(owner, repo, pr.number, [labelName]);
-        }
-        await onUpdate();
-      } catch (error) {
-        console.error("Failed to toggle label:", error);
-      }
+    async (labelName: string, labelColor: string) => {
+      const hasLabel = pr.labels.some((l) => l.name === labelName);
+      await onLabelToggle(labelName, labelColor, hasLabel);
     },
-    [github, owner, repo, pr.number, pr.labels, onUpdate]
+    [pr.labels, onLabelToggle]
   );
 
   const canEdit = canWrite && pr.state === "open" && !pr.merged;
@@ -1889,7 +2054,7 @@ function LabelsSection({
                   return (
                     <button
                       key={label.name}
-                      onClick={() => handleToggleLabel(label.name)}
+                      onClick={() => handleToggleLabel(label.name, label.color)}
                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
                     >
                       <div className="w-4 h-4 flex items-center justify-center">

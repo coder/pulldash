@@ -266,6 +266,8 @@ class RequestCache {
     if (!pattern) {
       // Clear all memory cache
       this.cache.clear();
+      // Clear all pending requests
+      this.pending.clear();
       // Clear persisted cache
       for (const key of this.persistKeys) {
         this.removeFromStorage(key);
@@ -276,6 +278,12 @@ class RequestCache {
       if (key.includes(pattern)) {
         this.cache.delete(key);
         this.removeFromStorage(key);
+      }
+    }
+    // Also clear pending requests matching the pattern
+    for (const key of this.pending.keys()) {
+      if (key.includes(pattern)) {
+        this.pending.delete(key);
       }
     }
   }

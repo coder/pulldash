@@ -2276,21 +2276,23 @@ export class PRReviewStore {
     this.set({ closingPR: true });
 
     try {
+      // 1. Request GitHub to close PR
       await this.github.closePR(owner, repo, pr.number);
 
-      // Refetch PR and timeline
-      const [updatedPR, updatedTimeline] = await Promise.all([
-        this.github.getPR(owner, repo, pr.number),
-        this.github
-          .getPRTimeline(owner, repo, pr.number)
-          .catch(() => [] as TimelineEvent[]),
-      ]);
+      // 2. Invalidate all PR-related caches FIRST
+      this.invalidatePRCaches(owner, repo, pr.number);
 
+      // 3. Update with LATEST state
       this.set({
-        pr: updatedPR,
-        timeline: updatedTimeline,
+        pr: { ...this.state.pr, state: "closed" as const },
         closingPR: false,
       });
+
+      // 4. Refetch timeline in background (close creates event)
+      this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .then((timeline) => this.set({ timeline }))
+        .catch(() => {});
 
       return true;
     } catch (e) {
@@ -2309,21 +2311,23 @@ export class PRReviewStore {
     this.set({ reopeningPR: true });
 
     try {
+      // 1. Request GitHub to reopen PR
       await this.github.reopenPR(owner, repo, pr.number);
 
-      // Refetch PR and timeline
-      const [updatedPR, updatedTimeline] = await Promise.all([
-        this.github.getPR(owner, repo, pr.number),
-        this.github
-          .getPRTimeline(owner, repo, pr.number)
-          .catch(() => [] as TimelineEvent[]),
-      ]);
+      // 2. Invalidate all PR-related caches FIRST
+      this.invalidatePRCaches(owner, repo, pr.number);
 
+      // 3. Update with LATEST state
       this.set({
-        pr: updatedPR,
-        timeline: updatedTimeline,
+        pr: { ...this.state.pr, state: "open" as const },
         reopeningPR: false,
       });
+
+      // 4. Refetch timeline in background (reopen creates event)
+      this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .then((timeline) => this.set({ timeline }))
+        .catch(() => {});
 
       return true;
     } catch (e) {
@@ -2394,6 +2398,14 @@ export class PRReviewStore {
   };
 
   /**
+   * Invalidate all caches for a PR (main PR + all related data)
+   */
+  private invalidatePRCaches(owner: string, repo: string, prNumber: number) {
+    // Invalidate all PR-related caches (using pattern matching)
+    this.github.invalidateCache(`pr:${owner}/${repo}/${prNumber}`);
+  }
+
+  /**
    * Convert PR to draft
    */
   convertToDraft = async (): Promise<boolean> => {
@@ -2402,15 +2414,23 @@ export class PRReviewStore {
     this.set({ convertingToDraft: true });
 
     try {
+      // 1. Request GitHub to convert to draft
       await this.github.convertToDraft(owner, repo, pr.number);
 
-      // Refetch PR to get updated draft state
-      const updatedPR = await this.github.getPR(owner, repo, pr.number);
+      // 2. Invalidate all PR-related caches FIRST
+      this.invalidatePRCaches(owner, repo, pr.number);
 
+      // 3. Update with LATEST state
       this.set({
-        pr: updatedPR,
+        pr: { ...this.state.pr, draft: true },
         convertingToDraft: false,
       });
+
+      // 4. Refetch timeline in background (draft conversion creates event)
+      this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .then((timeline) => this.set({ timeline }))
+        .catch(() => {});
 
       return true;
     } catch (e) {
@@ -2429,15 +2449,23 @@ export class PRReviewStore {
     this.set({ markingReady: true });
 
     try {
+      // 1. Request GitHub to mark ready
       await this.github.markReadyForReview(owner, repo, pr.number);
 
-      // Refetch PR to get updated draft state
-      const updatedPR = await this.github.getPR(owner, repo, pr.number);
+      // 2. Invalidate all PR-related caches FIRST
+      this.invalidatePRCaches(owner, repo, pr.number);
 
+      // 3. Update with LATEST state
       this.set({
-        pr: updatedPR,
+        pr: { ...this.state.pr, draft: false },
         markingReady: false,
       });
+
+      // 4. Refetch timeline in background (ready for review creates event)
+      this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .then((timeline) => this.set({ timeline }))
+        .catch(() => {});
 
       return true;
     } catch (e) {
@@ -2496,9 +2524,11 @@ export class PRReviewStore {
     try {
       await this.github.updateBranch(owner, repo, pr.number);
 
-      // Refetch PR to get updated state
-      const updatedPR = await this.github.getPR(owner, repo, pr.number);
+      // Invalidate cache BEFORE refetch so we get fresh data
+      this.github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
 
+      // Refetch PR to get updated state (branch update changes many fields)
+      const updatedPR = await this.github.getPR(owner, repo, pr.number);
       this.set({ pr: updatedPR });
 
       return true;

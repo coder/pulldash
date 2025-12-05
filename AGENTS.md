@@ -6,6 +6,8 @@ Pulldash is the fastest way to review pull requests.
 
 Use `bun` for everything - package management, tests.
 
+_NEVER_ use browser tools - they will not work with this project.
+
 ## Principles
 
 - Performance is P1. If things feel laggy or are not smooth, it is of the utmost importance to fix. Pulldash exists because GitHub's PR review is slow.
