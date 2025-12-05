@@ -861,31 +861,31 @@ function PRReviewAnimation() {
 // These are real, substantial PRs that showcase the review experience
 const FEATURED_PRS = [
   {
+    owner: "ghostty-org",
+    repo: "ghostty",
+    number: 9803,
+    title: "terminal/tmux: a lot more control mode parsing, functionality",
+    files: 5,
+    additions: 1563,
+    deletions: 448,
+  },
+  {
+    owner: "oven-sh",
+    repo: "bun",
+    number: 25168,
+    title: "feat(url): implement URLPattern API",
+    files: 38,
+    additions: 7339,
+    deletions: 2,
+  },
+  {
     owner: "facebook",
     repo: "react",
-    number: 28271,
-    title: "Add useFormStatus Hook",
-    files: 38,
-    additions: 1847,
-    deletions: 89,
-  },
-  {
-    owner: "microsoft",
-    repo: "TypeScript",
-    number: 58243,
-    title: "Implement config extends from npm packages",
-    files: 52,
-    additions: 2105,
-    deletions: 312,
-  },
-  {
-    owner: "tailwindlabs",
-    repo: "tailwindcss",
-    number: 13092,
-    title: "Add new @starting-style support",
-    files: 18,
-    additions: 892,
-    deletions: 45,
+    number: 35277,
+    title: "Patch FlightReplyServer with fixes from ReactFlightClient",
+    files: 9,
+    additions: 712,
+    deletions: 278,
   },
 ];
 
@@ -1101,8 +1101,8 @@ export function WelcomeDialog() {
                 </Button>
 
                 <p className="text-xs text-center text-muted-foreground">
-                  Your token stays in your browser. All GitHub API calls are
-                  made directly from your device.
+                  All GitHub API calls are made directly from your device.
+                  Pulldash does not store your GitHub token.
                 </p>
 
                 {/* Animation preview */}

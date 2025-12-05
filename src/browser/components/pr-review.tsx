@@ -248,7 +248,7 @@ export function PRReviewContent({
     };
 
     fetchData();
-  }, [github, owner, repo, number, track]);
+  }, [github, owner, repo, number, track, githubReady]);
 
   // Show loading while GitHub client initializes
   if (!githubReady) {
