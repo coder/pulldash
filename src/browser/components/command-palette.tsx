@@ -18,6 +18,7 @@ import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
 import { Keycap, KeycapGroup } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/types";
+import { matchesKey } from "@/browser/lib/shortcuts";
 
 // ============================================================================
 // Global Command Palette Context
@@ -44,7 +45,10 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ctrl+K or Ctrl+P to open command palette
-      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "p")) {
+      if (
+        matchesKey(e, "OPEN_FILE_SEARCH_K") ||
+        matchesKey(e, "OPEN_FILE_SEARCH_P")
+      ) {
         e.preventDefault();
         e.stopPropagation();
         setOpen((prev) => !prev);

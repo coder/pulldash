@@ -1,5 +1,6 @@
 import { startTransition, useEffect } from "react";
 import { usePRReviewStore } from ".";
+import { matchesKey } from "@/browser/lib/shortcuts";
 
 export function useKeyboardNavigation() {
   const store = usePRReviewStore();
@@ -16,16 +17,14 @@ export function useKeyboardNavigation() {
       }
 
       // Handle Ctrl/Cmd+Arrow for jumping by 10 lines
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        (e.key === "ArrowDown" || e.key === "ArrowUp")
-      ) {
+      if (matchesKey(e, "JUMP_UP")) {
         e.preventDefault();
-        store.navigateLine(
-          e.key === "ArrowDown" ? "down" : "up",
-          e.shiftKey,
-          10
-        );
+        store.navigateLine("up", e.shiftKey, 10);
+        return;
+      }
+      if (matchesKey(e, "JUMP_DOWN")) {
+        e.preventDefault();
+        store.navigateLine("down", e.shiftKey, 10);
         return;
       }
 
@@ -48,17 +47,17 @@ export function useKeyboardNavigation() {
           store.backspaceGotoInput();
           return;
         }
-        if (e.key === "Tab") {
+        if (matchesKey(e, "GOTO_TOGGLE_SIDE")) {
           e.preventDefault();
           store.toggleGotoLineSide();
           return;
         }
-        if (e.key === "Enter" && state.gotoLineInput) {
+        if (matchesKey(e, "GOTO_EXECUTE") && state.gotoLineInput) {
           e.preventDefault();
           store.executeGotoLine();
           return;
         }
-        if (e.key === "Escape") {
+        if (matchesKey(e, "GOTO_EXIT")) {
           e.preventDefault();
           store.exitGotoMode();
           return;
@@ -67,7 +66,10 @@ export function useKeyboardNavigation() {
       }
 
       // Enter to expand focused skip block
-      if (e.key === "Enter" && state.focusedSkipBlockIndex !== null) {
+      if (
+        matchesKey(e, "EXPAND_SECTION") &&
+        state.focusedSkipBlockIndex !== null
+      ) {
         e.preventDefault();
         // Dispatch event to expand the skip block (handled by DiffViewer)
         const event = new CustomEvent("pr-review:expand-skip-block", {
@@ -78,143 +80,146 @@ export function useKeyboardNavigation() {
       }
 
       // Arrow navigation - direct call for instant response
-      if (e.key === "ArrowDown") {
+      if (matchesKey(e, "NAVIGATE_DOWN")) {
         e.preventDefault();
         store.navigateLine("down", e.shiftKey, 1);
         return;
       }
-      if (e.key === "ArrowUp") {
+      if (matchesKey(e, "NAVIGATE_UP")) {
         e.preventDefault();
         store.navigateLine("up", e.shiftKey, 1);
         return;
       }
       // Left/Right arrows to switch between sides in split view
-      if (e.key === "ArrowLeft") {
+      if (matchesKey(e, "NAVIGATE_LEFT")) {
         e.preventDefault();
         store.navigateSide("left");
         return;
       }
-      if (e.key === "ArrowRight") {
+      if (matchesKey(e, "NAVIGATE_RIGHT")) {
         e.preventDefault();
         store.navigateSide("right");
         return;
       }
 
       // Shortcuts
-      switch (e.key.toLowerCase()) {
-        case "j":
-          e.preventDefault();
-          // Use startTransition to allow React to interrupt rendering during rapid navigation
-          startTransition(() => {
-            store.navigateToNextUnviewedFile();
-          });
-          break;
-        case "k":
-          e.preventDefault();
-          // Use startTransition to allow React to interrupt rendering during rapid navigation
-          startTransition(() => {
-            store.navigateToPrevUnviewedFile();
-          });
-          break;
-        case "v":
-          e.preventDefault();
-          if (state.selectedFiles.size > 0) {
-            store.toggleViewedMultiple([...state.selectedFiles]);
-          } else if (state.selectedFile) {
-            store.toggleViewed(state.selectedFile);
-          }
-          break;
-        case "g":
-          e.preventDefault();
-          store.enterGotoMode();
-          break;
-        case "o":
-          e.preventDefault();
-          store.selectOverview();
-          break;
-        case "c":
-          e.preventDefault();
-          store.startCommentingOnFocusedLine();
-          break;
-        case "e":
-          if (state.focusedCommentId) {
-            // Check if user can edit this comment
-            // ADMIN and MAINTAIN can edit any comment, WRITE can only edit own comments
-            const commentToEdit = state.comments.find(
-              (c) => c.id === state.focusedCommentId
-            );
-            const isOwnComment =
-              commentToEdit && state.currentUser === commentToEdit.user.login;
-            const canEditAny =
-              state.viewerPermission === "ADMIN" ||
-              state.viewerPermission === "MAINTAIN";
-            if (commentToEdit && (isOwnComment || canEditAny)) {
-              e.preventDefault();
-              store.startEditing(state.focusedCommentId);
-            }
-          } else if (state.focusedPendingCommentId) {
-            // Pending comments are always owned by current user
+      if (matchesKey(e, "NEXT_UNVIEWED_FILE")) {
+        e.preventDefault();
+        // Use startTransition to allow React to interrupt rendering during rapid navigation
+        startTransition(() => {
+          store.navigateToNextUnviewedFile();
+        });
+        return;
+      }
+      if (matchesKey(e, "PREV_UNVIEWED_FILE")) {
+        e.preventDefault();
+        startTransition(() => {
+          store.navigateToPrevUnviewedFile();
+        });
+        return;
+      }
+      if (matchesKey(e, "TOGGLE_VIEWED")) {
+        e.preventDefault();
+        if (state.selectedFiles.size > 0) {
+          store.toggleViewedMultiple([...state.selectedFiles]);
+        } else if (state.selectedFile) {
+          store.toggleViewed(state.selectedFile);
+        }
+        return;
+      }
+      if (matchesKey(e, "GOTO_LINE_MODE")) {
+        e.preventDefault();
+        store.enterGotoMode();
+        return;
+      }
+      if (matchesKey(e, "GOTO_OVERVIEW")) {
+        e.preventDefault();
+        store.selectOverview();
+        return;
+      }
+      if (matchesKey(e, "COMMENT")) {
+        e.preventDefault();
+        store.startCommentingOnFocusedLine();
+        return;
+      }
+      if (matchesKey(e, "EDIT_COMMENT")) {
+        if (state.focusedCommentId) {
+          // Check if user can edit this comment
+          // ADMIN and MAINTAIN can edit any comment, WRITE can only edit own comments
+          const commentToEdit = state.comments.find(
+            (c) => c.id === state.focusedCommentId
+          );
+          const isOwnComment =
+            commentToEdit && state.currentUser === commentToEdit.user.login;
+          const canEditAny =
+            state.viewerPermission === "ADMIN" ||
+            state.viewerPermission === "MAINTAIN";
+          if (commentToEdit && (isOwnComment || canEditAny)) {
             e.preventDefault();
-            store.startEditingPendingComment(state.focusedPendingCommentId);
+            store.startEditing(state.focusedCommentId);
           }
-          break;
-        case "r":
-          if (state.focusedCommentId) {
-            e.preventDefault();
-            store.startReplying(state.focusedCommentId);
-          }
-          break;
-        case "d":
-          if (state.focusedCommentId) {
-            // Check if user can delete this comment
-            // ADMIN and MAINTAIN can delete any comment, WRITE can only delete own comments
-            const commentToDelete = state.comments.find(
-              (c) => c.id === state.focusedCommentId
-            );
-            const isOwnCommentD =
-              commentToDelete &&
-              state.currentUser === commentToDelete.user.login;
-            const canDeleteAny =
-              state.viewerPermission === "ADMIN" ||
-              state.viewerPermission === "MAINTAIN";
-            if (commentToDelete && (isOwnCommentD || canDeleteAny)) {
-              e.preventDefault();
-              if (
-                window.confirm("Are you sure you want to delete this comment?")
-              ) {
-                // Trigger delete via API - component handles this
-                const event = new CustomEvent("pr-review:delete-comment", {
-                  detail: { commentId: state.focusedCommentId },
-                });
-                window.dispatchEvent(event);
-              }
-            }
-          } else if (state.focusedPendingCommentId) {
-            // Pending comments are always owned by current user
+        } else if (state.focusedPendingCommentId) {
+          // Pending comments are always owned by current user
+          e.preventDefault();
+          store.startEditingPendingComment(state.focusedPendingCommentId);
+        }
+        return;
+      }
+      if (matchesKey(e, "REPLY_COMMENT")) {
+        if (state.focusedCommentId) {
+          e.preventDefault();
+          store.startReplying(state.focusedCommentId);
+        }
+        return;
+      }
+      if (matchesKey(e, "DELETE_COMMENT")) {
+        if (state.focusedCommentId) {
+          // Check if user can delete this comment
+          // ADMIN and MAINTAIN can delete any comment, WRITE can only delete own comments
+          const commentToDelete = state.comments.find(
+            (c) => c.id === state.focusedCommentId
+          );
+          const isOwnCommentD =
+            commentToDelete && state.currentUser === commentToDelete.user.login;
+          const canDeleteAny =
+            state.viewerPermission === "ADMIN" ||
+            state.viewerPermission === "MAINTAIN";
+          if (commentToDelete && (isOwnCommentD || canDeleteAny)) {
             e.preventDefault();
             if (
-              window.confirm(
-                "Are you sure you want to delete this pending comment?"
-              )
+              window.confirm("Are you sure you want to delete this comment?")
             ) {
-              const event = new CustomEvent(
-                "pr-review:delete-pending-comment",
-                {
-                  detail: { commentId: state.focusedPendingCommentId },
-                }
-              );
+              // Trigger delete via API - component handles this
+              const event = new CustomEvent("pr-review:delete-comment", {
+                detail: { commentId: state.focusedCommentId },
+              });
               window.dispatchEvent(event);
             }
           }
-          break;
-        case "escape":
+        } else if (state.focusedPendingCommentId) {
+          // Pending comments are always owned by current user
           e.preventDefault();
-          if (state.commentingOnLine) {
-            store.cancelCommenting();
-          } else {
-            store.clearAllSelections();
+          if (
+            window.confirm(
+              "Are you sure you want to delete this pending comment?"
+            )
+          ) {
+            const event = new CustomEvent("pr-review:delete-pending-comment", {
+              detail: { commentId: state.focusedPendingCommentId },
+            });
+            window.dispatchEvent(event);
           }
-          break;
+        }
+        return;
+      }
+      if (matchesKey(e, "CANCEL")) {
+        e.preventDefault();
+        if (state.commentingOnLine) {
+          store.cancelCommenting();
+        } else {
+          store.clearAllSelections();
+        }
+        return;
       }
     };
 
