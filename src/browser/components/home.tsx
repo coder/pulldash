@@ -11,6 +11,8 @@ import {
   GitMerge,
   ChevronDown,
   Eye,
+  EyeOff,
+  AtSign,
   User,
   Users,
   RefreshCw,
@@ -78,6 +80,7 @@ interface RepoFilter {
   name: string;
   mode: FilterMode;
   authoredBy?: string; // Username for "authored-by" filter mode
+  enabled?: boolean; // Whether the filter is active (defaults to true)
 }
 
 // Filter configuration stored in localStorage
@@ -160,7 +163,10 @@ function getModeFilter(mode: FilterMode, authoredBy?: string): string {
 // Build queries grouped by mode (GitHub doesn't support per-repo qualifiers with OR)
 // Multiple repo: qualifiers act as OR, but user filters apply to all repos
 function buildSearchQueries(config: FilterConfig): string[] {
-  if (config.repos.length === 0) {
+  // Filter out disabled repos (enabled defaults to true if not specified)
+  const enabledRepos = config.repos.filter((r) => r.enabled !== false);
+
+  if (enabledRepos.length === 0) {
     return [];
   }
 
@@ -174,8 +180,8 @@ function buildSearchQueries(config: FilterConfig): string[] {
   const queries: string[] = [];
 
   // Separate "All Repos" filters from specific repo filters
-  const allReposFilters = config.repos.filter(isAllReposFilter);
-  const specificRepos = config.repos.filter((r) => !isAllReposFilter(r));
+  const allReposFilters = enabledRepos.filter(isAllReposFilter);
+  const specificRepos = enabledRepos.filter((r) => !isAllReposFilter(r));
 
   // Handle "All Repos" global filters (one query per mode)
   for (const filter of allReposFilters) {
@@ -271,7 +277,7 @@ const MODE_OPTIONS = [
   {
     value: "review-requested",
     label: "Review Requests",
-    icon: Eye,
+    icon: AtSign,
     description: "PRs where you're requested as reviewer",
   },
   {
@@ -434,6 +440,15 @@ export function Home() {
     []
   );
 
+  const handleToggleRepo = useCallback((repoName: string) => {
+    setConfig((prev) => ({
+      ...prev,
+      repos: prev.repos.map((r) =>
+        r.name === repoName ? { ...r, enabled: r.enabled === false } : r
+      ),
+    }));
+  }, []);
+
   const handleStateChange = useCallback((state: FilterConfig["state"]) => {
     setConfig((prev) => ({ ...prev, state }));
   }, []);
@@ -523,6 +538,7 @@ export function Home() {
                 (m) => m.value === repo.mode
               )!;
               const isOpen = openRepoDropdown === repo.name;
+              const isEnabled = repo.enabled !== false;
               // For "All Repos", exclude the "All PRs" mode since it would be too broad
               const availableModes = isAllRepos
                 ? MODE_OPTIONS.filter((m) => m.value !== "all")
@@ -561,21 +577,58 @@ export function Home() {
                       isOpen
                         ? "bg-muted border-border"
                         : isAllRepos
-                          ? "bg-primary/10 border-primary/30 hover:bg-primary/20 hover:border-primary/50"
-                          : "bg-muted/50 border-transparent hover:bg-muted hover:border-border"
+                          ? isEnabled
+                            ? "bg-primary/10 border-primary/30 hover:bg-primary/20 hover:border-primary/50"
+                            : "bg-muted/30 border-border/50 opacity-50"
+                          : isEnabled
+                            ? "bg-muted/50 border-transparent hover:bg-muted hover:border-border"
+                            : "bg-muted/30 border-border/50 opacity-50"
                     )}
                   >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleRepo(repo.name);
+                      }}
+                      className={cn(
+                        "p-0.5 rounded transition-colors",
+                        isEnabled
+                          ? "hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground"
+                          : "hover:bg-muted-foreground/20 text-muted-foreground/50 hover:text-foreground"
+                      )}
+                      title={isEnabled ? "Disable filter" : "Enable filter"}
+                    >
+                      {isEnabled ? (
+                        <Eye className="w-3 h-3" />
+                      ) : (
+                        <EyeOff className="w-3 h-3" />
+                      )}
+                    </button>
                     <modeOption.icon
                       className={cn(
                         "w-3 h-3",
-                        isAllRepos ? "text-primary" : "text-muted-foreground"
+                        isAllRepos
+                          ? isEnabled
+                            ? "text-primary"
+                            : "text-muted-foreground/50"
+                          : "text-muted-foreground"
                       )}
                     />
-                    <span className={isAllRepos ? "font-medium" : "font-mono"}>
+                    <span
+                      className={cn(
+                        isAllRepos ? "font-medium" : "font-mono",
+                        !isEnabled && "line-through"
+                      )}
+                    >
                       {isAllRepos ? modeOption.label : repo.name}
                     </span>
                     {repo.mode === "authored-by" && repo.authoredBy && (
-                      <span className="text-muted-foreground">
+                      <span
+                        className={cn(
+                          "text-muted-foreground",
+                          !isEnabled && "line-through"
+                        )}
+                      >
                         @{repo.authoredBy}
                       </span>
                     )}

@@ -2165,21 +2165,25 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
         >
           <Tag className="no-underline">
             {line.content.map((seg, i) => {
+              // In split view, only show relevant segment types per side
+              // Left (old) side: only highlight deletes, not inserts
+              // Right (new) side: only highlight inserts, not deletes
+              const showInsert = side === "new" && seg.type === "insert";
+              const showDelete = side === "old" && seg.type === "delete";
               const isTinyChange =
-                seg.type !== "normal" && seg.html.length <= 3;
+                (showInsert || showDelete) && seg.html.length <= 3;
               return (
                 <span
                   key={i}
                   className={cn(
-                    seg.type === "insert" &&
-                      "bg-[var(--code-added)]/20 text-green-400",
-                    seg.type === "delete" &&
+                    showInsert && "bg-[var(--code-added)]/20 text-green-400",
+                    showDelete &&
                       "bg-[var(--code-removed)]/20 text-orange-400 line-through decoration-orange-500/50",
                     isTinyChange &&
-                      seg.type === "insert" &&
+                      showInsert &&
                       "bg-[var(--code-added)]/40 font-semibold",
                     isTinyChange &&
-                      seg.type === "delete" &&
+                      showDelete &&
                       "bg-[var(--code-removed)]/40 font-semibold"
                   )}
                   dangerouslySetInnerHTML={{ __html: seg.html }}

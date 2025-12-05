@@ -734,202 +734,210 @@ export const PROverview = memo(function PROverview() {
                 />
 
                 {/* Timeline - merge comments, reviews, and events by date */}
-                {(() => {
-                  // Build unified timeline
-                  type TimelineEntry =
-                    | { type: "comment"; data: IssueComment; date: Date }
-                    | {
-                        type: "review";
-                        data: Review;
-                        threads: ReviewThread[];
-                        date: Date;
+                <div className="relative">
+                  {/* Vertical timeline line */}
+                  <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-muted-foreground/30 -translate-x-1/2" />
+
+                  {(() => {
+                    // Build unified timeline
+                    type TimelineEntry =
+                      | { type: "comment"; data: IssueComment; date: Date }
+                      | {
+                          type: "review";
+                          data: Review;
+                          threads: ReviewThread[];
+                          date: Date;
+                        }
+                      | { type: "event"; data: TimelineEvent; date: Date }
+                      | { type: "thread"; data: ReviewThread; date: Date };
+
+                    const entries: TimelineEntry[] = [];
+
+                    // Build a map of review database ID -> threads that belong to it
+                    const threadsByReviewId = new Map<number, ReviewThread[]>();
+                    const orphanedThreads: ReviewThread[] = [];
+
+                    reviewThreads.forEach((thread) => {
+                      const reviewId = thread.pullRequestReview?.databaseId;
+                      if (reviewId) {
+                        const existing = threadsByReviewId.get(reviewId) || [];
+                        existing.push(thread);
+                        threadsByReviewId.set(reviewId, existing);
+                      } else {
+                        // Thread without associated review (shouldn't happen often)
+                        orphanedThreads.push(thread);
                       }
-                    | { type: "event"; data: TimelineEvent; date: Date }
-                    | { type: "thread"; data: ReviewThread; date: Date };
-
-                  const entries: TimelineEntry[] = [];
-
-                  // Build a map of review database ID -> threads that belong to it
-                  const threadsByReviewId = new Map<number, ReviewThread[]>();
-                  const orphanedThreads: ReviewThread[] = [];
-
-                  reviewThreads.forEach((thread) => {
-                    const reviewId = thread.pullRequestReview?.databaseId;
-                    if (reviewId) {
-                      const existing = threadsByReviewId.get(reviewId) || [];
-                      existing.push(thread);
-                      threadsByReviewId.set(reviewId, existing);
-                    } else {
-                      // Thread without associated review (shouldn't happen often)
-                      orphanedThreads.push(thread);
-                    }
-                  });
-
-                  // Add comments
-                  conversation.forEach((comment) => {
-                    entries.push({
-                      type: "comment",
-                      data: comment,
-                      date: new Date(comment.created_at),
                     });
-                  });
 
-                  // Add ALL reviews to timeline with their associated threads
-                  // Show APPROVED/CHANGES_REQUESTED always, COMMENTED only if they have a body OR associated threads
-                  reviews
-                    .filter((r) => {
-                      if (!r.submitted_at) return false;
-                      const hasThreads =
-                        (threadsByReviewId.get(r.id)?.length ?? 0) > 0;
-                      return (
-                        r.body ||
-                        r.state === "APPROVED" ||
-                        r.state === "CHANGES_REQUESTED" ||
-                        hasThreads
-                      );
-                    })
-                    .forEach((review) => {
+                    // Add comments
+                    conversation.forEach((comment) => {
                       entries.push({
-                        type: "review",
-                        data: review,
-                        threads: threadsByReviewId.get(review.id) || [],
-                        date: new Date(review.submitted_at!),
+                        type: "comment",
+                        data: comment,
+                        date: new Date(comment.created_at),
                       });
                     });
 
-                  // Add orphaned threads (threads without a matching review in our list)
-                  orphanedThreads.forEach((thread) => {
-                    const firstComment = thread.comments.nodes[0];
-                    if (firstComment) {
-                      entries.push({
-                        type: "thread",
-                        data: thread,
-                        date: new Date(firstComment.createdAt),
+                    // Add ALL reviews to timeline with their associated threads
+                    // Show APPROVED/CHANGES_REQUESTED always, COMMENTED only if they have a body OR associated threads
+                    reviews
+                      .filter((r) => {
+                        if (!r.submitted_at) return false;
+                        const hasThreads =
+                          (threadsByReviewId.get(r.id)?.length ?? 0) > 0;
+                        return (
+                          r.body ||
+                          r.state === "APPROVED" ||
+                          r.state === "CHANGES_REQUESTED" ||
+                          hasThreads
+                        );
+                      })
+                      .forEach((review) => {
+                        entries.push({
+                          type: "review",
+                          data: review,
+                          threads: threadsByReviewId.get(review.id) || [],
+                          date: new Date(review.submitted_at!),
+                        });
                       });
-                    }
-                  });
 
-                  // Add timeline events (excluding those we show as comments/reviews)
-                  timeline.forEach((event) => {
-                    const eventType = (event as { event?: string }).event;
-                    const createdAt = (event as { created_at?: string })
-                      .created_at;
-                    const sha = (event as { sha?: string }).sha;
-                    const commitDate = (
-                      event as { commit?: { author?: { date?: string } } }
-                    ).commit?.author?.date;
+                    // Add orphaned threads (threads without a matching review in our list)
+                    orphanedThreads.forEach((thread) => {
+                      const firstComment = thread.comments.nodes[0];
+                      if (firstComment) {
+                        entries.push({
+                          type: "thread",
+                          data: thread,
+                          date: new Date(firstComment.createdAt),
+                        });
+                      }
+                    });
 
-                    // Include commits (have sha but no event field)
-                    if (sha && !eventType) {
-                      const date = createdAt || commitDate;
-                      if (date) {
+                    // Add timeline events (excluding those we show as comments/reviews)
+                    timeline.forEach((event) => {
+                      const eventType = (event as { event?: string }).event;
+                      const createdAt = (event as { created_at?: string })
+                        .created_at;
+                      const sha = (event as { sha?: string }).sha;
+                      const commitDate = (
+                        event as { commit?: { author?: { date?: string } } }
+                      ).commit?.author?.date;
+
+                      // Include commits (have sha but no event field)
+                      if (sha && !eventType) {
+                        const date = createdAt || commitDate;
+                        if (date) {
+                          entries.push({
+                            type: "event",
+                            data: event,
+                            date: new Date(date),
+                          });
+                        }
+                      }
+                      // Include other events (except comments/reviews which we handle separately)
+                      // Also skip "closed" event when PR was merged (it's redundant)
+                      else if (
+                        eventType &&
+                        createdAt &&
+                        !["commented", "reviewed", "line-commented"].includes(
+                          eventType
+                        ) &&
+                        !(eventType === "closed" && pr.merged)
+                      ) {
                         entries.push({
                           type: "event",
                           data: event,
-                          date: new Date(date),
+                          date: new Date(createdAt),
                         });
                       }
-                    }
-                    // Include other events (except comments/reviews which we handle separately)
-                    // Also skip "closed" event when PR was merged (it's redundant)
-                    else if (
-                      eventType &&
-                      createdAt &&
-                      !["commented", "reviewed", "line-commented"].includes(
-                        eventType
-                      ) &&
-                      !(eventType === "closed" && pr.merged)
-                    ) {
-                      entries.push({
-                        type: "event",
-                        data: event,
-                        date: new Date(createdAt),
-                      });
-                    }
-                  });
+                    });
 
-                  // Sort by date
-                  entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+                    // Sort by date
+                    entries.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-                  return entries.map((entry, index) => {
-                    if (entry.type === "comment") {
-                      const comment = entry.data;
-                      return (
-                        <CommentBox
-                          key={`comment-${comment.id}`}
-                          id={`issuecomment-${comment.id}`}
-                          user={comment.user}
-                          createdAt={comment.created_at}
-                          body={comment.body ?? null}
-                          reactions={reactions[`comment-${comment.id}`]}
-                          onAddReaction={
-                            canWrite
-                              ? (content) =>
-                                  handleAddCommentReaction(comment.id, content)
-                              : undefined
-                          }
-                          onRemoveReaction={
-                            canWrite
-                              ? (reactionId) =>
-                                  handleRemoveCommentReaction(
-                                    comment.id,
-                                    reactionId
-                                  )
-                              : undefined
-                          }
-                          currentUser={currentUser}
-                        />
-                      );
-                    }
-                    if (entry.type === "review") {
-                      return (
-                        <div key={`review-${entry.data.id}`}>
-                          <ReviewBox review={entry.data} />
-                          {/* Render associated threads under the review */}
-                          {entry.threads.map((thread) => (
-                            <ReviewThreadBox
-                              key={`thread-${thread.id}`}
-                              thread={thread}
-                              owner={owner}
-                              repo={repo}
-                              onReply={handleReplyToThread}
-                              onResolve={handleResolveThread}
-                              onUnresolve={handleUnresolveThread}
-                              canWrite={canWrite}
-                              currentUser={currentUser}
-                            />
-                          ))}
-                        </div>
-                      );
-                    }
-                    if (entry.type === "event") {
-                      return (
-                        <TimelineItem
-                          key={`event-${index}`}
-                          event={entry.data}
-                          pr={pr}
-                        />
-                      );
-                    }
-                    if (entry.type === "thread") {
-                      // Orphaned thread (no associated review)
-                      return (
-                        <ReviewThreadBox
-                          key={`thread-${entry.data.id}`}
-                          thread={entry.data}
-                          owner={owner}
-                          repo={repo}
-                          onReply={handleReplyToThread}
-                          onResolve={handleResolveThread}
-                          onUnresolve={handleUnresolveThread}
-                          canWrite={canWrite}
-                          currentUser={currentUser}
-                        />
-                      );
-                    }
-                    return null;
-                  });
-                })()}
+                    return entries.map((entry, index) => {
+                      if (entry.type === "comment") {
+                        const comment = entry.data;
+                        return (
+                          <CommentBox
+                            key={`comment-${comment.id}`}
+                            id={`issuecomment-${comment.id}`}
+                            user={comment.user}
+                            createdAt={comment.created_at}
+                            body={comment.body ?? null}
+                            reactions={reactions[`comment-${comment.id}`]}
+                            onAddReaction={
+                              canWrite
+                                ? (content) =>
+                                    handleAddCommentReaction(
+                                      comment.id,
+                                      content
+                                    )
+                                : undefined
+                            }
+                            onRemoveReaction={
+                              canWrite
+                                ? (reactionId) =>
+                                    handleRemoveCommentReaction(
+                                      comment.id,
+                                      reactionId
+                                    )
+                                : undefined
+                            }
+                            currentUser={currentUser}
+                          />
+                        );
+                      }
+                      if (entry.type === "review") {
+                        return (
+                          <div key={`review-${entry.data.id}`}>
+                            <ReviewBox review={entry.data} />
+                            {/* Render associated threads under the review */}
+                            {entry.threads.map((thread) => (
+                              <ReviewThreadBox
+                                key={`thread-${thread.id}`}
+                                thread={thread}
+                                owner={owner}
+                                repo={repo}
+                                onReply={handleReplyToThread}
+                                onResolve={handleResolveThread}
+                                onUnresolve={handleUnresolveThread}
+                                canWrite={canWrite}
+                                currentUser={currentUser}
+                              />
+                            ))}
+                          </div>
+                        );
+                      }
+                      if (entry.type === "event") {
+                        return (
+                          <TimelineItem
+                            key={`event-${index}`}
+                            event={entry.data}
+                            pr={pr}
+                          />
+                        );
+                      }
+                      if (entry.type === "thread") {
+                        // Orphaned thread (no associated review)
+                        return (
+                          <ReviewThreadBox
+                            key={`thread-${entry.data.id}`}
+                            thread={entry.data}
+                            owner={owner}
+                            repo={repo}
+                            onReply={handleReplyToThread}
+                            onResolve={handleResolveThread}
+                            onUnresolve={handleUnresolveThread}
+                            canWrite={canWrite}
+                            currentUser={currentUser}
+                          />
+                        );
+                      }
+                      return null;
+                    });
+                  })()}
+                </div>
 
                 {/* Archived repo notice */}
                 {isArchived && pr.state === "open" && !pr.merged && (
@@ -2059,12 +2067,37 @@ function ReviewThreadBox({
   const [submitting, setSubmitting] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [showReplyBox, setShowReplyBox] = useState(false);
+  const [showResolved, setShowResolved] = useState(false);
   const comments = thread.comments.nodes;
   if (comments.length === 0) return null;
 
   const firstComment = comments[0];
   const filePath = firstComment.path;
   const diffHunk = firstComment.diffHunk;
+
+  // If resolved and not expanded, show collapsed view
+  if (thread.isResolved && !showResolved) {
+    return (
+      <div className="ml-8 rounded-lg border border-border bg-card/30 overflow-hidden">
+        <button
+          onClick={() => setShowResolved(true)}
+          className="w-full flex items-center justify-between px-4 py-3 text-sm hover:bg-muted/30 transition-colors"
+        >
+          <span className="font-mono text-muted-foreground">{filePath}</span>
+          <span className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 4a.5.5 0 01.5.5v3h3a.5.5 0 010 1h-3v3a.5.5 0 01-1 0v-3h-3a.5.5 0 010-1h3v-3A.5.5 0 018 4z" />
+              <path
+                fillRule="evenodd"
+                d="M8 15A7 7 0 108 1a7 7 0 000 14zm0 1A8 8 0 108 0a8 8 0 000 16z"
+              />
+            </svg>
+            Show resolved
+          </span>
+        </button>
+      </div>
+    );
+  }
 
   const handleSubmitReply = async () => {
     if (!onReply || submitting || !replyText.trim()) return;
@@ -2137,7 +2170,7 @@ function ReviewThreadBox({
     <div
       className={cn(
         "border rounded-md overflow-hidden ml-8", // Indented to show as nested under review
-        thread.isResolved ? "border-muted opacity-60" : "border-border"
+        thread.isResolved ? "border-muted" : "border-border"
       )}
     >
       {/* File header */}
@@ -2151,11 +2184,15 @@ function ReviewThreadBox({
           {filePath}
         </a>
         {thread.isResolved && (
-          <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
+          <button
+            onClick={() => setShowResolved(false)}
+            className="ml-auto flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
             <Check className="w-3 h-3" />
             Resolved
             {thread.resolvedBy && <span> by {thread.resolvedBy.login}</span>}
-          </span>
+            <span className="border-l border-border pl-2">Hide resolved</span>
+          </button>
         )}
       </div>
 
@@ -4098,16 +4135,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
 
   return (
     <div className="flex items-start gap-3 py-3">
-      {/* Timeline line + icon */}
-      <div className="flex flex-col items-center">
-        <div
-          className={cn(
-            "p-2 rounded-full bg-muted border border-border",
-            eventInfo.color
-          )}
-        >
-          {eventInfo.icon}
-        </div>
+      {/* Icon - sits on top of the timeline line */}
+      <div
+        className={cn(
+          "relative z-10 p-2 rounded-full bg-card border border-border shrink-0",
+          eventInfo.color
+        )}
+      >
+        {eventInfo.icon}
       </div>
 
       {/* Content */}
