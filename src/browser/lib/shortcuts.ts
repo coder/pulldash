@@ -253,7 +253,11 @@ export function matchesKey(
   const shortcut = SHORTCUTS[shortcutId];
 
   // Check modifier requirement
-  if (shortcut.withModifier && !(event.metaKey || event.ctrlKey)) {
+  if (
+    "withModifier" in shortcut &&
+    shortcut.withModifier &&
+    !(event.metaKey || event.ctrlKey)
+  ) {
     return false;
   }
 
