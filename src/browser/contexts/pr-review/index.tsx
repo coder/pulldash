@@ -1269,7 +1269,6 @@ export class PRReviewStore {
 
       const pairs: SplitItem[] = [];
       let i = 0;
-      let lineIdx = 0;
 
       // Insert skip blocks at correct positions
       const getSkipAtLineIdx = (idx: number) =>
@@ -1277,7 +1276,7 @@ export class PRReviewStore {
 
       while (i < allLines.length) {
         // Check if there's a skip block before this line
-        const skipHere = getSkipAtLineIdx(lineIdx);
+        const skipHere = getSkipAtLineIdx(i);
         if (skipHere) {
           pairs.push({ type: "skip", skipIndex: skipHere.skipIndex });
           // Remove from tracking
@@ -1285,7 +1284,6 @@ export class PRReviewStore {
         }
 
         const line = allLines[i];
-        lineIdx = i;
 
         if (line.type === "normal") {
           pairs.push({ type: "pair", left: line, right: line });

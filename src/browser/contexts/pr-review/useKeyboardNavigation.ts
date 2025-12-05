@@ -138,14 +138,17 @@ export function useKeyboardNavigation() {
           break;
         case "e":
           if (state.focusedCommentId) {
-            // Check if user owns this comment
+            // Check if user can edit this comment
+            // ADMIN and MAINTAIN can edit any comment, WRITE can only edit own comments
             const commentToEdit = state.comments.find(
               (c) => c.id === state.focusedCommentId
             );
-            if (
-              commentToEdit &&
-              state.currentUser === commentToEdit.user.login
-            ) {
+            const isOwnComment =
+              commentToEdit && state.currentUser === commentToEdit.user.login;
+            const canEditAny =
+              state.viewerPermission === "ADMIN" ||
+              state.viewerPermission === "MAINTAIN";
+            if (commentToEdit && (isOwnComment || canEditAny)) {
               e.preventDefault();
               store.startEditing(state.focusedCommentId);
             }
@@ -163,14 +166,18 @@ export function useKeyboardNavigation() {
           break;
         case "d":
           if (state.focusedCommentId) {
-            // Check if user owns this comment
+            // Check if user can delete this comment
+            // ADMIN and MAINTAIN can delete any comment, WRITE can only delete own comments
             const commentToDelete = state.comments.find(
               (c) => c.id === state.focusedCommentId
             );
-            if (
+            const isOwnCommentD =
               commentToDelete &&
-              state.currentUser === commentToDelete.user.login
-            ) {
+              state.currentUser === commentToDelete.user.login;
+            const canDeleteAny =
+              state.viewerPermission === "ADMIN" ||
+              state.viewerPermission === "MAINTAIN";
+            if (commentToDelete && (isOwnCommentD || canDeleteAny)) {
               e.preventDefault();
               if (
                 window.confirm("Are you sure you want to delete this comment?")

@@ -735,28 +735,32 @@ export const PROverview = memo(function PROverview() {
 
                 {/* Timeline - merge comments, reviews, and events by date */}
                 <div className="relative">
-                  {/* Vertical timeline line */}
-                  <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-muted-foreground/30 -translate-x-1/2" />
+                  {/* Vertical timeline line - z-0 so content appears above it */}
+                  <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-muted-foreground/30 -translate-x-1/2 z-0" />
 
                   {(() => {
-                    // Build unified timeline
+                    // Build unified timeline using GitHub's timeline order as source of truth
+                    // Commits are grouped together like GitHub does
+                    type CommittedEvent = Extract<
+                      TimelineEvent,
+                      { sha: string; author: { date: string } }
+                    >;
                     type TimelineEntry =
-                      | { type: "comment"; data: IssueComment; date: Date }
+                      | { type: "comment"; data: IssueComment }
                       | {
                           type: "review";
                           data: Review;
                           threads: ReviewThread[];
-                          date: Date;
                         }
-                      | { type: "event"; data: TimelineEvent; date: Date }
-                      | { type: "thread"; data: ReviewThread; date: Date };
+                      | { type: "event"; data: TimelineEvent }
+                      | { type: "thread"; data: ReviewThread }
+                      | { type: "commits"; data: CommittedEvent[] };
 
                     const entries: TimelineEntry[] = [];
 
-                    // Build a map of review database ID -> threads that belong to it
+                    // Build lookup maps for enriched data
                     const threadsByReviewId = new Map<number, ReviewThread[]>();
                     const orphanedThreads: ReviewThread[] = [];
-
                     reviewThreads.forEach((thread) => {
                       const reviewId = thread.pullRequestReview?.databaseId;
                       if (reviewId) {
@@ -764,96 +768,95 @@ export const PROverview = memo(function PROverview() {
                         existing.push(thread);
                         threadsByReviewId.set(reviewId, existing);
                       } else {
-                        // Thread without associated review (shouldn't happen often)
                         orphanedThreads.push(thread);
                       }
                     });
 
-                    // Add comments
-                    conversation.forEach((comment) => {
-                      entries.push({
-                        type: "comment",
-                        data: comment,
-                        date: new Date(comment.created_at),
-                      });
-                    });
+                    const commentsById = new Map(
+                      conversation.map((c) => [c.id, c])
+                    );
+                    const reviewsById = new Map(reviews.map((r) => [r.id, r]));
+                    const usedReviewIds = new Set<number>();
 
-                    // Add ALL reviews to timeline with their associated threads
-                    // Show APPROVED/CHANGES_REQUESTED always, COMMENTED only if they have a body OR associated threads
-                    reviews
-                      .filter((r) => {
-                        if (!r.submitted_at) return false;
-                        const hasThreads =
-                          (threadsByReviewId.get(r.id)?.length ?? 0) > 0;
-                        return (
-                          r.body ||
-                          r.state === "APPROVED" ||
-                          r.state === "CHANGES_REQUESTED" ||
-                          hasThreads
-                        );
-                      })
-                      .forEach((review) => {
-                        entries.push({
-                          type: "review",
-                          data: review,
-                          threads: threadsByReviewId.get(review.id) || [],
-                          date: new Date(review.submitted_at!),
-                        });
-                      });
-
-                    // Add orphaned threads (threads without a matching review in our list)
-                    orphanedThreads.forEach((thread) => {
-                      const firstComment = thread.comments.nodes[0];
-                      if (firstComment) {
-                        entries.push({
-                          type: "thread",
-                          data: thread,
-                          date: new Date(firstComment.createdAt),
-                        });
+                    // Collect consecutive commits to group them
+                    let pendingCommits: CommittedEvent[] = [];
+                    const flushCommits = () => {
+                      if (pendingCommits.length > 0) {
+                        entries.push({ type: "commits", data: pendingCommits });
+                        pendingCommits = [];
                       }
-                    });
+                    };
 
-                    // Add timeline events (excluding those we show as comments/reviews)
+                    // Process timeline in GitHub's order
                     timeline.forEach((event) => {
-                      const eventType = (event as { event?: string }).event;
-                      const createdAt = (event as { created_at?: string })
-                        .created_at;
-                      const sha = (event as { sha?: string }).sha;
-                      const commitDate = (
-                        event as { commit?: { author?: { date?: string } } }
-                      ).commit?.author?.date;
+                      // timeline-committed-event (has sha + author)
+                      if ("sha" in event && "author" in event) {
+                        pendingCommits.push(event);
+                        return;
+                      }
 
-                      // Include commits (have sha but no event field)
-                      if (sha && !eventType) {
-                        const date = createdAt || commitDate;
-                        if (date) {
-                          entries.push({
-                            type: "event",
-                            data: event,
-                            date: new Date(date),
-                          });
+                      // Flush any pending commits before adding other events
+                      flushCommits();
+
+                      if (!("event" in event)) return;
+                      const eventType = event.event;
+
+                      // Skip closed event when PR was merged (redundant with merge)
+                      if (eventType === "closed" && pr.merged) return;
+
+                      // Handle "commented" - look up enriched comment data
+                      if (eventType === "commented" && "id" in event) {
+                        const comment = commentsById.get(
+                          event.id as unknown as number
+                        );
+                        if (comment) {
+                          entries.push({ type: "comment", data: comment });
                         }
+                        return;
                       }
-                      // Include other events (except comments/reviews which we handle separately)
-                      // Also skip "closed" event when PR was merged (it's redundant)
-                      else if (
-                        eventType &&
-                        createdAt &&
-                        !["commented", "reviewed", "line-commented"].includes(
-                          eventType
-                        ) &&
-                        !(eventType === "closed" && pr.merged)
-                      ) {
-                        entries.push({
-                          type: "event",
-                          data: event,
-                          date: new Date(createdAt),
-                        });
+
+                      // Handle "reviewed" - look up enriched review data with threads
+                      if (eventType === "reviewed" && "id" in event) {
+                        const review = reviewsById.get(
+                          event.id as unknown as number
+                        );
+                        if (review) {
+                          const hasThreads =
+                            (threadsByReviewId.get(review.id)?.length ?? 0) > 0;
+                          // Show APPROVED/CHANGES_REQUESTED always, COMMENTED only if they have a body OR threads
+                          if (
+                            review.body ||
+                            review.state === "APPROVED" ||
+                            review.state === "CHANGES_REQUESTED" ||
+                            hasThreads
+                          ) {
+                            entries.push({
+                              type: "review",
+                              data: review,
+                              threads: threadsByReviewId.get(review.id) || [],
+                            });
+                            usedReviewIds.add(review.id);
+                          }
+                        }
+                        return;
                       }
+
+                      // Skip line-commented (shown inline in reviews)
+                      if (eventType === "line-commented") return;
+
+                      // All other events
+                      entries.push({ type: "event", data: event });
                     });
 
-                    // Sort by date
-                    entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+                    // Flush any remaining commits
+                    flushCommits();
+
+                    // Add any orphaned threads that weren't part of a review
+                    orphanedThreads.forEach((thread) => {
+                      if (thread.comments.nodes[0]) {
+                        entries.push({ type: "thread", data: thread });
+                      }
+                    });
 
                     return entries.map((entry, index) => {
                       if (entry.type === "comment") {
@@ -915,6 +918,17 @@ export const PROverview = memo(function PROverview() {
                             key={`event-${index}`}
                             event={entry.data}
                             pr={pr}
+                          />
+                        );
+                      }
+                      if (entry.type === "commits") {
+                        return (
+                          <CommitGroup
+                            key={`commits-${index}`}
+                            commits={entry.data}
+                            prCommits={commits}
+                            owner={owner}
+                            repo={repo}
                           />
                         );
                       }
@@ -1846,12 +1860,15 @@ function CommentBox({
   if (!user) return null;
 
   return (
-    <div id={id} className="border border-border rounded-md overflow-hidden">
+    <div
+      id={id}
+      className="relative z-10 border border-border rounded-md overflow-hidden bg-card"
+    >
       {/* Header */}
       <div
         className={cn(
-          "flex items-center gap-2 px-4 py-2 text-sm border-b border-border",
-          isAuthor ? "bg-blue-500/5" : "bg-card/50"
+          "flex items-center gap-2 px-4 py-2 text-sm border-b border-border bg-card",
+          isAuthor && "bg-blue-500/10"
         )}
       >
         <UserHoverCard login={user.login}>
@@ -1876,7 +1893,7 @@ function CommentBox({
         )}
       </div>
       {/* Body */}
-      <div className="p-4">
+      <div className="p-4 bg-card">
         {body ? (
           <Markdown
             emptyState={
@@ -1895,7 +1912,7 @@ function CommentBox({
       </div>
       {/* Reactions */}
       {(reactions || onAddReaction) && (
-        <div className="px-4 py-2 border-t border-border">
+        <div className="px-4 py-2 border-t border-border bg-card">
           <EmojiReactions
             reactions={reactions || []}
             onAddReaction={onAddReaction}
@@ -1924,53 +1941,116 @@ function ReviewBox({ review }: { review: Review }) {
       PENDING: "started a review",
     }[review.state] || "reviewed";
 
-  const stateBg =
+  // Icon color for timeline circle
+  const iconColor =
     {
-      APPROVED: "bg-green-500/10 border-green-500/30",
-      CHANGES_REQUESTED: "bg-red-500/10 border-red-500/30",
-      COMMENTED: "bg-card/50",
-      DISMISSED: "bg-card/50",
-      PENDING: "bg-yellow-500/10 border-yellow-500/30",
-    }[review.state] || "bg-card/50";
+      APPROVED: "text-green-500",
+      CHANGES_REQUESTED: "text-red-500",
+      COMMENTED: "text-muted-foreground",
+      DISMISSED: "text-muted-foreground",
+      PENDING: "text-yellow-500",
+    }[review.state] || "text-muted-foreground";
+
+  // Border color for comment box
+  const stateBorder =
+    {
+      APPROVED: "border-green-500/30",
+      CHANGES_REQUESTED: "border-red-500/30",
+      COMMENTED: "",
+      DISMISSED: "",
+      PENDING: "border-yellow-500/30",
+    }[review.state] || "";
+
+  // Header background for comment box
+  const stateHeaderBg =
+    {
+      APPROVED: "bg-green-500/10",
+      CHANGES_REQUESTED: "bg-red-500/10",
+      COMMENTED: "",
+      DISMISSED: "",
+      PENDING: "bg-yellow-500/10",
+    }[review.state] || "";
 
   return (
-    <div
-      id={`pullrequestreview-${review.id}`}
-      className={cn("border rounded-md overflow-hidden", stateBg)}
-    >
-      <div className="flex items-center gap-2 px-4 py-2 text-sm border-b border-border">
+    <div id={`pullrequestreview-${review.id}`}>
+      {/* Timeline header row - like GitHub's "Username reviewed yesterday" */}
+      <div className="flex items-center gap-3 py-1.5 text-sm text-muted-foreground">
         <UserHoverCard login={review.user.login}>
           <img
             src={review.user.avatar_url}
             alt={review.user.login}
-            className="w-5 h-5 rounded-full cursor-pointer"
+            className="w-6 h-6 rounded-full cursor-pointer"
           />
         </UserHoverCard>
-        <UserHoverCard login={review.user.login}>
-          <span className="font-semibold hover:text-blue-400 hover:underline cursor-pointer">
-            {review.user.login}
-          </span>
-        </UserHoverCard>
-        <ReviewStateIcon state={review.state} />
-        <span className="text-muted-foreground">{stateText}</span>
-        <span className="text-muted-foreground">
-          {review.submitted_at && getTimeAgo(new Date(review.submitted_at))}
-        </span>
-        <span className="flex-1" />
-        {review.html_url && (
-          <a
-            href={review.html_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-400 hover:underline text-xs"
+        <div
+          className={cn(
+            "relative z-10 p-1.5 rounded-full bg-background border border-border shrink-0",
+            iconColor
+          )}
+        >
+          <ReviewStateIcon state={review.state} />
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          <UserHoverCard login={review.user.login}>
+            <span className="font-semibold text-foreground hover:text-blue-400 hover:underline cursor-pointer">
+              {review.user.login}
+            </span>
+          </UserHoverCard>
+          <span>{stateText}</span>
+          <span
+            title={
+              review.submitted_at
+                ? new Date(review.submitted_at).toLocaleString()
+                : undefined
+            }
           >
-            View reviewed changes
-          </a>
-        )}
+            {review.submitted_at && getTimeAgo(new Date(review.submitted_at))}
+          </span>
+        </div>
       </div>
+
+      {/* Comment box - shows if there's a body */}
       {review.body && (
-        <div className="p-4">
-          <Markdown>{review.body}</Markdown>
+        <div
+          className={cn(
+            "relative z-10 border rounded-md overflow-hidden bg-card ml-8",
+            stateBorder
+          )}
+        >
+          <div
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 text-sm border-b border-border bg-card",
+              stateHeaderBg
+            )}
+          >
+            <UserHoverCard login={review.user.login}>
+              <img
+                src={review.user.avatar_url}
+                alt={review.user.login}
+                className="w-5 h-5 rounded-full cursor-pointer"
+              />
+            </UserHoverCard>
+            <UserHoverCard login={review.user.login}>
+              <span className="font-semibold hover:text-blue-400 hover:underline cursor-pointer">
+                {review.user.login}
+              </span>
+            </UserHoverCard>
+            <span className="text-muted-foreground">left a comment</span>
+            <span className="flex-1" />
+            {review.html_url && (
+              <a
+                href={review.html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:underline text-xs"
+              >
+                View on GitHub
+              </a>
+            )}
+          </div>
+          <div className="p-4 bg-card">
+            <Markdown>{review.body}</Markdown>
+          </div>
         </div>
       )}
     </div>
@@ -1992,29 +2072,27 @@ function ReviewStateIcon({
     switch (state) {
       case "APPROVED":
         return {
-          icon: <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto" />,
+          icon: <CheckCircle2 className="w-4 h-4 text-green-500" />,
           tooltip: "Approved this pull request",
         };
       case "CHANGES_REQUESTED":
         return {
-          icon: <XCircle className="w-4 h-4 text-red-500 ml-auto" />,
+          icon: <XCircle className="w-4 h-4 text-red-500" />,
           tooltip: "Requested changes to this pull request",
         };
       case "COMMENTED":
         return {
-          icon: <Eye className="w-4 h-4 text-blue-500 ml-auto" />,
+          icon: <Eye className="w-4 h-4" />,
           tooltip: "Left review comments",
         };
       case "DISMISSED":
         return {
-          icon: (
-            <MinusCircle className="w-4 h-4 text-muted-foreground ml-auto" />
-          ),
+          icon: <MinusCircle className="w-4 h-4 text-muted-foreground" />,
           tooltip: "Review was dismissed",
         };
       default:
         return {
-          icon: <Circle className="w-4 h-4 text-muted-foreground ml-auto" />,
+          icon: <Circle className="w-4 h-4 text-muted-foreground" />,
           tooltip: "Pending review",
         };
     }
@@ -2078,10 +2156,10 @@ function ReviewThreadBox({
   // If resolved and not expanded, show collapsed view
   if (thread.isResolved && !showResolved) {
     return (
-      <div className="ml-8 rounded-lg border border-border bg-card/30 overflow-hidden">
+      <div className="relative z-10 ml-8 rounded-lg border border-border bg-card overflow-hidden">
         <button
           onClick={() => setShowResolved(true)}
-          className="w-full flex items-center justify-between px-4 py-3 text-sm hover:bg-muted/30 transition-colors"
+          className="w-full flex items-center justify-between px-4 py-3 text-sm hover:bg-muted/50 transition-colors"
         >
           <span className="font-mono text-muted-foreground">{filePath}</span>
           <span className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
@@ -2169,12 +2247,12 @@ function ReviewThreadBox({
   return (
     <div
       className={cn(
-        "border rounded-md overflow-hidden ml-8", // Indented to show as nested under review
+        "relative z-10 border rounded-md overflow-hidden ml-8 bg-card", // Indented to show as nested under review
         thread.isResolved ? "border-muted" : "border-border"
       )}
     >
       {/* File header */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-card/50 border-b border-border text-sm">
+      <div className="flex items-center gap-2 px-3 py-2 bg-card border-b border-border text-sm">
         <a
           href={`https://github.com/${owner}/${repo}/blob/HEAD/${filePath}`}
           target="_blank"
@@ -3624,7 +3702,94 @@ function getMergeButtonText(method: "merge" | "squash" | "rebase"): string {
 }
 
 // ============================================================================
-// Timeline Item Component
+// Commit Group Component - Compact commit display
+// ============================================================================
+
+type CommittedEvent = Extract<
+  TimelineEvent,
+  { sha: string; author: { date: string } }
+>;
+
+interface CommitGroupProps {
+  commits: CommittedEvent[];
+  prCommits: PRCommit[];
+  owner: string;
+  repo: string;
+}
+
+function CommitGroup({ commits, prCommits, owner, repo }: CommitGroupProps) {
+  if (commits.length === 0) return null;
+
+  // Create a map from SHA to PRCommit for looking up GitHub usernames
+  const prCommitMap = new Map(prCommits.map((c) => [c.sha, c]));
+
+  // Get author display name - prefer GitHub login over git commit name
+  const getAuthorName = (commit: CommittedEvent): string => {
+    const prCommit = prCommitMap.get(commit.sha);
+    return prCommit?.author?.login || commit.author.name || "Someone";
+  };
+
+  const lastCommit = commits[commits.length - 1];
+  const authorName = getAuthorName(commits[0]);
+
+  return (
+    <div>
+      {/* Only show header if more than 1 commit */}
+      {commits.length > 1 && (
+        <div className="flex items-center gap-3 py-1.5 text-sm text-muted-foreground">
+          <div className="relative z-10 p-1.5 rounded-full bg-background border border-border shrink-0">
+            <GitCommit className="w-4 h-4" />
+          </div>
+          <span>
+            <span className="font-medium text-foreground">{authorName}</span>{" "}
+            added {commits.length} commits{" "}
+            {getTimeAgo(new Date(lastCommit.author.date))}
+          </span>
+        </div>
+      )}
+
+      {/* Individual commits */}
+      {commits.map((commit) => (
+        <div
+          key={commit.sha}
+          className="flex items-center gap-3 py-1.5 text-sm text-muted-foreground"
+        >
+          <div className="relative z-10 p-1.5 rounded-full bg-background border border-border shrink-0">
+            <GitCommit className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <span className="font-medium text-foreground truncate">
+              {getAuthorName(commit)}
+            </span>
+            <a
+              href={commit.html_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 min-w-0 truncate hover:text-blue-400"
+              title={commit.message}
+            >
+              {commit.message.split("\n")[0]}
+            </a>
+            <a
+              href={commit.html_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-xs hover:text-blue-400 shrink-0"
+            >
+              {commit.sha.slice(0, 7)}
+            </a>
+            <span className="shrink-0">
+              {getTimeAgo(new Date(commit.author.date))}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// Timeline Item Component - Compact event display
 // ============================================================================
 
 interface TimelineItemProps {
@@ -3633,96 +3798,27 @@ interface TimelineItemProps {
 }
 
 function TimelineItem({ event, pr }: TimelineItemProps) {
-  // Get the event type - timeline events have an "event" field
-  // Commits don't have an "event" field but have a "sha" field
-  const eventType = (event as { event?: string }).event;
-  const actor = (event as { actor?: { login: string; avatar_url: string } })
-    .actor;
-  const createdAt = (event as { created_at?: string }).created_at;
+  // Commits are handled by CommitGroup
+  if ("sha" in event && "author" in event) return null;
 
-  // Check if this is a commit (commits have sha but no event field)
-  const isCommit = !eventType && (event as { sha?: string }).sha;
-
-  // Skip events we don't want to show (but allow commits)
-  if (!eventType && !isCommit) return null;
-
-  // Events to skip (they're shown elsewhere or not useful)
+  // Skip events that shouldn't be shown
+  if (!("event" in event) || !event.event) return null;
   const skipEvents = ["commented", "reviewed", "line-commented"];
-  if (eventType && skipEvents.includes(eventType)) return null;
+  if (skipEvents.includes(event.event)) return null;
+
+  // Extract actor (not all event types have actor)
+  const actor =
+    "actor" in event
+      ? (event.actor as { login: string; avatar_url: string })
+      : undefined;
+  const eventType = event.event;
 
   const getEventInfo = (): {
     icon: React.ReactNode;
     text: React.ReactNode;
     color: string;
-    avatar?: string;
   } | null => {
-    // Handle commits (no event field, but has sha)
-    if (isCommit) {
-      const commit = event as {
-        sha?: string;
-        html_url?: string;
-        author?: { login?: string; avatar_url?: string; name?: string };
-        committer?: { login?: string; avatar_url?: string };
-        commit?: {
-          message?: string;
-          author?: { name?: string; date?: string };
-        };
-      };
-      const authorName =
-        commit.author?.login || commit.commit?.author?.name || "Someone";
-      const authorAvatar =
-        commit.author?.avatar_url || commit.committer?.avatar_url;
-      const message = commit.commit?.message?.split("\n")[0] || "";
-
-      return {
-        icon: <GitCommit className="w-4 h-4" />,
-        text: (
-          <span>
-            <span className="font-medium">{authorName}</span> added a commit{" "}
-            <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
-              {commit.sha?.slice(0, 7)}
-            </code>
-            {message && (
-              <span className="text-muted-foreground"> — {message}</span>
-            )}
-          </span>
-        ),
-        color: "text-muted-foreground",
-        avatar: authorAvatar,
-      };
-    }
-
     switch (eventType) {
-      case "committed": {
-        const commit = event as {
-          sha?: string;
-          message?: string;
-          author?: { name?: string; avatar_url?: string };
-        };
-        return {
-          icon: <GitCommit className="w-4 h-4" />,
-          text: (
-            <span>
-              <span className="font-medium">
-                {commit.author?.name || "Someone"}
-              </span>{" "}
-              added a commit{" "}
-              <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
-                {commit.sha?.slice(0, 7)}
-              </code>
-              {commit.message && (
-                <span className="text-muted-foreground">
-                  {" "}
-                  — {commit.message.split("\n")[0]}
-                </span>
-              )}
-            </span>
-          ),
-          color: "text-muted-foreground",
-          avatar: commit.author?.avatar_url,
-        };
-      }
-
       case "review_requested": {
         const requested = event as { requested_reviewer?: { login: string } };
         return {
@@ -4122,52 +4218,25 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
   const eventInfo = getEventInfo();
   if (!eventInfo) return null;
 
-  // Get the date - for commits, use commit.author.date if created_at is not available
-  const commitDate = isCommit
-    ? (event as { commit?: { author?: { date?: string } } }).commit?.author
-        ?.date
-    : undefined;
-  const displayDate = createdAt || commitDate;
-
-  // Get avatar - prefer actor's avatar, then eventInfo.avatar
-  const avatarUrl = actor?.avatar_url || eventInfo.avatar;
-  const avatarAlt = actor?.login || "User";
+  const displayDate = "created_at" in event ? event.created_at : undefined;
 
   return (
-    <div className="flex items-start gap-3 py-3">
-      {/* Icon - sits on top of the timeline line */}
+    <div className="flex items-center gap-3 py-1.5 text-sm text-muted-foreground">
       <div
         className={cn(
-          "relative z-10 p-2 rounded-full bg-card border border-border shrink-0",
+          "relative z-10 p-1.5 rounded-full bg-background border border-border shrink-0",
           eventInfo.color
         )}
       >
         {eventInfo.icon}
       </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 pt-1.5">
-        <div className="flex items-center gap-2 flex-wrap text-sm">
-          {avatarUrl && (
-            <img
-              src={avatarUrl}
-              alt={avatarAlt}
-              className="w-5 h-5 rounded-full"
-            />
-          )}
-          {eventInfo.text}
-          {displayDate && (
-            <span className="text-muted-foreground">
-              <a
-                href="#"
-                className="hover:text-blue-400 hover:underline"
-                title={new Date(displayDate).toLocaleString()}
-              >
-                {getTimeAgo(new Date(displayDate))}
-              </a>
-            </span>
-          )}
-        </div>
+      <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+        {eventInfo.text}
+        {displayDate && (
+          <span title={new Date(displayDate).toLocaleString()}>
+            {getTimeAgo(new Date(displayDate))}
+          </span>
+        )}
       </div>
     </div>
   );

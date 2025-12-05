@@ -2707,8 +2707,15 @@ const CommentItem = memo(function CommentItem({
   const store = usePRReviewStore();
   const github = useGitHubStore();
   const currentUser = usePRReviewSelector((s) => s.currentUser);
+  const viewerPermission = usePRReviewSelector((s) => s.viewerPermission);
   const canWrite = useCanWrite();
   const isOwnComment = currentUser === comment.user.login;
+  // ADMIN and MAINTAIN can edit/delete any comment, WRITE can only edit own comments
+  const canEditComment =
+    canWrite &&
+    (isOwnComment ||
+      viewerPermission === "ADMIN" ||
+      viewerPermission === "MAINTAIN");
 
   // Reactions state
   const [reactions, setReactions] = useState<Reaction[]>([]);
@@ -2907,7 +2914,7 @@ const CommentItem = memo(function CommentItem({
                     )}
                   </button>
                 )}
-                {isOwnComment && canWrite && (
+                {canEditComment && (
                   <>
                     <button
                       onClick={() => store.startEditing(comment.id)}
@@ -3661,19 +3668,6 @@ function PRReviewSkeleton() {
 
         {/* Overview panel skeleton - shown by default since showOverview is true initially */}
         <main className="flex-1 overflow-hidden flex flex-col">
-          {/* Header bar matching the overview view */}
-          <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span className="text-sm font-medium text-muted-foreground">
-                Overview
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Skeleton className="h-4 w-24 hidden sm:block" />
-              <Skeleton className="h-8 w-28" />
-            </div>
-          </div>
           <OverviewPanelSkeleton />
         </main>
       </div>
