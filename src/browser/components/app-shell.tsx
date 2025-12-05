@@ -22,6 +22,7 @@ import {
   HoverCardTrigger,
   HoverCardContent,
 } from "../ui/hover-card";
+import { version } from "../../../package.json";
 
 // ============================================================================
 // App Shell - Tab-based Layout
@@ -138,7 +139,7 @@ export function AppShell() {
                   <div>
                     <h4 className="text-sm font-semibold">Pulldash</h4>
                     <p className="text-[10px] text-muted-foreground font-mono">
-                      v0.0.2
+                      v{version}
                     </p>
                   </div>
                 </div>

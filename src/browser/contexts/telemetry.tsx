@@ -7,6 +7,7 @@ import {
 } from "react";
 import posthog from "posthog-js";
 import { useCurrentUser } from "./github";
+import { version } from "../../../package.json";
 
 // ============================================================================
 // Configuration
@@ -16,7 +17,7 @@ const POSTHOG_KEY = "phc_vvticSI4cYwo89gWzSwHeLIMC8jgNy5TeYq2THJX3X5";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // App version from package.json (injected at build time or read from meta tag)
-const APP_VERSION = "0.0.2";
+const APP_VERSION = version;
 
 // ============================================================================
 // Platform Detection
