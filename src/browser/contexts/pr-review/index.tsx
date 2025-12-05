@@ -806,6 +806,7 @@ export class PRReviewStore {
   };
 
   // Switch between left (old) and right (new) sides in split view
+  // This uses the same split-pair logic as the UI to navigate like a grid
   navigateSide = (direction: "left" | "right") => {
     const {
       focusedLine,
@@ -826,48 +827,90 @@ export class PRReviewStore {
     const diff = selectedFile ? loadedDiffs[selectedFile] : null;
     if (!diff?.hunks) return;
 
-    // Helper to check if a line matches and handle switching
-    const trySwitch = (line: DiffLine): boolean => {
-      // Check if this is the line we're currently focused on
-      const matchesOld =
-        focusedLineSide === "old" && line.oldLineNumber === focusedLine;
-      const matchesNew =
-        focusedLineSide === "new" && line.newLineNumber === focusedLine;
-
-      if (!matchesOld && !matchesNew) return false;
-
-      // Only context/merged lines (type "normal") can be on both sides
-      // Delete lines only exist on old side, insert lines only on new side
-      if (line.type !== "normal") return true; // Found but can't switch
-
-      // Get the line number for the target side
-      const targetLineNum =
-        targetSide === "old" ? line.oldLineNumber : line.newLineNumber;
-      if (targetLineNum !== undefined) {
-        this.setFocusedLine(targetLineNum, targetSide);
-        this.setSelectionAnchor(null, null);
-      }
-      return true;
-    };
-
-    // Search in regular hunks
+    // Collect all lines from hunks, substituting expanded skip blocks
+    const allLines: DiffLine[] = [];
+    let skipIndex = 0;
     for (const hunk of diff.hunks) {
-      if (hunk.type !== "hunk") continue;
-      for (const line of hunk.lines) {
-        if (trySwitch(line)) return;
+      if (hunk.type === "skip") {
+        const key = `${selectedFile}:${skipIndex}`;
+        const expandedLines = expandedSkipBlocks[key];
+        if (expandedLines) {
+          allLines.push(...expandedLines);
+        }
+        skipIndex++;
+      } else if (hunk.type === "hunk") {
+        allLines.push(...hunk.lines);
       }
     }
 
-    // Also search in expanded skip blocks
-    if (selectedFile) {
-      for (const key of Object.keys(expandedSkipBlocks)) {
-        if (!key.startsWith(`${selectedFile}:`)) continue;
-        const expandedLines = expandedSkipBlocks[key];
-        if (expandedLines) {
-          for (const line of expandedLines) {
-            if (trySwitch(line)) return;
+    // Convert to split pairs (same logic as convertToSplitPairs in pr-review.tsx)
+    type SplitPair = {
+      left: DiffLine | null;
+      right: DiffLine | null;
+    };
+    const pairs: SplitPair[] = [];
+    let i = 0;
+
+    while (i < allLines.length) {
+      const line = allLines[i];
+
+      if (line.type === "normal") {
+        // Context line - show on both sides
+        pairs.push({ left: line, right: line });
+        i++;
+      } else if (line.type === "delete") {
+        // Collect consecutive deletes
+        const deletes: DiffLine[] = [];
+        while (i < allLines.length && allLines[i].type === "delete") {
+          deletes.push(allLines[i]);
+          i++;
+        }
+
+        // Collect consecutive inserts that follow
+        const inserts: DiffLine[] = [];
+        while (i < allLines.length && allLines[i].type === "insert") {
+          inserts.push(allLines[i]);
+          i++;
+        }
+
+        // Pair them up
+        const maxLen = Math.max(deletes.length, inserts.length);
+        for (let j = 0; j < maxLen; j++) {
+          pairs.push({
+            left: deletes[j] || null,
+            right: inserts[j] || null,
+          });
+        }
+      } else if (line.type === "insert") {
+        // Standalone insert (no preceding delete)
+        pairs.push({ left: null, right: line });
+        i++;
+      }
+    }
+
+    // Find the pair containing our currently focused line
+    for (const pair of pairs) {
+      const matchesLeft =
+        focusedLineSide === "old" && pair.left?.oldLineNumber === focusedLine;
+      const matchesRight =
+        focusedLineSide === "new" && pair.right?.newLineNumber === focusedLine;
+
+      if (matchesLeft || matchesRight) {
+        // Found the pair - switch to the other side if it exists
+        if (direction === "left" && pair.left) {
+          const targetLineNum = pair.left.oldLineNumber;
+          if (targetLineNum !== undefined) {
+            this.setFocusedLine(targetLineNum, "old");
+            this.setSelectionAnchor(null, null);
+          }
+        } else if (direction === "right" && pair.right) {
+          const targetLineNum = pair.right.newLineNumber;
+          if (targetLineNum !== undefined) {
+            this.setFocusedLine(targetLineNum, "new");
+            this.setSelectionAnchor(null, null);
           }
         }
+        return;
       }
     }
   };
@@ -1188,7 +1231,209 @@ export class PRReviewStore {
       }
     }
 
-    // Normal line/skip navigation - find current position in navigableItems
+    // In split view, navigate through visual rows while staying on the same side
+    const { diffViewMode } = this.state;
+    if (diffViewMode === "split" && focusedLine !== null && focusedLineSide) {
+      // Collect all lines for split pair computation
+      const allLines: DiffLine[] = [];
+      let skipIdx = 0;
+      const skipBlockIndices: { pairIdx: number; skipIndex: number }[] = [];
+
+      for (const hunk of diff.hunks) {
+        if (hunk.type === "skip") {
+          const key = `${selectedFile}:${skipIdx}`;
+          const expandedLines = expandedSkipBlocks[key];
+          if (expandedLines) {
+            allLines.push(...expandedLines);
+          } else {
+            // Mark where skip block would appear in pairs
+            skipBlockIndices.push({
+              pairIdx: allLines.length, // Will be adjusted after pair conversion
+              skipIndex: skipIdx,
+            });
+          }
+          skipIdx++;
+        } else if (hunk.type === "hunk") {
+          allLines.push(...hunk.lines);
+        }
+      }
+
+      // Convert to split pairs
+      type SplitPair = {
+        type: "pair";
+        left: DiffLine | null;
+        right: DiffLine | null;
+      };
+      type SplitSkip = { type: "skip"; skipIndex: number };
+      type SplitItem = SplitPair | SplitSkip;
+
+      const pairs: SplitItem[] = [];
+      let i = 0;
+      let lineIdx = 0;
+
+      // Insert skip blocks at correct positions
+      const getSkipAtLineIdx = (idx: number) =>
+        skipBlockIndices.find((s) => s.pairIdx === idx);
+
+      while (i < allLines.length) {
+        // Check if there's a skip block before this line
+        const skipHere = getSkipAtLineIdx(lineIdx);
+        if (skipHere) {
+          pairs.push({ type: "skip", skipIndex: skipHere.skipIndex });
+          // Remove from tracking
+          skipBlockIndices.splice(skipBlockIndices.indexOf(skipHere), 1);
+        }
+
+        const line = allLines[i];
+        lineIdx = i;
+
+        if (line.type === "normal") {
+          pairs.push({ type: "pair", left: line, right: line });
+          i++;
+        } else if (line.type === "delete") {
+          const deletes: DiffLine[] = [];
+          while (i < allLines.length && allLines[i].type === "delete") {
+            deletes.push(allLines[i]);
+            i++;
+          }
+          const inserts: DiffLine[] = [];
+          while (i < allLines.length && allLines[i].type === "insert") {
+            inserts.push(allLines[i]);
+            i++;
+          }
+          const maxLen = Math.max(deletes.length, inserts.length);
+          for (let j = 0; j < maxLen; j++) {
+            pairs.push({
+              type: "pair",
+              left: deletes[j] || null,
+              right: inserts[j] || null,
+            });
+          }
+        } else if (line.type === "insert") {
+          pairs.push({ type: "pair", left: null, right: line });
+          i++;
+        }
+      }
+
+      // Add any remaining skip blocks at the end
+      for (const skip of skipBlockIndices) {
+        pairs.push({ type: "skip", skipIndex: skip.skipIndex });
+      }
+
+      // Find current pair index
+      const currentPairIdx = pairs.findIndex((item) => {
+        if (item.type === "skip") return false;
+        if (focusedLineSide === "old") {
+          return item.left?.oldLineNumber === focusedLine;
+        } else {
+          return item.right?.newLineNumber === focusedLine;
+        }
+      });
+
+      if (currentPairIdx !== -1) {
+        let nextPairIdx: number;
+        if (direction === "down") {
+          nextPairIdx = Math.min(currentPairIdx + jumpCount, pairs.length - 1);
+        } else {
+          nextPairIdx = Math.max(currentPairIdx - jumpCount, 0);
+        }
+
+        const nextPair = pairs[nextPairIdx];
+
+        // If next is a skip block, focus it
+        if (nextPair.type === "skip") {
+          this.set({
+            focusedSkipBlockIndex: nextPair.skipIndex,
+            focusedLine: null,
+            focusedLineSide: null,
+            selectionAnchor: null,
+            selectionAnchorSide: null,
+            focusedCommentId: null,
+            focusedPendingCommentId: null,
+          });
+          return;
+        }
+
+        // Try to stay on the same side
+        let nextLine: number | undefined;
+        let nextSide = focusedLineSide;
+
+        if (focusedLineSide === "old" && nextPair.left) {
+          nextLine = nextPair.left.oldLineNumber;
+        } else if (focusedLineSide === "new" && nextPair.right) {
+          nextLine = nextPair.right.newLineNumber;
+        } else if (nextPair.left) {
+          // Fallback to left side if preferred side not available
+          nextLine = nextPair.left.oldLineNumber;
+          nextSide = "old";
+        } else if (nextPair.right) {
+          // Fallback to right side
+          nextLine = nextPair.right.newLineNumber;
+          nextSide = "new";
+        }
+
+        if (nextLine !== undefined) {
+          // Handle up navigation - check for comments
+          if (
+            direction === "up" &&
+            (nextLine !== focusedLine || nextSide !== focusedLineSide)
+          ) {
+            const targetLineComments = getLineComments(nextLine);
+            if (targetLineComments.length > 0) {
+              this.set({
+                focusedCommentId:
+                  targetLineComments[targetLineComments.length - 1].id,
+                focusedLine: null,
+                focusedLineSide: null,
+                focusedSkipBlockIndex: null,
+                selectionAnchor: null,
+                selectionAnchorSide: null,
+              });
+              return;
+            }
+            const targetLinePending = getLinePendingComments(nextLine);
+            if (targetLinePending.length > 0) {
+              this.set({
+                focusedPendingCommentId:
+                  targetLinePending[targetLinePending.length - 1].id,
+                focusedLine: null,
+                focusedLineSide: null,
+                focusedSkipBlockIndex: null,
+                selectionAnchor: null,
+                selectionAnchorSide: null,
+              });
+              return;
+            }
+          }
+
+          if (withShift) {
+            this.set({
+              focusedLine: nextLine,
+              focusedLineSide: nextSide,
+              selectionAnchor: selectionAnchor ?? focusedLine ?? nextLine,
+              selectionAnchorSide:
+                selectionAnchorSide ?? focusedLineSide ?? nextSide,
+              focusedSkipBlockIndex: null,
+              focusedCommentId: null,
+              focusedPendingCommentId: null,
+            });
+          } else {
+            this.set({
+              focusedLine: nextLine,
+              focusedLineSide: nextSide,
+              selectionAnchor: null,
+              selectionAnchorSide: null,
+              focusedSkipBlockIndex: null,
+              focusedCommentId: null,
+              focusedPendingCommentId: null,
+            });
+          }
+          return;
+        }
+      }
+    }
+
+    // Normal line/skip navigation (unified view or fallback)
     const currentIdx =
       focusedLine !== null
         ? navigableItems.findIndex(
