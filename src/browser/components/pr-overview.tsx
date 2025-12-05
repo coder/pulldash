@@ -959,6 +959,7 @@ export const PROverview = memo(function PROverview() {
                                 onResolve={handleResolveThread}
                                 onUnresolve={handleUnresolveThread}
                                 canWrite={canWrite}
+                                canResolveThread={canResolveThread}
                                 currentUser={currentUser}
                                 onAddReaction={handleAddReviewCommentReaction}
                                 onRemoveReaction={
@@ -2232,16 +2233,14 @@ function ReviewThreadBox({
   const [showResolved, setShowResolved] = useState(false);
   const [parsedDiff, setParsedDiff] = useState<ParsedDiff | null>(null);
   const comments = thread.comments.nodes;
-  if (comments.length === 0) return null;
-
   const firstComment = comments[0];
-  const filePath = firstComment.path;
-  const diffHunk = firstComment.diffHunk;
+  const filePath = firstComment?.path;
+  const diffHunk = firstComment?.diffHunk;
 
   // Parse diff hunk with syntax highlighting using the worker
   // Note: The worker already adds git diff headers, so we pass diffHunk directly
   useEffect(() => {
-    if (!diffHunk) {
+    if (!diffHunk || !filePath) {
       setParsedDiff(null);
       return;
     }
@@ -2250,6 +2249,43 @@ function ReviewThreadBox({
       .then(setParsedDiff)
       .catch(console.error);
   }, [diffHunk, filePath]);
+
+  // Get diff lines from parsed diff (first hunk), filtered to show only relevant lines
+  // GitHub's UI shows ~10 lines of context around the comment, not the entire diff hunk
+  const diffHunkData = useMemo(() => {
+    const hunk = parsedDiff?.hunks.find((h) => h.type === "hunk");
+    if (!hunk || hunk.type !== "hunk" || !firstComment) return null;
+
+    const commentLine = firstComment.line;
+    const commentStartLine = firstComment.startLine;
+
+    // If no line info, show all (fallback)
+    if (!commentLine) return hunk;
+
+    // Filter lines to show only those around the comment range
+    // Show ~4 lines of context before the comment start
+    const CONTEXT_LINES = 4;
+    const rangeStart = (commentStartLine ?? commentLine) - CONTEXT_LINES;
+    const rangeEnd = commentLine;
+
+    const filteredLines = hunk.lines.filter((line) => {
+      // Use newLineNumber for additions, oldLineNumber for deletions/context
+      const lineNum = line.newLineNumber ?? line.oldLineNumber;
+      if (!lineNum) return false;
+      return lineNum >= rangeStart && lineNum <= rangeEnd;
+    });
+
+    // If filter is too aggressive and removes everything, show original
+    if (filteredLines.length === 0) return hunk;
+
+    return {
+      ...hunk,
+      lines: filteredLines,
+    };
+  }, [parsedDiff, firstComment]);
+
+  // Early return after all hooks
+  if (comments.length === 0 || !firstComment) return null;
 
   // If resolved and not expanded, show collapsed view
   if (thread.isResolved && !showResolved) {
@@ -2299,9 +2335,6 @@ function ReviewThreadBox({
       setReplyText("");
     }
   };
-
-  // Get diff lines from parsed diff (first hunk)
-  const diffHunkData = parsedDiff?.hunks.find((h) => h.type === "hunk") ?? null;
 
   return (
     <div
@@ -2462,7 +2495,7 @@ function ReviewThreadBox({
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {!thread.isResolved && (
+                  {canResolveThread && !thread.isResolved && (
                     <button
                       onClick={async () => {
                         if (!onResolve || resolving) return;
@@ -2479,7 +2512,7 @@ function ReviewThreadBox({
                       {resolving ? "..." : "Resolve conversation"}
                     </button>
                   )}
-                  {thread.isResolved && (
+                  {canResolveThread && thread.isResolved && (
                     <button
                       onClick={async () => {
                         if (!onUnresolve || resolving) return;
@@ -2532,39 +2565,40 @@ function ReviewThreadBox({
               >
                 Reply...
               </button>
-              {!thread.isResolved ? (
-                <button
-                  onClick={async () => {
-                    if (!onResolve || resolving) return;
-                    setResolving(true);
-                    try {
-                      await onResolve(thread.id);
-                    } finally {
-                      setResolving(false);
-                    }
-                  }}
-                  disabled={resolving}
-                  className="text-xs px-3 py-2 rounded-md border border-border hover:bg-muted disabled:opacity-50 transition-colors"
-                >
-                  {resolving ? "..." : "Resolve conversation"}
-                </button>
-              ) : (
-                <button
-                  onClick={async () => {
-                    if (!onUnresolve || resolving) return;
-                    setResolving(true);
-                    try {
-                      await onUnresolve(thread.id);
-                    } finally {
-                      setResolving(false);
-                    }
-                  }}
-                  disabled={resolving}
-                  className="text-xs px-3 py-2 rounded-md border border-border hover:bg-muted disabled:opacity-50 transition-colors"
-                >
-                  {resolving ? "..." : "Unresolve"}
-                </button>
-              )}
+              {canResolveThread &&
+                (!thread.isResolved ? (
+                  <button
+                    onClick={async () => {
+                      if (!onResolve || resolving) return;
+                      setResolving(true);
+                      try {
+                        await onResolve(thread.id);
+                      } finally {
+                        setResolving(false);
+                      }
+                    }}
+                    disabled={resolving}
+                    className="text-xs px-3 py-2 rounded-md border border-border hover:bg-muted disabled:opacity-50 transition-colors"
+                  >
+                    {resolving ? "..." : "Resolve conversation"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      if (!onUnresolve || resolving) return;
+                      setResolving(true);
+                      try {
+                        await onUnresolve(thread.id);
+                      } finally {
+                        setResolving(false);
+                      }
+                    }}
+                    disabled={resolving}
+                    className="text-xs px-3 py-2 rounded-md border border-border hover:bg-muted disabled:opacity-50 transition-colors"
+                  >
+                    {resolving ? "..." : "Unresolve"}
+                  </button>
+                ))}
             </div>
           )}
         </div>
@@ -3787,14 +3821,33 @@ function CommitGroup({ commits, prCommits, owner, repo }: CommitGroupProps) {
   // Create a map from SHA to PRCommit for looking up GitHub usernames
   const prCommitMap = new Map(prCommits.map((c) => [c.sha, c]));
 
-  // Get author display name - prefer GitHub login over git commit name
-  const getAuthorName = (commit: CommittedEvent): string => {
+  // Get author info - prefer GitHub login over git commit name
+  const getAuthorInfo = (
+    commit: CommittedEvent
+  ): { login?: string; name: string } => {
     const prCommit = prCommitMap.get(commit.sha);
-    return prCommit?.author?.login || commit.author.name || "Someone";
+    const login = prCommit?.author?.login;
+    const name = login || commit.author.name || "Someone";
+    return { login, name };
+  };
+
+  // Render author name with hover card if we have a GitHub login
+  const renderAuthor = (commit: CommittedEvent) => {
+    const { login, name } = getAuthorInfo(commit);
+    if (login) {
+      return (
+        <UserHoverCard login={login}>
+          <span className="font-medium text-foreground cursor-pointer hover:text-blue-400 hover:underline truncate">
+            {name}
+          </span>
+        </UserHoverCard>
+      );
+    }
+    return <span className="font-medium text-foreground truncate">{name}</span>;
   };
 
   const lastCommit = commits[commits.length - 1];
-  const authorName = getAuthorName(commits[0]);
+  const firstAuthorInfo = getAuthorInfo(commits[0]);
 
   return (
     <div>
@@ -3805,7 +3858,17 @@ function CommitGroup({ commits, prCommits, owner, repo }: CommitGroupProps) {
             <GitCommit className="w-4 h-4" />
           </div>
           <span>
-            <span className="font-medium text-foreground">{authorName}</span>{" "}
+            {firstAuthorInfo.login ? (
+              <UserHoverCard login={firstAuthorInfo.login}>
+                <span className="font-medium text-foreground cursor-pointer hover:text-blue-400 hover:underline">
+                  {firstAuthorInfo.name}
+                </span>
+              </UserHoverCard>
+            ) : (
+              <span className="font-medium text-foreground">
+                {firstAuthorInfo.name}
+              </span>
+            )}{" "}
             added {commits.length} commits{" "}
             {getTimeAgo(new Date(lastCommit.author.date))}
           </span>
@@ -3822,9 +3885,7 @@ function CommitGroup({ commits, prCommits, owner, repo }: CommitGroupProps) {
             <GitCommit className="w-4 h-4" />
           </div>
           <div className="flex-1 min-w-0 flex items-center gap-2">
-            <span className="font-medium text-foreground truncate">
-              {getAuthorName(commit)}
-            </span>
+            {renderAuthor(commit)}
             <a
               href={commit.html_url}
               target="_blank"
@@ -3889,11 +3950,21 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Eye className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> requested a
-              review from{" "}
-              <span className="font-medium">
-                {requested.requested_reviewer?.login}
-              </span>
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              requested a review from{" "}
+              {requested.requested_reviewer?.login && (
+                <UserHoverCard login={requested.requested_reviewer.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {requested.requested_reviewer.login}
+                  </span>
+                </UserHoverCard>
+              )}
             </span>
           ),
           color: "text-muted-foreground",
@@ -3906,11 +3977,21 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Eye className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> removed the
-              request for review from{" "}
-              <span className="font-medium">
-                {removed.requested_reviewer?.login}
-              </span>
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              removed the request for review from{" "}
+              {removed.requested_reviewer?.login && (
+                <UserHoverCard login={removed.requested_reviewer.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {removed.requested_reviewer.login}
+                  </span>
+                </UserHoverCard>
+              )}
             </span>
           ),
           color: "text-muted-foreground",
@@ -3924,16 +4005,26 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <UserPlus className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}
               {isSelf ? (
                 " self-assigned this"
               ) : (
                 <>
                   {" "}
                   assigned{" "}
-                  <span className="font-medium">
-                    {assigned.assignee?.login}
-                  </span>
+                  {assigned.assignee?.login && (
+                    <UserHoverCard login={assigned.assignee.login}>
+                      <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                        {assigned.assignee.login}
+                      </span>
+                    </UserHoverCard>
+                  )}
                 </>
               )}
             </span>
@@ -3949,16 +4040,26 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <UserMinus className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span>
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}
               {isSelf ? (
                 " removed their assignment"
               ) : (
                 <>
                   {" "}
                   unassigned{" "}
-                  <span className="font-medium">
-                    {unassigned.assignee?.login}
-                  </span>
+                  {unassigned.assignee?.login && (
+                    <UserHoverCard login={unassigned.assignee.login}>
+                      <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                        {unassigned.assignee.login}
+                      </span>
+                    </UserHoverCard>
+                  )}
                 </>
               )}
             </span>
@@ -3973,7 +4074,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Tag className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> added the{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              added the{" "}
               <span
                 className="px-2 py-0.5 text-xs font-medium rounded-full"
                 style={{
@@ -3997,7 +4105,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Tag className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> removed the{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              removed the{" "}
               <span
                 className="px-2 py-0.5 text-xs font-medium rounded-full"
                 style={{
@@ -4021,8 +4136,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Milestone className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> added this to
-              the{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              added this to the{" "}
               <span className="font-medium">{milestoned.milestone?.title}</span>{" "}
               milestone
             </span>
@@ -4037,8 +4158,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Milestone className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> removed this
-              from the{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              removed this from the{" "}
               <span className="font-medium">
                 {demilestoned.milestone?.title}
               </span>{" "}
@@ -4055,8 +4182,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <FileEdit className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> changed the
-              title from{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              changed the title from{" "}
               <del className="text-muted-foreground">
                 {renamed.rename?.from}
               </del>{" "}
@@ -4072,8 +4205,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Lock className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> locked this
-              conversation
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              locked this conversation
             </span>
           ),
           color: "text-muted-foreground",
@@ -4085,8 +4224,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Unlock className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> unlocked this
-              conversation
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              unlocked this conversation
             </span>
           ),
           color: "text-muted-foreground",
@@ -4098,8 +4243,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitBranch className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> deleted the
-              head branch
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              deleted the head branch
             </span>
           ),
           color: "text-muted-foreground",
@@ -4111,8 +4262,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitBranch className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> restored the
-              head branch
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              restored the head branch
             </span>
           ),
           color: "text-muted-foreground",
@@ -4130,8 +4287,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitBranch className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> force-pushed
-              the{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              force-pushed the{" "}
               <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
                 {pr?.head?.ref || "branch"}
               </code>{" "}
@@ -4168,7 +4331,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitMerge className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> merged commit{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              merged commit{" "}
               <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
                 {merged.commit_id?.slice(0, 7) ||
                   pr?.merge_commit_sha?.slice(0, 7)}
@@ -4188,8 +4358,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> closed this
-              pull request
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              closed this pull request
             </span>
           ),
           color: "text-red-400",
@@ -4201,8 +4377,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> reopened this
-              pull request
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              reopened this pull request
             </span>
           ),
           color: "text-green-400",
@@ -4214,8 +4396,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> marked this
-              pull request as ready for review
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              marked this pull request as ready for review
             </span>
           ),
           color: "text-green-400",
@@ -4227,8 +4415,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <GitPullRequest className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> converted this
-              pull request to draft
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              converted this pull request to draft
             </span>
           ),
           color: "text-muted-foreground",
@@ -4249,8 +4443,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <Link className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> mentioned this
-              in{" "}
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              mentioned this in{" "}
               <span className="font-medium">
                 {crossRef.source?.issue?.repository?.full_name}#
                 {crossRef.source?.issue?.number}
@@ -4266,8 +4466,14 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
           icon: <X className="w-4 h-4" />,
           text: (
             <span>
-              <span className="font-medium">{actor?.login}</span> deleted a
-              comment
+              {actor?.login && (
+                <UserHoverCard login={actor.login}>
+                  <span className="font-medium cursor-pointer hover:text-blue-400 hover:underline">
+                    {actor.login}
+                  </span>
+                </UserHoverCard>
+              )}{" "}
+              deleted a comment
             </span>
           ),
           color: "text-muted-foreground",
