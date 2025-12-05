@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { PullRequestFile } from "@/api/types";
 import { diffService } from "@/browser/lib/diff";
+import { useGitHub } from "@/browser/contexts/github";
 import { usePRReviewStore, usePRReviewSelector, type ParsedDiff } from ".";
 
 const diffCache = new Map<string, ParsedDiff>();
@@ -26,15 +27,23 @@ function abortAllPendingFetches() {
   }
 }
 
+/** Content getter function type for fetching file content */
+type FileContentGetter = (path: string, ref: string) => Promise<string>;
+
 async function fetchParsedDiff(
   file: PullRequestFile,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  getFileContent?: FileContentGetter,
+  baseRef?: string,
+  headRef?: string
 ): Promise<ParsedDiff> {
   if (!file.patch || !file.sha) {
     return { hunks: [] };
   }
 
-  const cacheKey = file.sha;
+  // Cache key includes whether we have file content (for better highlighting)
+  const hasContent = !!(getFileContent && baseRef && headRef);
+  const cacheKey = hasContent ? `${file.sha}:full` : file.sha;
 
   // Check cache first
   if (diffCache.has(cacheKey)) {
@@ -72,11 +81,39 @@ async function fetchParsedDiff(
   }
 
   const fetchPromise = (async () => {
+    let oldContent: string | undefined;
+    let newContent: string | undefined;
+
+    // Fetch file content for better syntax highlighting if getter is provided
+    if (getFileContent && baseRef && headRef) {
+      try {
+        const [oldResult, newResult] = await Promise.all([
+          // For deleted files or renames, use previous_filename for base
+          file.status === "added"
+            ? Promise.resolve("")
+            : getFileContent(
+                file.previous_filename || file.filename,
+                baseRef
+              ).catch(() => ""),
+          // For deleted files, new content is empty
+          file.status === "removed"
+            ? Promise.resolve("")
+            : getFileContent(file.filename, headRef).catch(() => ""),
+        ]);
+        oldContent = oldResult;
+        newContent = newResult;
+      } catch {
+        // If fetching content fails, continue without it
+      }
+    }
+
     // Use WebWorker for diff parsing (off main thread)
     const parsed = await diffService.parseDiff(
       file.patch!,
       file.filename,
-      file.previous_filename
+      file.previous_filename,
+      oldContent,
+      newContent
     );
 
     // Clean up pending entry
@@ -108,6 +145,10 @@ async function fetchParsedDiff(
 
 export function useDiffLoader() {
   const store = usePRReviewStore();
+  const github = useGitHub();
+  const owner = usePRReviewSelector((s) => s.owner);
+  const repo = usePRReviewSelector((s) => s.repo);
+  const pr = usePRReviewSelector((s) => s.pr);
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const files = usePRReviewSelector((s) => s.files);
   const loadedDiffs = usePRReviewSelector((s) => s.loadedDiffs);
@@ -120,7 +161,7 @@ export function useDiffLoader() {
 
     const currentFile = selectedFile;
 
-    // Check cache synchronously - instant if cached
+    // Check cache synchronously - instant if cached (with full file content)
     const cached = getDiffFromCache(file);
     if (cached) {
       if (!loadedDiffs[currentFile]) {
@@ -146,14 +187,19 @@ export function useDiffLoader() {
       }
     }, 50);
 
-    // Fetch immediately
-    fetchParsedDiff(file)
+    // Create file content getter for better syntax highlighting
+    const getFileContent: FileContentGetter = (path, ref) =>
+      github.getFileContent(owner, repo, path, ref);
+
+    // Fetch immediately with full file content for better highlighting
+    fetchParsedDiff(file, undefined, getFileContent, pr.base.sha, pr.head.sha)
       .then((diff) => {
         if (store.getSnapshot().selectedFile === currentFile) {
           store.setLoadedDiff(currentFile, diff);
           store.setDiffLoading(currentFile, false);
 
           // Prefetch next files aggressively (5 ahead, 2 behind)
+          // Note: prefetch without file content for speed
           const currentIndex = files.findIndex(
             (f) => f.filename === currentFile
           );
@@ -166,7 +212,7 @@ export function useDiffLoader() {
               !getDiffFromCache(f)
           );
 
-          // Prefetch all in parallel
+          // Prefetch all in parallel (without file content for speed)
           Promise.all(
             filesToPrefetch.map((pfile) =>
               fetchParsedDiff(pfile)
@@ -191,5 +237,15 @@ export function useDiffLoader() {
       clearTimeout(loadingTimeoutId);
       store.setDiffLoading(currentFile, false);
     };
-  }, [selectedFile, files, loadedDiffs, store]);
+  }, [
+    selectedFile,
+    files,
+    loadedDiffs,
+    store,
+    github,
+    owner,
+    repo,
+    pr.base.sha,
+    pr.head.sha,
+  ]);
 }

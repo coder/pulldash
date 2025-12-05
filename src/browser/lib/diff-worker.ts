@@ -88,6 +88,10 @@ export type WorkerRequest =
       patch: string;
       filename: string;
       previousFilename?: string;
+      /** Full content of the old (base) version of the file for proper highlighting */
+      oldContent?: string;
+      /** Full content of the new (head) version of the file for proper highlighting */
+      newContent?: string;
     }
   | {
       type: "highlight-lines";
@@ -201,6 +205,15 @@ function guessLang(filename?: string): string {
 // Syntax Highlighting
 // ============================================================================
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function hastToHtml(node: any): string {
   if (node.type === "text") {
     return escapeHtml(node.value);
@@ -215,21 +228,101 @@ function hastToHtml(node: any): string {
   return "";
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 function highlight(code: string, lang: string): string {
   try {
     const tree = refractor.highlight(code, lang);
     return tree.children.map(hastToHtml).join("");
   } catch {
     return escapeHtml(code);
+  }
+}
+
+/**
+ * Highlight an entire file and return an array of HTML strings, one per line.
+ * This handles multi-line constructs (strings, comments) correctly by
+ * closing and reopening tags at line boundaries.
+ */
+interface OpenTag {
+  tagName: string;
+  className?: string;
+}
+
+function highlightFileByLines(content: string, lang: string): string[] {
+  if (!content) return [];
+
+  try {
+    const tree = refractor.highlight(content, lang);
+    const lines: string[] = [];
+    let currentLine: string[] = [];
+    const openTags: OpenTag[] = [];
+
+    function closeAllTags(): string {
+      return [...openTags]
+        .reverse()
+        .map((t) => `</${t.tagName}>`)
+        .join("");
+    }
+
+    function openAllTags(): string {
+      return openTags
+        .map((t) => {
+          const cls = t.className ? ` class="${t.className}"` : "";
+          return `<${t.tagName}${cls}>`;
+        })
+        .join("");
+    }
+
+    function processText(text: string) {
+      const parts = text.split("\n");
+      for (let i = 0; i < parts.length; i++) {
+        if (i > 0) {
+          // End current line with closing tags
+          currentLine.push(closeAllTags());
+          lines.push(currentLine.join(""));
+          // Start new line with opening tags
+          currentLine = [openAllTags()];
+        }
+        if (parts[i]) {
+          currentLine.push(escapeHtml(parts[i]));
+        }
+      }
+    }
+
+    function walkNode(node: any) {
+      if (node.type === "text") {
+        processText(node.value);
+      } else if (node.type === "element") {
+        const { tagName, properties, children } = node;
+        const className = (properties?.className as string[] | undefined)?.join(
+          " "
+        );
+        const tag: OpenTag = { tagName, className };
+
+        // Open tag
+        const cls = className ? ` class="${className}"` : "";
+        currentLine.push(`<${tagName}${cls}>`);
+        openTags.push(tag);
+
+        // Process children
+        children.forEach(walkNode);
+
+        // Close tag
+        openTags.pop();
+        currentLine.push(`</${tagName}>`);
+      }
+    }
+
+    tree.children.forEach(walkNode);
+
+    // Don't forget the last line
+    if (currentLine.length > 0) {
+      lines.push(currentLine.join(""));
+    }
+
+    return lines;
+  } catch {
+    // Fallback: escape each line
+    return content.split("\n").map(escapeHtml);
   }
 }
 
@@ -548,7 +641,9 @@ const defaultOptions: ParseOptions = {
 function parseDiffWithHighlighting(
   patch: string,
   filename: string,
-  previousFilename?: string
+  previousFilename?: string,
+  oldContent?: string,
+  newContent?: string
 ): ParsedDiff {
   const diffHeader = `diff --git a/${filename} b/${filename}
 --- a/${previousFilename || filename}
@@ -564,6 +659,19 @@ ${patch}`;
   }
 
   const language = guessLang(filename);
+  const prevLanguage = previousFilename
+    ? guessLang(previousFilename)
+    : language;
+
+  // Pre-highlight full files if content is provided
+  // This ensures proper highlighting for multi-line constructs (strings, comments, etc.)
+  const oldHighlightedLines = oldContent
+    ? highlightFileByLines(oldContent, prevLanguage)
+    : null;
+  const newHighlightedLines = newContent
+    ? highlightFileByLines(newContent, language)
+    : null;
+
   const rawHunks = insertSkipBlocks(
     file.hunks.map((hunk) => parseHunk(hunk, opts))
   );
@@ -590,15 +698,63 @@ ${patch}`;
             ? (line as any).lineNumber
             : undefined;
 
+        // For lines with a single segment (no inline diff), use pre-highlighted content
+        // For lines with multiple segments (inline diff), highlight each segment
+        const hasSingleSegment = line.content.length === 1;
+        const singleSegmentIsNormal =
+          hasSingleSegment && line.content[0].type === "normal";
+
         return {
           type: line.type,
           oldLineNumber: oldNum,
           newLineNumber: newNum,
-          content: line.content.map((seg) => ({
-            value: seg.value,
-            html: highlight(seg.value, language),
-            type: seg.type,
-          })),
+          content: line.content.map((seg) => {
+            let html: string;
+
+            // Try to use pre-highlighted content for better context
+            if (singleSegmentIsNormal) {
+              // Use pre-highlighted line if available
+              if (
+                line.type === "delete" &&
+                oldHighlightedLines &&
+                oldNum !== undefined
+              ) {
+                html =
+                  oldHighlightedLines[oldNum - 1] ??
+                  highlight(seg.value, prevLanguage);
+              } else if (
+                line.type === "insert" &&
+                newHighlightedLines &&
+                newNum !== undefined
+              ) {
+                html =
+                  newHighlightedLines[newNum - 1] ??
+                  highlight(seg.value, language);
+              } else if (
+                line.type === "normal" &&
+                newHighlightedLines &&
+                newNum !== undefined
+              ) {
+                // For normal lines, prefer new file highlighting (same content in both)
+                html =
+                  newHighlightedLines[newNum - 1] ??
+                  highlight(seg.value, language);
+              } else {
+                html = highlight(seg.value, language);
+              }
+            } else {
+              // Multiple segments (inline diff) - highlight each segment individually
+              // This is acceptable since inline diffs are usually small
+              const segLang = seg.type === "delete" ? prevLanguage : language;
+              html = highlight(seg.value, segLang);
+            }
+
+            return {
+              value: seg.value,
+              html,
+              type: seg.type,
+            };
+          }),
         };
       }),
     };
@@ -615,12 +771,18 @@ function highlightFileLines(
 ): DiffLine[] {
   const language = guessLang(filename);
   const allLines = content.split("\n");
+
+  // Pre-highlight the entire file for proper context
+  const highlightedLines = highlightFileByLines(content, language);
+
   const result: DiffLine[] = [];
 
   for (let i = 0; i < count; i++) {
     const lineNum = startLine + i;
     const lineContent = allLines[lineNum - 1] ?? "";
-    const highlighted = highlight(lineContent, language);
+    // Use pre-highlighted HTML, fallback to individual highlighting
+    const highlighted =
+      highlightedLines[lineNum - 1] ?? highlight(lineContent, language);
 
     result.push({
       type: "normal",
@@ -646,7 +808,9 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
         const result = parseDiffWithHighlighting(
           request.patch,
           request.filename,
-          request.previousFilename
+          request.previousFilename,
+          request.oldContent,
+          request.newContent
         );
         self.postMessage({
           type: "parse-diff-result",

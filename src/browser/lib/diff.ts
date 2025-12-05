@@ -84,7 +84,9 @@ class DiffWorkerPool {
   async parseDiff(
     patch: string,
     filename: string,
-    previousFilename?: string
+    previousFilename?: string,
+    oldContent?: string,
+    newContent?: string
   ): Promise<ParsedDiff> {
     const id = this.generateId();
     const worker = this.getNextWorker();
@@ -98,6 +100,8 @@ class DiffWorkerPool {
         patch,
         filename,
         previousFilename,
+        oldContent,
+        newContent,
       } as WorkerRequest);
     });
   }
