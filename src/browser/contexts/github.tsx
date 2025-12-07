@@ -457,6 +457,7 @@ function createGitHubStore() {
   let octokit: Octokit | null = null;
   let batcher: GraphQLBatcher | null = null;
   let onUnauthorized: (() => void) | null = null;
+  let prListAbortController: AbortController | null = null;
   let onRateLimited: (() => void) | null = null;
 
   function setOnUnauthorized(callback: () => void) {
@@ -641,8 +642,20 @@ function createGitHubStore() {
   // PR List
   // ---------------------------------------------------------------------------
 
-  async function fetchPRList(queries: string[], page = 1, perPage = 30) {
+  async function fetchPRList(
+    queries: string[],
+    page = 1,
+    perPage = 30,
+    options?: { backgroundRefresh?: boolean }
+  ) {
     if (!octokit || !batcher) return;
+
+    const { backgroundRefresh = false } = options ?? {};
+
+    // Abort any in-flight request
+    prListAbortController?.abort();
+    const abortController = new AbortController();
+    prListAbortController = abortController;
 
     if (queries.length === 0) {
       setState({
@@ -671,7 +684,8 @@ function createGitHubStore() {
       setState({
         prList: {
           ...stale.data,
-          loading: stale.isStale,
+          // Don't show loading state for background refreshes
+          loading: backgroundRefresh ? false : stale.isStale,
           error: null,
           lastFetchedAt: Date.now(),
         },
@@ -680,7 +694,8 @@ function createGitHubStore() {
       });
       // If fresh, don't revalidate
       if (!stale.isStale) return;
-    } else {
+    } else if (!backgroundRefresh) {
+      // Only show loading state if this is not a background refresh
       setState((s) => ({
         prList: { ...s.prList, loading: true, error: null },
         prListQueries: queries,
@@ -689,10 +704,13 @@ function createGitHubStore() {
     }
 
     try {
-      // Fetch PRs with caching
+      // Fetch PRs with caching, passing the abort signal
       const results = await Promise.all(
-        queries.map((q) => searchPRs(q, page, perPage))
+        queries.map((q) => searchPRs(q, page, perPage, abortController.signal))
       );
+
+      // Check if aborted before processing results
+      if (abortController.signal.aborted) return;
 
       // Combine and dedupe by PR id
       const seen = new Set<number>();
@@ -732,6 +750,10 @@ function createGitHubStore() {
       if (prIdentifiers.length > 0) {
         try {
           const enrichmentMap = await getPREnrichment(prIdentifiers);
+
+          // Check if aborted after enrichment
+          if (abortController.signal.aborted) return;
+
           for (const item of combined) {
             const match = item.repository_url?.match(/repos\/([^/]+)\/([^/]+)/);
             if (match && item.number) {
@@ -746,6 +768,9 @@ function createGitHubStore() {
           console.error("PR enrichment failed:", enrichmentError);
         }
       }
+
+      // Final check before updating state
+      if (abortController.signal.aborted) return;
 
       // Cache the result (persist for instant load next time)
       // Use combined.length instead of total to reflect deduplicated count
@@ -765,6 +790,12 @@ function createGitHubStore() {
         },
       });
     } catch (e) {
+      // Ignore abort errors - they're expected when switching filters
+      if (e instanceof Error && e.name === "AbortError") return;
+
+      // Only update error state if not aborted
+      if (abortController.signal.aborted) return;
+
       setState((s) => ({
         prList: {
           ...s.prList,
@@ -778,7 +809,7 @@ function createGitHubStore() {
   function refreshPRList() {
     const { prListQueries, prListPage } = state;
     if (prListQueries.length > 0) {
-      fetchPRList(prListQueries, prListPage);
+      fetchPRList(prListQueries, prListPage, 30, { backgroundRefresh: true });
     }
   }
 
@@ -919,7 +950,12 @@ function createGitHubStore() {
   // API Methods (with caching and deduplication)
   // ---------------------------------------------------------------------------
 
-  async function searchPRs(query: string, page = 1, perPage = 30) {
+  async function searchPRs(
+    query: string,
+    page = 1,
+    perPage = 30,
+    signal?: AbortSignal
+  ) {
     if (!octokit) throw new Error("Not initialized");
 
     const cacheKey = `search:prs:${query}:${page}:${perPage}`;
@@ -947,6 +983,7 @@ function createGitHubStore() {
         order: "desc",
         per_page: perPage,
         page,
+        request: { signal },
       })
       .then((res) => {
         cache.set(cacheKey, res.data);

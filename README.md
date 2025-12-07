@@ -6,15 +6,15 @@
 Fast, filterable PR review. Entirely client-side.
 
 > [!WARNING]
-> Pulldash is in alpha. Please report bugs.
+> Pulldash is WIP. Expect bugs.
 
 [![Example](./docs/screenshots/overview.png)](https://pulldash.com)
 
 ## Why
 
-- GitHub's review UI is slow
-- No way to filter PRs by repo or query
-- AI tooling means more PRs than ever
+- GitHub's review UI is slow (especially for large diffs)
+- No central view to filter PRs you care about
+- AI tooling has produced more PRs than ever before—making a snappy review UI essential
 
 ## Try It
 
