@@ -1,7 +1,7 @@
 {
   "name": "pulldash",
   "version": "0.0.5",
-  "description": "A fast, local PR review dashboard",
+  "description": "Fast, filterable PR review. Entirely client-side.",
   "type": "module",
   "bin": {
     "pulldash": "./dist/pulldash"

@@ -375,6 +375,11 @@ export function Home() {
     setPage(1);
   }, [config.repos, config.state]);
 
+  // Set document title
+  useEffect(() => {
+    document.title = isAuthenticated ? "Home · Pulldash" : "Pulldash";
+  }, [isAuthenticated]);
+
   // Convenience accessors
   const prs = prList.items;
   const loadingPrs = prList.loading;

@@ -1,5 +1,5 @@
 <h1>
-  <img src="src/browser/logo.svg" alt="pulldash logo" width="32" height="32" align="center">
+  <img src="src/browser/logo.svg" alt="pulldash logo" width="40" height="40" align="center">
   Pulldash
 </h1>
 
