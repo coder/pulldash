@@ -3,24 +3,21 @@
   Pulldash
 </h1>
 
+![GitHub Release](https://img.shields.io/github/v/release/coder/pulldash) ![GitHub License](https://img.shields.io/github/license/coder/pulldash) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/coder/pulldash/ci.yml)
+
+
 Fast, filterable PR review. Entirely client-side.
 
 > [!WARNING]
 > Pulldash is WIP. Expect bugs.
-
-[![Example](./docs/screenshots/overview.png)](https://pulldash.com)
-
-## Why
-
-- GitHub's review UI is slow (especially for large diffs)
-- No central view to filter PRs you care about
-- AI tooling has produced more PRs than ever before—making a snappy review UI essential
 
 ## Try It
 
 **Browser**: [pulldash.com](https://pulldash.com). Replace `github.com` with `pulldash.com` in any PR URL.
 
 **Desktop**: [Latest release](https://github.com/coder/pulldash/releases) for Linux, macOS, Windows.
+
+[![Example](./docs/screenshots/overview.png)](https://pulldash.com)
 
 ## Features
 
@@ -35,6 +32,12 @@ Fast, filterable PR review. Entirely client-side.
 - **Fast file search**: `Ctrl+K` to fuzzy-find across hundreds of changed files.
 
   ![Search](./docs/screenshots/search.png)
+
+## Why
+
+- GitHub's review UI is slow (especially for large diffs)
+- No central view to filter PRs you care about
+- AI tooling has produced more PRs than ever before—making a snappy review UI essential
 
 ## How It Works
 
