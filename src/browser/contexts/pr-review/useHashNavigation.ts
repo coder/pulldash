@@ -68,16 +68,24 @@ export function useHashNavigation() {
   }, [store]);
 
   // Handle browser back/forward navigation
+  // Note: We need to listen for BOTH events:
+  // - popstate: fires when using back/forward after pushState calls
+  // - hashchange: fires when the hash changes directly (e.g., anchor clicks)
   useEffect(() => {
-    const handleHashChange = () => {
+    const handleNavigation = () => {
       isUpdatingHash.current = true;
+      lastHashRef.current = window.location.hash.slice(1); // Update lastHash to prevent loop
       store.navigateFromHash(window.location.hash);
       setTimeout(() => {
         isUpdatingHash.current = false;
       }, 100);
     };
 
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+    window.addEventListener("popstate", handleNavigation);
+    window.addEventListener("hashchange", handleNavigation);
+    return () => {
+      window.removeEventListener("popstate", handleNavigation);
+      window.removeEventListener("hashchange", handleNavigation);
+    };
   }, [store]);
 }

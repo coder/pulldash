@@ -23,7 +23,7 @@ const APP_VERSION = version;
 // Platform Detection
 // ============================================================================
 
-function isElectron(): boolean {
+export function isElectron(): boolean {
   // Check for Electron-specific globals
   if (typeof window !== "undefined") {
     // Check userAgent for Electron

@@ -16,6 +16,7 @@ import {
   ArrowRight,
   Clock,
 } from "lucide-react";
+import { BookmarkletDialog, useShowBookmarklet } from "./bookmarklet";
 import {
   Dialog,
   DialogContent,
@@ -1182,22 +1183,30 @@ export function UserMenuButton({ className }: { className?: string }) {
   const { isAuthenticated, isAnonymous, logout, setShowWelcomeDialog } =
     useAuth();
   const currentUser = useCurrentUser()?.login ?? null;
+  const showBookmarklet = useShowBookmarklet();
+  const [bookmarkletOpen, setBookmarkletOpen] = useState(false);
 
   // Anonymous mode - show read-only indicator with sign-in option
   if (isAnonymous && !isAuthenticated) {
     return (
-      <button
-        onClick={() => setShowWelcomeDialog(true)}
-        className={cn(
-          "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors",
-          "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/30",
-          className
-        )}
-        title="Sign in with GitHub"
-      >
-        <Eye className="w-3 h-3" />
-        <span>Read-only</span>
-      </button>
+      <>
+        <button
+          onClick={() => setShowWelcomeDialog(true)}
+          className={cn(
+            "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors",
+            "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/30",
+            className
+          )}
+          title="Sign in with GitHub"
+        >
+          <Eye className="w-3 h-3" />
+          <span>Read-only</span>
+        </button>
+        <BookmarkletDialog
+          open={bookmarkletOpen}
+          onOpenChange={setBookmarkletOpen}
+        />
+      </>
     );
   }
 
@@ -1206,56 +1215,74 @@ export function UserMenuButton({ className }: { className?: string }) {
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className={cn(
-            "flex items-center gap-1.5 p-1 rounded-md hover:bg-muted/50 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background",
-            className
-          )}
-          title={currentUser ? `Signed in as ${currentUser}` : "Account"}
-        >
-          {currentUser ? (
-            <img
-              src={`https://github.com/${currentUser}.png`}
-              alt={currentUser}
-              className="w-5 h-5 rounded-full ring-1 ring-border"
-            />
-          ) : (
-            <LogOut className="w-3.5 h-3.5 text-muted-foreground" />
-          )}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
-        {currentUser && (
-          <>
-            <DropdownMenuLabel className="font-normal">
-              <div className="flex items-center gap-2">
-                <img
-                  src={`https://github.com/${currentUser}.png`}
-                  alt={currentUser}
-                  className="w-8 h-8 rounded-full"
-                />
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium">{currentUser}</span>
-                  <span className="text-xs text-muted-foreground">
-                    Signed in with GitHub
-                  </span>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            className={cn(
+              "flex items-center gap-1.5 p-1 rounded-md hover:bg-muted/50 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background",
+              className
+            )}
+            title={currentUser ? `Signed in as ${currentUser}` : "Account"}
+          >
+            {currentUser ? (
+              <img
+                src={`https://github.com/${currentUser}.png`}
+                alt={currentUser}
+                className="w-5 h-5 rounded-full ring-1 ring-border"
+              />
+            ) : (
+              <LogOut className="w-3.5 h-3.5 text-muted-foreground" />
+            )}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          {currentUser && (
+            <>
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex items-center gap-2">
+                  <img
+                    src={`https://github.com/${currentUser}.png`}
+                    alt={currentUser}
+                    className="w-8 h-8 rounded-full"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">{currentUser}</span>
+                    <span className="text-xs text-muted-foreground">
+                      Signed in with GitHub
+                    </span>
+                  </div>
                 </div>
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <DropdownMenuItem
-          variant="destructive"
-          onClick={logout}
-          className="cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          {showBookmarklet && (
+            <>
+              <DropdownMenuItem
+                onClick={() => setBookmarkletOpen(true)}
+                className="cursor-pointer"
+              >
+                <Github className="w-4 h-4" />
+                Redirect Bookmark
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={logout}
+            className="cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <BookmarkletDialog
+        open={bookmarkletOpen}
+        onOpenChange={setBookmarkletOpen}
+      />
+    </>
   );
 }
