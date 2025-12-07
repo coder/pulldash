@@ -23,6 +23,8 @@ import {
   HoverCardContent,
 } from "../ui/hover-card";
 import { version } from "../../../package.json";
+import { KeyboardShortcutsModal } from "./keyboard-shortcuts-modal";
+import { matchesKey } from "@/browser/lib/shortcuts";
 
 // ============================================================================
 // App Shell - Tab-based Layout
@@ -40,6 +42,7 @@ export function AppShell() {
   } = useTabContext();
   const params = useParams<{ owner: string; repo: string; number: string }>();
   const navigate = useNavigate();
+  const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
 
   // URL is the source of truth - sync URL → Tab
   useEffect(() => {
@@ -115,6 +118,26 @@ export function AppShell() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [tabs, activeTabId, handleTabSelect, closeTab]);
+
+  // Handle ? key for keyboard shortcuts modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      if (matchesKey(e, "SHOW_SHORTCUTS")) {
+        e.preventDefault();
+        setShortcutsModalOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
@@ -210,6 +233,11 @@ export function AppShell() {
             </div>
           )}
       </div>
+
+      <KeyboardShortcutsModal
+        open={shortcutsModalOpen}
+        onOpenChange={setShortcutsModalOpen}
+      />
     </div>
   );
 }
