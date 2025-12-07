@@ -24,7 +24,7 @@ Fast, filterable PR review. Entirely client-side.
 
 ## Features
 
-- **Custom filters**: Save queries like `repo:org/frontend is:open`. Focus on what matters.
+- **Custom filters**: Add repos and filter by review requests, authored PRs, or all activity.
 
   ![Filtering PRs](./docs/screenshots/filtering.png)
 
