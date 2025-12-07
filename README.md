@@ -3,44 +3,57 @@
   Pulldash
 </h1>
 
-Review pull requests in a high-performance UI, driven by keybinds.
+Fast, filterable PR review. Entirely client-side.
 
 > [!WARNING]
 > Pulldash is in alpha. Please report bugs.
 
 [![Example](./docs/screenshots/overview.png)](https://pulldash.com)
 
-## Try
+## Why
 
-**Browser**: on [pulldash.com](https://pulldash.com) [no auth required]
+- GitHub's review UI is slow
+- No way to filter PRs by repo or query
+- AI tooling means more PRs than ever
 
-> [!NOTE]
-> GitHub tokens are stored in your browser, never on the Pulldash server post-authentication.
+## Try It
 
-**Desktop**: download the [latest release](https://github.com/coder/pulldash/releases) available for Linux, macOS, and Windows.
+**Browser**: [pulldash.com](https://pulldash.com). Replace `github.com` with `pulldash.com` in any PR URL.
 
+**Desktop**: [Latest release](https://github.com/coder/pulldash/releases) for Linux, macOS, Windows.
 
 ## Features
 
-- Customize your PR list with search queries:
+- **Custom filters**: Save queries like `repo:org/frontend is:open`. Focus on what matters.
 
   ![Filtering PRs](./docs/screenshots/filtering.png)
 
-- Use keybinds to add/remove comments, select line ranges, switch files, and submit reviews:
+- **Keyboard-driven**: `j`/`k` to navigate files, arrows for lines, `c` to comment, `s` to submit.
 
   ![Keybinds](./docs/screenshots/keybind-driven.png)
 
-- Instantly search across files:
+- **Fast file search**: `Ctrl+K` to fuzzy-find across hundreds of changed files.
 
   ![Search](./docs/screenshots/search.png)
 
-## Why not GitHub's UI?
+## How It Works
 
-GitHub supports [CORS](https://docs.github.com/en/rest/using-the-rest-api/using-cors-and-jsonp-to-make-cross-origin-requests) for their API, making Pulldash a simple UI wrapper with some nicities:
+GitHub's API supports [CORS](https://docs.github.com/en/rest/using-the-rest-api/using-cors-and-jsonp-to-make-cross-origin-requests), so Pulldash runs entirely client-side. No backend proxying your requests.
 
-- Filtering on repositories you care about.
-- Opening large files in GitHub is slow (Pulldash performs all diff parsing and syntax highlighting in worker threads).
-- GitHub lacks comprehensive keybinds that allow you to be fully keyboard-driven.
+- **Web Worker pool**: Diff parsing and syntax highlighting run in workers sized to `navigator.hardwareConcurrency`. The main thread stays free for scrolling.
+
+- **Pre-computed navigation**: When a diff loads, we index all navigable lines. Arrow keys are O(1)—no DOM queries.
+
+- **External store**: State lives outside React ([`useSyncExternalStore`](https://react.dev/reference/react/useSyncExternalStore)). Focusing line 5000 doesn't re-render the file tree.
+
+- **Virtualized rendering**: Diffs, file lists, and the command palette only render visible rows.
+
+## Development
+
+```bash
+bun install
+bun dev
+```
 
 ## License
 
