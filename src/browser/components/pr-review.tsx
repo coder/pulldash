@@ -1383,9 +1383,6 @@ const DiffViewer = memo(function DiffViewer({
     overscan: 100,
     // Add padding at the end so we can scroll the last line to center
     paddingEnd: 300,
-    // Account for KeybindsBar height when calculating visibility for scrollToIndex
-    // This prevents lines from being hidden under the bar when jumping to bottom
-    scrollMargin: 50,
   });
 
   const onDragStart = useCallback(
@@ -1659,6 +1656,27 @@ const DiffViewer = memo(function DiffViewer({
           virtualizer.scrollToIndex(rowIndex, {
             align: "auto",
           });
+
+          // Account for KeybindsBar: if line is near bottom of viewport, scroll a bit more
+          // This prevents lines from being hidden under the bar
+          const scrollEl = parentRef.current;
+          if (scrollEl) {
+            requestAnimationFrame(() => {
+              const item = virtualizer
+                .getVirtualItems()
+                .find((v) => v.index === rowIndex);
+              if (item) {
+                const itemBottom = item.start + item.size;
+                const viewportBottom =
+                  scrollEl.scrollTop + scrollEl.clientHeight;
+                const KEYBINDS_BAR_HEIGHT = 50;
+                // If item is within 50px of viewport bottom, scroll down to give clearance
+                if (itemBottom > viewportBottom - KEYBINDS_BAR_HEIGHT) {
+                  scrollEl.scrollTop += KEYBINDS_BAR_HEIGHT;
+                }
+              }
+            });
+          }
         }
       }
     });

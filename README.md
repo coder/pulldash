@@ -3,53 +3,44 @@
   Pulldash
 </h1>
 
-The fastest way to review pull requests that makes massive PRs feel instant.
+Review pull requests in a high-performance UI, driven by keybinds.
 
-- Keybord-driven: navigate, comment, and approve without touching your mouse
-- Performant: giant diffs render smoothly, virtualized rendering keeps you at 60fps even on 10k+ line changes
-- Local or hosted: download the desktop app to avoid sending your credentials anywhere
+> [!WARNING]
+> Pulldash is in alpha. Please report bugs.
 
-## Try It
+[![Example](./docs/screenshots/overview.png)](https://pulldash.com)
 
-Head to [pulldash.com](https://pulldash.com) to explore pull-requests (no auth required).
+## Try
 
-[Download for Desktop](https://github.com/coder/pulldash/releases).
+**Browser**: on [pulldash.com](https://pulldash.com) [no auth required]
+
+> [!NOTE]
+> GitHub tokens are stored in your browser, never on the Pulldash server post-authentication.
+
+**Desktop**: download the [latest release](https://github.com/coder/pulldash/releases) available for Linux, macOS, and Windows.
+
 
 ## Features
-
-- Fast
-
-  ![]
 
 - Customize your PR list with search queries:
 
   ![Filtering PRs](./docs/screenshots/filtering.png)
 
-## Why Not GitHub's Web UI?
+- Use keybinds to add/remove comments, select line ranges, switch files, and submit reviews:
 
-- Lack of native PR tracking
+  ![Keybinds](./docs/screenshots/keybind-driven.png)
 
-GitHub's PR interface is slow, especially for large PRs.
+- Instantly search across files:
 
-GitHub's PR interface is slow, especially for large PRs.
+  ![Search](./docs/screenshots/search.png)
 
-| Issue                   | GitHub Web                    | Pulldash                            |
-| ----------------------- | ----------------------------- | ----------------------------------- |
-| **Large PRs**           | Truncates diffs, loads slowly | ✓ Renders everything, stays smooth  |
-| **Keyboard navigation** | Limited shortcuts             | ✓ Full keyboard-driven workflow     |
-| **Multi-file review**   | Constant page loads           | ✓ Instant tab switching             |
-| **Context switching**   | Browser tabs everywhere       | ✓ Dedicated app, focused experience |
+## Why not GitHub's UI?
 
-GitHub supports [CORS](https://docs.github.com/en/rest/using-the-rest-api/using-cors-and-jsonp-to-make-cross-origin-requests) on their API, making Pulldash a simple UI.
+GitHub supports [CORS](https://docs.github.com/en/rest/using-the-rest-api/using-cors-and-jsonp-to-make-cross-origin-requests) for their API, making Pulldash a simple UI wrapper with some nicities:
 
-## Keyboard Shortcuts
-
-| Action          | Shortcut           |
-| --------------- | ------------------ |
-| Command palette | `⌘K` or `⌘P`       |
-| Switch tabs     | `⌘1` - `⌘9`        |
-| Close tab       | `⌘W`               |
-| Navigate files  | `↑` `↓` in palette |
+- Filtering on repositories you care about.
+- Opening large files in GitHub is slow (Pulldash performs all diff parsing and syntax highlighting in worker threads).
+- GitHub lacks comprehensive keybinds that allow you to be fully keyboard-driven.
 
 ## License
 
