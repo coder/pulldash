@@ -5,7 +5,6 @@
 
 ![GitHub Release](https://img.shields.io/github/v/release/coder/pulldash) ![GitHub License](https://img.shields.io/github/license/coder/pulldash) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/coder/pulldash/ci.yml)
 
-
 Fast, filterable PR review. Entirely client-side.
 
 > [!WARNING]
