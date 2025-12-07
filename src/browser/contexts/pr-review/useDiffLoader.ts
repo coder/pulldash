@@ -11,12 +11,13 @@ const pendingFetches = new Map<
 >();
 const MAX_CACHE_SIZE = 100;
 
-// Check if a diff is already cached (sync check)
-function getDiffFromCache(file: PullRequestFile): ParsedDiff | null {
+// Check if a diff is already cached with full syntax highlighting (sync check)
+function getFullDiffFromCache(file: PullRequestFile): ParsedDiff | null {
   if (!file.patch || !file.sha) {
     return { hunks: [] };
   }
-  return diffCache.get(file.sha) ?? null;
+  // Only return if we have the full content version with proper syntax highlighting
+  return diffCache.get(`${file.sha}:full`) ?? null;
 }
 
 // Abort all pending fetches (used when navigating rapidly)
@@ -161,8 +162,8 @@ export function useDiffLoader() {
 
     const currentFile = selectedFile;
 
-    // Check cache synchronously - instant if cached (with full file content)
-    const cached = getDiffFromCache(file);
+    // Check cache synchronously - only use if we have full content version
+    const cached = getFullDiffFromCache(file);
     if (cached) {
       if (!loadedDiffs[currentFile]) {
         store.setLoadedDiff(currentFile, cached);
@@ -199,7 +200,7 @@ export function useDiffLoader() {
           store.setDiffLoading(currentFile, false);
 
           // Prefetch next files aggressively (5 ahead, 2 behind)
-          // Note: prefetch without file content for speed
+          // Fetch with full file content for instant switching with proper highlighting
           const currentIndex = files.findIndex(
             (f) => f.filename === currentFile
           );
@@ -209,13 +210,20 @@ export function useDiffLoader() {
           ].filter(
             (f) =>
               !store.getSnapshot().loadedDiffs[f.filename] &&
-              !getDiffFromCache(f)
+              !getFullDiffFromCache(f)
           );
 
-          // Prefetch all in parallel (without file content for speed)
+          // Prefetch with full file content for proper syntax highlighting
+          // Write to store for instant switching
           Promise.all(
             filesToPrefetch.map((pfile) =>
-              fetchParsedDiff(pfile)
+              fetchParsedDiff(
+                pfile,
+                undefined,
+                getFileContent,
+                pr.base.sha,
+                pr.head.sha
+              )
                 .then((pdiff) => store.setLoadedDiff(pfile.filename, pdiff))
                 .catch(() => {})
             )

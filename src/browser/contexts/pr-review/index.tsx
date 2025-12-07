@@ -1991,13 +1991,17 @@ export class PRReviewStore {
    * Navigate to a state from a URL hash string.
    * Returns true if navigation was performed.
    * Supports GitHub-style hashes: #pullrequestreview-{id}, #issuecomment-{id}, #discussion_r{id}
+   * Empty hash navigates to the overview screen.
    */
   navigateFromHash = (hash: string): boolean => {
-    if (!hash) return false;
-
     // Remove leading # if present
     const hashStr = hash.startsWith("#") ? hash.slice(1) : hash;
-    if (!hashStr) return false;
+
+    // Empty hash means navigate to overview
+    if (!hashStr) {
+      this.selectOverview();
+      return true;
+    }
 
     // Check for GitHub-style overview hashes first
     const reviewMatch = hashStr.match(/^pullrequestreview-(\d+)$/);

@@ -17,7 +17,13 @@ Head to [pulldash.com](https://pulldash.com) to explore pull-requests (no auth r
 
 ## Features
 
+- Fast
+
+  ![]
+
 - Customize your PR list with search queries:
+
+  ![Filtering PRs](./docs/screenshots/filtering.png)
 
 ## Why Not GitHub's Web UI?
 

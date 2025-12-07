@@ -1302,6 +1302,128 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
     }
   };
 
+  // Review status indicator with reviewer details
+  const ReviewStatusBadge = () => {
+    // Don't show review status for merged/closed PRs
+    if (isMerged || isClosed) return null;
+
+    const reviews = pr.latestReviews || [];
+    const approvals = reviews.filter((r) => r.state === "APPROVED");
+    const changesRequested = reviews.filter(
+      (r) => r.state === "CHANGES_REQUESTED"
+    );
+
+    // No reviews yet
+    if (reviews.length === 0 && !pr.reviewDecision) return null;
+
+    const TooltipReviews = () => (
+      <div className="min-w-[150px] max-w-[250px]">
+        <div className="font-medium text-xs mb-2 pb-1.5 border-b border-border flex items-center gap-2">
+          {pr.reviewDecision === "APPROVED" && (
+            <>
+              <Check className="w-3.5 h-3.5 text-green-500" />
+              <span>Approved</span>
+            </>
+          )}
+          {pr.reviewDecision === "CHANGES_REQUESTED" && (
+            <>
+              <XCircle className="w-3.5 h-3.5 text-red-500" />
+              <span>Changes requested</span>
+            </>
+          )}
+          {pr.reviewDecision === "REVIEW_REQUIRED" && (
+            <>
+              <Clock className="w-3.5 h-3.5 text-yellow-500" />
+              <span>Review required</span>
+            </>
+          )}
+          {!pr.reviewDecision && reviews.length > 0 && (
+            <>
+              <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Reviewed</span>
+            </>
+          )}
+        </div>
+        {reviews.length > 0 ? (
+          <div className="space-y-1.5">
+            {changesRequested.map((r) => (
+              <div
+                key={r.login}
+                className="flex items-center gap-2 text-[11px]"
+              >
+                <img
+                  src={r.avatarUrl}
+                  alt={r.login}
+                  className="w-4 h-4 rounded-full"
+                />
+                <span className="truncate text-red-400">{r.login}</span>
+                <XCircle className="w-3 h-3 text-red-500 shrink-0 ml-auto" />
+              </div>
+            ))}
+            {approvals.map((r) => (
+              <div
+                key={r.login}
+                className="flex items-center gap-2 text-[11px]"
+              >
+                <img
+                  src={r.avatarUrl}
+                  alt={r.login}
+                  className="w-4 h-4 rounded-full"
+                />
+                <span className="truncate text-green-400">{r.login}</span>
+                <Check className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-[11px] text-muted-foreground">
+            Waiting for review
+          </div>
+        )}
+      </div>
+    );
+
+    // Display based on review state
+    if (pr.reviewDecision === "APPROVED" || approvals.length > 0) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border cursor-default bg-green-500/15 text-green-500 border-green-500/30">
+              <Check className="w-3 h-3" />
+              <span className="hidden sm:inline">
+                {approvals.length > 0 ? `${approvals.length}` : "Approved"}
+              </span>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="start">
+            <TooltipReviews />
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    if (
+      pr.reviewDecision === "CHANGES_REQUESTED" ||
+      changesRequested.length > 0
+    ) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border cursor-default bg-red-500/15 text-red-500 border-red-500/30">
+              <XCircle className="w-3 h-3" />
+              <span className="hidden sm:inline">Changes</span>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="start">
+            <TooltipReviews />
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <button
       onClick={handleClick}
@@ -1328,6 +1450,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
             {pr.title}
           </span>
           <CIStatusBadge />
+          <ReviewStatusBadge />
           {pr.hasNewChanges && (
             <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
               NEW

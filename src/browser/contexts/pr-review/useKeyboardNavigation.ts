@@ -106,14 +106,14 @@ export function useKeyboardNavigation() {
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
-            store.navigateToNextUnviewedFile();
+            store.navigateToPrevUnviewedFile();
           });
           break;
         case "k":
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
-            store.navigateToPrevUnviewedFile();
+            store.navigateToNextUnviewedFile();
           });
           break;
         case "v":
@@ -206,6 +206,11 @@ export function useKeyboardNavigation() {
               window.dispatchEvent(event);
             }
           }
+          break;
+        case "s":
+          e.preventDefault();
+          // Open submit review dropdown
+          window.dispatchEvent(new CustomEvent("pr-review:open-submit-review"));
           break;
         case "escape":
           e.preventDefault();

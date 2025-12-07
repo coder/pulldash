@@ -86,6 +86,13 @@ export interface PRSearchResult {
     name: string;
     state: "pending" | "success" | "failure";
   }>;
+  // Review status
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  latestReviews?: Array<{
+    login: string;
+    avatarUrl: string;
+    state: "APPROVED" | "CHANGES_REQUESTED";
+  }>;
 }
 
 export interface WorkflowRunAwaitingApproval {
@@ -113,6 +120,13 @@ export interface PREnrichment {
   ciChecks: Array<{
     name: string;
     state: "pending" | "success" | "failure";
+  }>;
+  // Review status
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  latestReviews: Array<{
+    login: string;
+    avatarUrl: string;
+    state: "APPROVED" | "CHANGES_REQUESTED";
   }>;
 }
 
@@ -734,12 +748,17 @@ function createGitHubStore() {
       }
 
       // Cache the result (persist for instant load next time)
-      cache.set(cacheKey, { items: combined, totalCount: total }, true);
+      // Use combined.length instead of total to reflect deduplicated count
+      cache.set(
+        cacheKey,
+        { items: combined, totalCount: combined.length },
+        true
+      );
 
       setState({
         prList: {
           items: combined,
-          totalCount: total,
+          totalCount: combined.length,
           loading: false,
           error: null,
           lastFetchedAt: Date.now(),
@@ -2168,6 +2187,16 @@ function createGitHubStore() {
           changedFiles
           additions
           deletions
+          reviewDecision
+          latestOpinionatedReviews(first: 10) {
+            nodes {
+              author {
+                login
+                avatarUrl
+              }
+              state
+            }
+          }
           commits(last: 1) {
             nodes {
               commit {
@@ -2223,6 +2252,17 @@ function createGitHubStore() {
             changedFiles: number;
             additions: number;
             deletions: number;
+            reviewDecision:
+              | "APPROVED"
+              | "CHANGES_REQUESTED"
+              | "REVIEW_REQUIRED"
+              | null;
+            latestOpinionatedReviews: {
+              nodes: Array<{
+                author: { login: string; avatarUrl: string } | null;
+                state: "APPROVED" | "CHANGES_REQUESTED";
+              }>;
+            };
             commits: {
               nodes: Array<{
                 commit: {
@@ -2313,6 +2353,26 @@ function createGitHubStore() {
           }
         }
 
+        // Parse latest reviews - deduplicate by user (keep latest)
+        const reviewsByUser = new Map<
+          string,
+          {
+            login: string;
+            avatarUrl: string;
+            state: "APPROVED" | "CHANGES_REQUESTED";
+          }
+        >();
+        for (const review of result.latestOpinionatedReviews?.nodes || []) {
+          if (review.author) {
+            reviewsByUser.set(review.author.login, {
+              login: review.author.login,
+              avatarUrl: review.author.avatarUrl,
+              state: review.state,
+            });
+          }
+        }
+        const latestReviews = Array.from(reviewsByUser.values());
+
         enrichmentMap.set(`${pr.owner}/${pr.repo}/${pr.number}`, {
           changedFiles: result.changedFiles,
           additions: result.additions,
@@ -2323,6 +2383,8 @@ function createGitHubStore() {
           ciStatus,
           ciSummary,
           ciChecks,
+          reviewDecision: result.reviewDecision,
+          latestReviews,
         });
       }
     });

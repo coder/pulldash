@@ -367,7 +367,8 @@ function PRReviewLayout() {
       // Check if click is inside interactive elements that should NOT clear focus
       const isInteractive =
         target.closest("[data-comment-thread]") ||
-        target.closest("[data-line-gutter]") || // Only the line number gutter, not the whole line
+        target.closest("[data-line-gutter]") ||
+        target.closest("[data-line-num]") || // Any click on a diff line (content or gutter)
         target.closest("button") ||
         target.closest("a") ||
         target.closest("textarea") ||
@@ -381,7 +382,7 @@ function PRReviewLayout() {
         store.setFocusedCommentId(null);
       }
 
-      // Clear line focus if clicking anywhere except line gutter and interactive elements
+      // Clear line focus if clicking anywhere except diff lines and interactive elements
       if (!isInteractive && (state.focusedLine || state.selectionAnchor)) {
         store.clearLineSelection();
       }
@@ -876,7 +877,7 @@ const KeybindsBar = memo(function KeybindsBar() {
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Keycap keyName="j" size="xs" />
-                <Keycap keyName="k" size="xs" /> next/prev file
+                <Keycap keyName="k" size="xs" /> prev/next file
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Keycap keyName="v" size="xs" /> mark viewed
@@ -1375,10 +1376,16 @@ const DiffViewer = memo(function DiffViewer({
     count: virtualRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize,
+    // Include selectedFile in key to force React to re-render when switching files
+    // This fixes dangerouslySetInnerHTML not updating when DOM elements are reused
+    getItemKey: (index) => `${selectedFile}-${index}`,
     // High overscan for smooth navigation - rows pre-rendered above/below viewport
     overscan: 100,
     // Add padding at the end so we can scroll the last line to center
     paddingEnd: 300,
+    // Account for KeybindsBar height when calculating visibility for scrollToIndex
+    // This prevents lines from being hidden under the bar when jumping to bottom
+    scrollMargin: 50,
   });
 
   const onDragStart = useCallback(
@@ -3349,6 +3356,31 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   >("COMMENT");
   const [isOpen, setIsOpen] = useState(false);
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
+  const [openedViaKeyboard, setOpenedViaKeyboard] = useState(false);
+
+  // Listen for global event to open the submit review dropdown
+  useEffect(() => {
+    const handleOpenSubmitReview = () => {
+      setOpenedViaKeyboard(true);
+      setIsOpen(true);
+    };
+    window.addEventListener(
+      "pr-review:open-submit-review",
+      handleOpenSubmitReview
+    );
+    return () =>
+      window.removeEventListener(
+        "pr-review:open-submit-review",
+        handleOpenSubmitReview
+      );
+  }, []);
+
+  // Reset openedViaKeyboard when dropdown closes
+  useEffect(() => {
+    if (!isOpen) {
+      setOpenedViaKeyboard(false);
+    }
+  }, [isOpen]);
 
   // Check if current user is the PR author (can't approve/request changes on own PR)
   const isAuthor = currentUser !== null && pr.user.login === currentUser;
@@ -3371,10 +3403,37 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
     return grouped;
   }, [pendingComments]);
 
+  const pendingCount = pendingComments.length;
+
   const handleSubmit = useCallback(async () => {
     await submitReview(reviewType);
     setIsOpen(false);
   }, [submitReview, reviewType]);
+
+  // Ctrl/Cmd+Enter to submit review when dropdown is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        // Check if submit is allowed
+        const canSubmit =
+          !submitting &&
+          !(
+            reviewType === "COMMENT" &&
+            pendingCount === 0 &&
+            !reviewBody.trim()
+          );
+        if (canSubmit) {
+          handleSubmit();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, submitting, reviewType, pendingCount, reviewBody, handleSubmit]);
 
   const handleJumpToComment = useCallback(
     (comment: LocalPendingComment) => {
@@ -3388,8 +3447,6 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
     [store]
   );
 
-  const pendingCount = pendingComments.length;
-
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen} modal={false}>
       <DropdownMenuTrigger asChild>
@@ -3400,6 +3457,9 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
               {pendingCount}
             </span>
           )}
+          <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded font-mono">
+            S
+          </span>
           <ChevronsUpDown className="w-3.5 h-3.5 opacity-70" />
         </button>
       </DropdownMenuTrigger>
@@ -3416,6 +3476,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             onChange={(v) => store.setReviewBody(v)}
             placeholder="Leave a comment"
             minHeight="80px"
+            autoFocus={openedViaKeyboard}
           />
         </div>
 
@@ -3631,6 +3692,11 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
 // ============================================================================
 
 function PRReviewSkeleton() {
+  // Check URL hash to determine which skeleton to show
+  // If hash contains file=, user navigated directly to a file
+  const hash = window.location.hash;
+  const showFileSkeleton = hash.includes("file=");
+
   return (
     <div className="flex flex-col h-full">
       {/* Header skeleton - single row matching PRHeader */}
@@ -3666,9 +3732,9 @@ function PRReviewSkeleton() {
           </div>
         </aside>
 
-        {/* Overview panel skeleton - shown by default since showOverview is true initially */}
+        {/* Main content skeleton - show diff or overview based on URL hash */}
         <main className="flex-1 overflow-hidden flex flex-col">
-          <OverviewPanelSkeleton />
+          {showFileSkeleton ? <DiffSkeleton /> : <OverviewPanelSkeleton />}
         </main>
       </div>
     </div>

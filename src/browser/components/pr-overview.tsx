@@ -144,6 +144,14 @@ export const PROverview = memo(function PROverview() {
   const [assigningSelf, setAssigningSelf] = useState(false);
   const [refreshingChecks, setRefreshingChecks] = useState(false);
 
+  // Overview keyboard navigation state
+  const [focusedOverviewItemId, setFocusedOverviewItemId] = useState<
+    string | null
+  >(null);
+  const [replyingToOverviewItem, setReplyingToOverviewItem] = useState<
+    string | null
+  >(null);
+
   // Repo permissions - use GraphQL viewerPermission as primary source
   const isArchived = pr.base?.repo?.archived ?? false;
   // WRITE, MAINTAIN, or ADMIN permissions allow merging and resolving threads
@@ -863,6 +871,150 @@ export const PROverview = memo(function PROverview() {
     return Array.from(users.values());
   }, [pr.user, reviews, conversation]);
 
+  // Build list of navigable items for keyboard navigation
+  const navigableItems = useMemo(() => {
+    const items: string[] = [];
+
+    // PR description is always first
+    items.push("pr-description");
+
+    // Build items from timeline (matching the render order)
+    const threadsByReviewId = new Map<number, ReviewThread[]>();
+    const orphanedThreads: ReviewThread[] = [];
+    reviewThreads.forEach((thread) => {
+      const reviewId = thread.pullRequestReview?.databaseId;
+      if (reviewId) {
+        const existing = threadsByReviewId.get(reviewId) || [];
+        existing.push(thread);
+        threadsByReviewId.set(reviewId, existing);
+      } else {
+        orphanedThreads.push(thread);
+      }
+    });
+
+    const commentsById = new Map(conversation.map((c) => [c.id, c]));
+    const reviewsById = new Map(reviews.map((r) => [r.id, r]));
+    const usedReviewIds = new Set<number>();
+
+    timeline.forEach((event) => {
+      // Skip commits for navigation
+      if ("sha" in event && "author" in event) return;
+      if (!("event" in event)) return;
+      const eventType = event.event;
+
+      if (eventType === "closed" && pr.merged) return;
+
+      if (eventType === "commented" && "id" in event) {
+        const comment = commentsById.get(event.id as unknown as number);
+        if (comment) {
+          items.push(`issuecomment-${comment.id}`);
+        }
+        return;
+      }
+
+      if (eventType === "reviewed" && "id" in event) {
+        const review = reviewsById.get(event.id as unknown as number);
+        if (review) {
+          const threads = threadsByReviewId.get(review.id) || [];
+          const hasThreads = threads.length > 0;
+          if (
+            review.body ||
+            review.state === "APPROVED" ||
+            review.state === "CHANGES_REQUESTED" ||
+            hasThreads
+          ) {
+            items.push(`pullrequestreview-${review.id}`);
+            usedReviewIds.add(review.id);
+            // Add threads under this review
+            threads.forEach((t) => {
+              items.push(`reviewthread-${t.id}`);
+            });
+          }
+        }
+        return;
+      }
+    });
+
+    // Add orphaned threads
+    orphanedThreads.forEach((thread) => {
+      if (thread.comments.nodes[0]) {
+        items.push(`reviewthread-${thread.id}`);
+      }
+    });
+
+    return items;
+  }, [timeline, conversation, reviews, reviewThreads, pr.merged]);
+
+  // Keyboard navigation for overview
+  useEffect(() => {
+    if (activeTab !== "conversation") return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      // Allow Ctrl/Cmd shortcuts to pass through
+      if (e.ctrlKey || e.metaKey) return;
+
+      const currentIndex = focusedOverviewItemId
+        ? navigableItems.indexOf(focusedOverviewItemId)
+        : -1;
+
+      if (e.key === "ArrowDown" || e.key === "j") {
+        e.preventDefault();
+        const nextIndex =
+          currentIndex < navigableItems.length - 1 ? currentIndex + 1 : 0;
+        const nextId = navigableItems[nextIndex];
+        setFocusedOverviewItemId(nextId);
+        // Scroll into view
+        const el = document.getElementById(nextId);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        return;
+      }
+
+      if (e.key === "ArrowUp" || e.key === "k") {
+        e.preventDefault();
+        const prevIndex =
+          currentIndex > 0 ? currentIndex - 1 : navigableItems.length - 1;
+        const prevId = navigableItems[prevIndex];
+        setFocusedOverviewItemId(prevId);
+        const el = document.getElementById(prevId);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setFocusedOverviewItemId(null);
+        setReplyingToOverviewItem(null);
+        return;
+      }
+
+      // 'r' to reply to focused item
+      if (e.key === "r" && focusedOverviewItemId) {
+        const id = focusedOverviewItemId;
+        if (id.startsWith("issuecomment-") || id.startsWith("reviewthread-")) {
+          e.preventDefault();
+          setReplyingToOverviewItem(focusedOverviewItemId);
+        }
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeTab, focusedOverviewItemId, navigableItems]);
+
   if (loading) {
     return <PROverviewSkeleton />;
   }
@@ -919,6 +1071,7 @@ export const PROverview = memo(function PROverview() {
               <>
                 {/* PR Description */}
                 <CommentBox
+                  id="pr-description"
                   user={pr.user}
                   createdAt={pr.created_at}
                   body={pr.body}
@@ -930,6 +1083,7 @@ export const PROverview = memo(function PROverview() {
                     canWrite ? handleRemovePRReaction : undefined
                   }
                   currentUser={currentUser}
+                  isFocused={focusedOverviewItemId === "pr-description"}
                 />
 
                 {/* Timeline - merge comments, reviews, and events by date */}
@@ -1060,10 +1214,11 @@ export const PROverview = memo(function PROverview() {
                     return entries.map((entry, index) => {
                       if (entry.type === "comment") {
                         const comment = entry.data;
+                        const commentId = `issuecomment-${comment.id}`;
                         return (
                           <CommentBox
                             key={`comment-${comment.id}`}
-                            id={`issuecomment-${comment.id}`}
+                            id={commentId}
                             user={comment.user}
                             createdAt={comment.created_at}
                             body={comment.body ?? null}
@@ -1088,6 +1243,7 @@ export const PROverview = memo(function PROverview() {
                                 : undefined
                             }
                             currentUser={currentUser}
+                            isFocused={focusedOverviewItemId === commentId}
                           />
                         );
                       }
@@ -1099,32 +1255,39 @@ export const PROverview = memo(function PROverview() {
                           >
                             <ReviewBox review={entry.data} />
                             {/* Render associated threads under the review */}
-                            {entry.threads.map((thread) => (
-                              <ReviewThreadBox
-                                key={`thread-${thread.id}`}
-                                thread={thread}
-                                owner={owner}
-                                repo={repo}
-                                onReply={handleReplyToThread}
-                                onResolve={handleResolveThread}
-                                onUnresolve={handleUnresolveThread}
-                                canWrite={canWrite}
-                                canResolveThread={canResolveThread}
-                                currentUser={currentUser}
-                                onAddReaction={handleAddReviewCommentReaction}
-                                onRemoveReaction={
-                                  handleRemoveReviewCommentReaction
-                                }
-                                reactions={Object.fromEntries(
-                                  thread.comments.nodes.map((c) => [
-                                    c.databaseId,
-                                    reactions[
-                                      `review-comment-${c.databaseId}`
-                                    ] || [],
-                                  ])
-                                )}
-                              />
-                            ))}
+                            {entry.threads.map((thread) => {
+                              const threadId = `reviewthread-${thread.id}`;
+                              return (
+                                <ReviewThreadBox
+                                  key={`thread-${thread.id}`}
+                                  thread={thread}
+                                  owner={owner}
+                                  repo={repo}
+                                  onReply={handleReplyToThread}
+                                  onResolve={handleResolveThread}
+                                  onUnresolve={handleUnresolveThread}
+                                  canWrite={canWrite}
+                                  canResolveThread={canResolveThread}
+                                  currentUser={currentUser}
+                                  onAddReaction={handleAddReviewCommentReaction}
+                                  onRemoveReaction={
+                                    handleRemoveReviewCommentReaction
+                                  }
+                                  reactions={Object.fromEntries(
+                                    thread.comments.nodes.map((c) => [
+                                      c.databaseId,
+                                      reactions[
+                                        `review-comment-${c.databaseId}`
+                                      ] || [],
+                                    ])
+                                  )}
+                                  isFocused={focusedOverviewItemId === threadId}
+                                  autoFocusReply={
+                                    replyingToOverviewItem === threadId
+                                  }
+                                />
+                              );
+                            })}
                           </div>
                         );
                       }
@@ -1150,6 +1313,7 @@ export const PROverview = memo(function PROverview() {
                       }
                       if (entry.type === "thread") {
                         // Orphaned thread (no associated review)
+                        const threadId = `reviewthread-${entry.data.id}`;
                         return (
                           <ReviewThreadBox
                             key={`thread-${entry.data.id}`}
@@ -1171,6 +1335,8 @@ export const PROverview = memo(function PROverview() {
                                   [],
                               ])
                             )}
+                            isFocused={focusedOverviewItemId === threadId}
+                            autoFocusReply={replyingToOverviewItem === threadId}
                           />
                         );
                       }
@@ -2101,6 +2267,9 @@ function CommentBox({
   onAddReaction,
   onRemoveReaction,
   currentUser,
+  isFocused,
+  onReply,
+  isReplying,
 }: {
   id?: string;
   user: { login: string; avatar_url: string } | null;
@@ -2113,13 +2282,33 @@ function CommentBox({
   onAddReaction?: (content: ReactionContent) => void;
   onRemoveReaction?: (reactionId: number) => void;
   currentUser?: string | null;
+  isFocused?: boolean;
+  onReply?: (body: string) => Promise<void>;
+  isReplying?: boolean;
 }) {
+  const [replyText, setReplyText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmitReply = async () => {
+    if (!onReply || submitting || !replyText.trim()) return;
+    setSubmitting(true);
+    try {
+      await onReply(replyText.trim());
+      setReplyText("");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (!user) return null;
 
   return (
     <div
       id={id}
-      className="relative z-10 border border-border rounded-md overflow-hidden bg-card"
+      className={cn(
+        "relative z-10 border border-border rounded-md overflow-hidden bg-card",
+        isFocused && "ring-2 ring-blue-500"
+      )}
     >
       {/* Header */}
       <div
@@ -2389,6 +2578,8 @@ function ReviewThreadBox({
   onAddReaction,
   onRemoveReaction,
   reactions,
+  isFocused,
+  autoFocusReply,
 }: {
   thread: ReviewThread;
   owner: string;
@@ -2407,6 +2598,8 @@ function ReviewThreadBox({
   onAddReaction?: (commentId: number, content: ReactionContent) => void;
   onRemoveReaction?: (commentId: number, reactionId: number) => void;
   reactions?: Record<number, Reaction[]>;
+  isFocused?: boolean;
+  autoFocusReply?: boolean;
 }) {
   const [replyText, setReplyText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -2418,6 +2611,12 @@ function ReviewThreadBox({
   const firstComment = comments[0];
   const filePath = firstComment?.path;
   const diffHunk = firstComment?.diffHunk;
+  // Auto-focus reply box when triggered via keyboard
+  useEffect(() => {
+    if (autoFocusReply && canWrite) {
+      setShowReplyBox(true);
+    }
+  }, [autoFocusReply, canWrite]);
 
   // Parse diff hunk with syntax highlighting using the worker
   // Note: The worker already adds git diff headers, so we pass diffHunk directly
@@ -2520,9 +2719,11 @@ function ReviewThreadBox({
 
   return (
     <div
+      id={`reviewthread-${thread.id}`}
       className={cn(
         "relative z-10 border rounded-md overflow-hidden ml-8 bg-card", // Indented to show as nested under review
-        thread.isResolved ? "border-muted" : "border-border"
+        thread.isResolved ? "border-muted" : "border-border",
+        isFocused && "ring-2 ring-blue-500"
       )}
     >
       {/* File header */}

@@ -660,6 +660,17 @@ test("navigateFromHash handles GitHub-style issuecomment hash", () => {
   expect(state.overviewScrollTarget).toBe("issuecomment-98765");
 });
 
+test("navigateFromHash with empty hash navigates to overview", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  expect(store.getSnapshot().showOverview).toBe(false);
+
+  const result = store.navigateFromHash("");
+
+  expect(result).toBe(true);
+  expect(store.getSnapshot().showOverview).toBe(true);
+});
+
 test("getHashFromState returns overview scroll target when on overview", () => {
   const store = createStore();
   store.selectOverview("pullrequestreview-12345");
