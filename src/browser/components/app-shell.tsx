@@ -6,6 +6,7 @@ import {
   GitMerge,
   GitPullRequest,
   ExternalLink,
+  Github,
 } from "lucide-react";
 import { cn } from "../cn";
 import {
@@ -17,6 +18,7 @@ import {
 import { Home } from "./home";
 import { PRReviewContent } from "./pr-review";
 import { UserMenuButton } from "./welcome-dialog";
+import { useAuth } from "../contexts/auth";
 import {
   HoverCard,
   HoverCardTrigger,
@@ -38,6 +40,7 @@ export function AppShell() {
     openTab,
     getExistingPRTab,
   } = useTabContext();
+  const { isAuthenticated } = useAuth();
   const params = useParams<{ owner: string; repo: string; number: string }>();
   const navigate = useNavigate();
 
@@ -179,6 +182,17 @@ export function AppShell() {
           <div className="hidden sm:block">
             <PRUrlInput />
           </div>
+          {!isAuthenticated && (
+            <a
+              href="https://github.com/coder/pulldash"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+              title="View on GitHub"
+            >
+              <Github className="w-4 h-4" />
+            </a>
+          )}
           <UserMenuButton />
         </div>
       </div>

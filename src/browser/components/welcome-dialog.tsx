@@ -1110,6 +1110,17 @@ export function WelcomeDialog() {
                 <div className="pt-4">
                   <PRReviewAnimation />
                 </div>
+
+                {/* GitHub repo link */}
+                <a
+                  href="https://github.com/coder/pulldash"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors pt-2"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  View on GitHub
+                </a>
               </div>
             )}
           </div>
