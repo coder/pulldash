@@ -91,6 +91,60 @@ const api = new Hono()
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
+  })
+
+  // Validate Personal Access Token
+  // Tests the token against GitHub API and returns user info and scope validation
+  .post("/auth/validate-token", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { token } = body;
+
+      // Validate token format
+      if (!token || typeof token !== "string") {
+        return c.json({ valid: false, error: "Invalid token format" }, 400);
+      }
+
+      // Test token against GitHub API
+      const response = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Pulldash",
+        },
+      });
+
+      if (!response.ok) {
+        const statusCode = response.status === 401 ? 401 : 500;
+        return c.json(
+          {
+            valid: false,
+            error:
+              response.status === 401
+                ? "Invalid or expired token"
+                : "GitHub API error",
+          },
+          statusCode
+        );
+      }
+
+      const userData = await response.json();
+
+      // Check token scopes (if available in headers)
+      const scopes = response.headers.get("x-oauth-scopes") || "";
+      const hasRequiredScopes = scopes.includes("repo");
+
+      return c.json({
+        valid: true,
+        user: userData.login,
+        hasRequiredScopes,
+      });
+    } catch (err) {
+      return c.json(
+        { valid: false, error: "Validation failed" },
+        500
+      );
+    }
   });
 
 export default api;

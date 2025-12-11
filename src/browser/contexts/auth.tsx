@@ -61,6 +61,7 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   startDeviceAuth: () => Promise<void>;
   cancelDeviceAuth: () => void;
+  loginWithPAT: (token: string) => Promise<void>;
   logout: () => void;
   // Enable anonymous browsing mode
   enableAnonymousMode: () => void;
@@ -369,6 +370,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }));
   }, [abortController]);
 
+  const loginWithPAT = useCallback(async (token: string): Promise<void> => {
+    // Basic format validation
+    const trimmedToken = token.trim();
+    if (!trimmedToken) {
+      throw new Error("Token cannot be empty");
+    }
+
+    // Validate token format (GitHub PAT prefixes)
+    if (
+      !trimmedToken.startsWith("ghp_") &&
+      !trimmedToken.startsWith("github_pat_")
+    ) {
+      throw new Error(
+        'Invalid token format. GitHub tokens should start with "ghp_" or "github_pat_"'
+      );
+    }
+
+    // Validate token with backend
+    const response = await fetch("/api/auth/validate-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: trimmedToken }),
+    });
+
+    const result = await response.json();
+
+    if (!result.valid) {
+      throw new Error(result.error || "Token validation failed");
+    }
+
+    // Warn if token doesn't have required scopes
+    if (!result.hasRequiredScopes) {
+      console.warn('Token may not have required "repo" scope');
+    }
+
+    // Store token (same mechanism as device flow)
+    storeToken(trimmedToken);
+    setStoredAnonymousMode(false);
+    setState({
+      isAuthenticated: true,
+      isLoading: false,
+      token: trimmedToken,
+      deviceAuth: {
+        status: "idle",
+        userCode: null,
+        verificationUri: null,
+        error: null,
+      },
+      isAnonymous: false,
+      isRateLimited: false,
+    });
+
+    console.log("Successfully authenticated with PAT as user:", result.user);
+  }, []);
+
   const logout = useCallback(() => {
     clearStoredToken();
     setStoredAnonymousMode(false);
@@ -399,6 +455,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ...state,
     startDeviceAuth,
     cancelDeviceAuth,
+    loginWithPAT,
     logout,
     enableAnonymousMode,
     canWrite: state.isAuthenticated && !state.isAnonymous,
