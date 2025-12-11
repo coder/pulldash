@@ -175,6 +175,127 @@ const reviewFiles = [
 ];
 
 // ============================================================================
+// PAT Authentication Section
+// ============================================================================
+
+function PATAuthSection() {
+  const { loginWithPAT } = useAuth();
+  const [showPATInput, setShowPATInput] = useState(false);
+  const [patToken, setPatToken] = useState("");
+  const [patError, setPatError] = useState<string | null>(null);
+  const [isValidatingPAT, setIsValidatingPAT] = useState(false);
+
+  const handlePATLogin = async () => {
+    setPatError(null);
+    setIsValidatingPAT(true);
+
+    try {
+      await loginWithPAT(patToken);
+    } catch (error) {
+      setPatError(
+        error instanceof Error ? error.message : "Authentication failed"
+      );
+    } finally {
+      setIsValidatingPAT(false);
+    }
+  };
+
+  if (!showPATInput) {
+    return (
+      <button
+        onClick={() => setShowPATInput(true)}
+        className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
+      >
+        Or use a Personal Access Token
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-3 pt-2">
+      <div className="relative">
+        <input
+          id="pat-token"
+          type="password"
+          value={patToken}
+          onChange={(e) => setPatToken(e.target.value)}
+          placeholder="Paste your token (ghp_... or github_pat_...)"
+          className={cn(
+            "w-full h-10 px-3 rounded-md border bg-background text-foreground text-sm",
+            "placeholder:text-muted-foreground",
+            "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+            patError && "border-destructive focus:ring-destructive"
+          )}
+          disabled={isValidatingPAT}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && patToken && !isValidatingPAT) {
+              handlePATLogin();
+            }
+            if (e.key === "Escape") {
+              setShowPATInput(false);
+              setPatToken("");
+              setPatError(null);
+            }
+          }}
+        />
+      </div>
+
+      {patError && (
+        <div className="flex items-start gap-2 p-2.5 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{patError}</span>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <Button
+          onClick={handlePATLogin}
+          disabled={!patToken || isValidatingPAT}
+          className="flex-1 h-9 gap-2"
+        >
+          {isValidatingPAT ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Validating...
+            </>
+          ) : (
+            "Sign in"
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setShowPATInput(false);
+            setPatToken("");
+            setPatError(null);
+          }}
+          className="h-9 px-3 text-muted-foreground"
+          disabled={isValidatingPAT}
+        >
+          Cancel
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Requires{" "}
+        <code className="px-1 py-0.5 rounded bg-muted font-mono">repo</code>{" "}
+        scope.{" "}
+        <a
+          href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=Pulldash"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-foreground hover:underline"
+        >
+          Create token →
+        </a>
+      </p>
+    </div>
+  );
+}
+
+// ============================================================================
 // Stage 1: Live PR Updates Animation
 // ============================================================================
 
@@ -1100,6 +1221,8 @@ export function WelcomeDialog() {
                     </>
                   )}
                 </Button>
+
+                <PATAuthSection />
 
                 <p className="text-xs text-center text-muted-foreground">
                   All GitHub API calls are made directly from your device.
