@@ -371,7 +371,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [abortController]);
 
   const loginWithPAT = useCallback(async (token: string): Promise<void> => {
-    // Basic format validation
     const trimmedToken = token.trim();
     if (!trimmedToken) {
       throw new Error("Token cannot be empty");
@@ -387,22 +386,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
     }
 
-    // Validate token with backend
-    const response = await fetch("/api/auth/validate-token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: trimmedToken }),
+    // Validate token directly with GitHub API (CORS is supported)
+    const response = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${trimmedToken}`,
+        Accept: "application/vnd.github.v3+json",
+      },
     });
 
-    const result = await response.json();
-
-    if (!result.valid) {
-      throw new Error(result.error || "Token validation failed");
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error("Invalid or expired token");
+      }
+      throw new Error("Failed to validate token with GitHub");
     }
 
-    // Warn if token doesn't have required scopes
-    if (!result.hasRequiredScopes) {
-      console.warn('Token may not have required "repo" scope');
+    const userData = await response.json();
+
+    // Check token scopes from response headers
+    const scopes = response.headers.get("x-oauth-scopes") || "";
+    const hasRepoScope = scopes.includes("repo");
+
+    if (!hasRepoScope) {
+      throw new Error(
+        'Token is missing the required "repo" scope. Please create a new token with the repo scope.'
+      );
     }
 
     // Store token (same mechanism as device flow)
@@ -422,7 +430,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isRateLimited: false,
     });
 
-    console.log("Successfully authenticated with PAT as user:", result.user);
+    console.log("Successfully authenticated with PAT as:", userData.login);
   }, []);
 
   const logout = useCallback(() => {

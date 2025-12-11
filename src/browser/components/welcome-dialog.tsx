@@ -191,91 +191,106 @@ function PATAuthSection() {
 
     try {
       await loginWithPAT(patToken);
-      // Success - dialog should close automatically via auth context
     } catch (error) {
-      setPatError(error instanceof Error ? error.message : "Authentication failed");
+      setPatError(
+        error instanceof Error ? error.message : "Authentication failed"
+      );
     } finally {
       setIsValidatingPAT(false);
     }
   };
 
-  return (
-    <div className="border-t pt-4">
+  if (!showPATInput) {
+    return (
       <button
-        onClick={() => setShowPATInput(!showPATInput)}
-        className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        onClick={() => setShowPATInput(true)}
+        className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
       >
-        {showPATInput ? "← Use OAuth instead" : "Or sign in with Personal Access Token →"}
+        Or use a Personal Access Token
       </button>
+    );
+  }
 
-      {showPATInput && (
-        <div className="mt-4 space-y-3">
-          <div>
-            <label htmlFor="pat-token" className="block text-sm font-medium mb-2">
-              GitHub Personal Access Token
-            </label>
-            <input
-              id="pat-token"
-              type="password"
-              value={patToken}
-              onChange={(e) => setPatToken(e.target.value)}
-              placeholder="ghp_xxxxxxxxxxxx"
-              className="w-full px-3 py-2 border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isValidatingPAT}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && patToken && !isValidatingPAT) {
-                  handlePATLogin();
-                }
-              }}
-            />
-          </div>
-
-          {patError && (
-            <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-3 rounded border border-red-200 dark:border-red-900">
-              {patError}
-            </div>
+  return (
+    <div className="space-y-3 pt-2">
+      <div className="relative">
+        <input
+          id="pat-token"
+          type="password"
+          value={patToken}
+          onChange={(e) => setPatToken(e.target.value)}
+          placeholder="Paste your token (ghp_... or github_pat_...)"
+          className={cn(
+            "w-full h-10 px-3 rounded-md border bg-background text-foreground text-sm",
+            "placeholder:text-muted-foreground",
+            "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+            patError && "border-destructive focus:ring-destructive"
           )}
+          disabled={isValidatingPAT}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && patToken && !isValidatingPAT) {
+              handlePATLogin();
+            }
+            if (e.key === "Escape") {
+              setShowPATInput(false);
+              setPatToken("");
+              setPatError(null);
+            }
+          }}
+        />
+      </div>
 
-          <div className="text-xs text-muted-foreground space-y-2">
-            <p className="font-medium">Required scopes:</p>
-            <ul className="list-disc list-inside space-y-1 ml-1">
-              <li>
-                <code className="bg-muted px-1 py-0.5 rounded">repo</code> - Access repositories
-              </li>
-              <li>
-                <code className="bg-muted px-1 py-0.5 rounded">read:user</code> - Read user profile
-              </li>
-            </ul>
-            <a
-              href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=Pulldash"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline mt-2"
-            >
-              Create a token on GitHub
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-
-          <Button
-            onClick={handlePATLogin}
-            disabled={!patToken || isValidatingPAT}
-            className="w-full h-10 gap-2"
-          >
-            {isValidatingPAT ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Validating...
-              </>
-            ) : (
-              <>
-                <Github className="w-4 h-4" />
-                Sign in with PAT
-              </>
-            )}
-          </Button>
+      {patError && (
+        <div className="flex items-start gap-2 p-2.5 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{patError}</span>
         </div>
       )}
+
+      <div className="flex gap-2">
+        <Button
+          onClick={handlePATLogin}
+          disabled={!patToken || isValidatingPAT}
+          className="flex-1 h-9 gap-2"
+        >
+          {isValidatingPAT ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Validating...
+            </>
+          ) : (
+            "Sign in"
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setShowPATInput(false);
+            setPatToken("");
+            setPatError(null);
+          }}
+          className="h-9 px-3 text-muted-foreground"
+          disabled={isValidatingPAT}
+        >
+          Cancel
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Requires{" "}
+        <code className="px-1 py-0.5 rounded bg-muted font-mono">repo</code>{" "}
+        scope.{" "}
+        <a
+          href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=Pulldash"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-foreground hover:underline"
+        >
+          Create token →
+        </a>
+      </p>
     </div>
   );
 }
