@@ -740,6 +740,7 @@ interface MarkdownEditorProps {
   onKeyDown?: (e: React.KeyboardEvent) => void;
   placeholder?: string;
   minHeight?: string;
+  maxHeight?: string;
   autoFocus?: boolean;
   disabled?: boolean;
 }
@@ -769,7 +770,8 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   onChange,
   onKeyDown,
   placeholder = "Leave a comment...",
-  minHeight = "100px",
+  minHeight = "160px", // ~8 lines at default text-sm size
+  maxHeight = "50vh",
   autoFocus = false,
   disabled = false,
 }: MarkdownEditorProps) {
@@ -806,12 +808,63 @@ export const MarkdownEditor = memo(function MarkdownEditor({
     }
   }, [autoFocus]);
 
+  // Track if user has manually resized the textarea
+  const userResizedRef = useRef(false);
+
+  // Auto-resize textarea to fit content (fallback for browsers without field-sizing)
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // Skip auto-resize if user has manually resized via drag handle
+    if (userResizedRef.current) return;
+
+    // Check if browser supports field-sizing (then CSS handles it)
+    if (CSS.supports("field-sizing", "content")) return;
+
+    // Reset height to auto to get the correct scrollHeight
+    textarea.style.height = "auto";
+    // Set height to scrollHeight to fit content
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  // Detect manual resize via mouseup on textarea
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    let startHeight = textarea.offsetHeight;
+
+    const handleMouseDown = () => {
+      startHeight = textarea.offsetHeight;
+    };
+
+    const handleMouseUp = () => {
+      // If height changed without value change, user manually resized
+      if (textarea.offsetHeight !== startHeight) {
+        userResizedRef.current = true;
+      }
+    };
+
+    textarea.addEventListener("mousedown", handleMouseDown);
+    textarea.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      textarea.removeEventListener("mousedown", handleMouseDown);
+      textarea.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
   // Switch back to write mode when content is cleared externally (like after submit)
   const prevValueRef = useRef(value);
   useEffect(() => {
     // Only switch if value was cleared (had content before, empty now)
     if (prevValueRef.current && !value && activeTab === "preview") {
       setActiveTab("write");
+    }
+    // Reset manual resize flag when content is cleared (new comment)
+    if (prevValueRef.current && !value) {
+      userResizedRef.current = false;
     }
     prevValueRef.current = value;
   }, [value, activeTab]);
@@ -1370,11 +1423,19 @@ export const MarkdownEditor = memo(function MarkdownEditor({
               placeholder={placeholder}
               disabled={disabled}
               className={cn(
-                "w-full px-3 py-2 text-sm bg-transparent resize-none focus:outline-none",
+                "w-full px-3 py-2 text-sm bg-transparent resize-vertical focus:outline-none",
                 "placeholder:text-muted-foreground",
                 disabled && "opacity-50 cursor-not-allowed"
               )}
-              style={{ minHeight }}
+              style={{
+                minHeight,
+                maxHeight,
+                // Use field-sizing for browsers that support it (Chrome 123+, Safari 26.2+)
+                // Falls back to JS auto-resize for others
+                fieldSizing: "content",
+                // overflow: auto is required for resize handle to appear
+                overflowY: "auto",
+              }}
             />
           </div>
           <PopoverContent
@@ -1427,7 +1488,10 @@ export const MarkdownEditor = memo(function MarkdownEditor({
           </PopoverContent>
         </Popover>
       ) : (
-        <div className="px-3 py-2 overflow-auto" style={{ minHeight }}>
+        <div
+          className="px-3 py-2 overflow-auto"
+          style={{ minHeight, maxHeight }}
+        >
           {value.trim() ? (
             <Markdown className="text-sm">{value}</Markdown>
           ) : (
