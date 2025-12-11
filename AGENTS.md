@@ -39,3 +39,20 @@ Always run `bun typecheck` and `bun fmt` after changes to ensure that files are 
 ## Debugging
 
 If the user provides a PR identifier, you should use the `gh` CLI to inspect the API so we can fix our implementation if it appears incorrect.
+
+## PR + Release Workflow
+
+- Reuse existing PRs; never close or recreate without instruction. Force-push updates.
+- After every push run:
+
+```bash
+gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
+./scripts/wait_pr_checks.sh <pr_number>
+```
+
+- Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
+- Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
+- If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
+- Never enable auto-merge or merge at all unless the user explicitly says "merge it".
+- PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
+- Title prefixes: `perf|refactor|fix|feat|ci|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
