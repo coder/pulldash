@@ -414,6 +414,11 @@ export function Home() {
     return () => clearTimeout(timeout);
   }, [github, searchQuery]);
 
+  // Multi-select state for adding repos
+  const [selectedReposToAdd, setSelectedReposToAdd] = useState<Set<string>>(
+    new Set()
+  );
+
   const handleAddRepo = useCallback((fullName: string) => {
     setConfig((prev) => {
       if (prev.repos.some((r) => r.name === fullName)) return prev;
@@ -424,6 +429,36 @@ export function Home() {
     });
     setSearchQuery("");
     setSearchResults([]);
+  }, []);
+
+  const handleAddSelectedRepos = useCallback(() => {
+    if (selectedReposToAdd.size === 0) return;
+    setConfig((prev) => {
+      const newRepos = Array.from(selectedReposToAdd)
+        .filter((name) => !prev.repos.some((r) => r.name === name))
+        .map((name) => ({ name, mode: "review-requested" as FilterMode }));
+      if (newRepos.length === 0) return prev;
+      return {
+        ...prev,
+        repos: [...prev.repos, ...newRepos],
+      };
+    });
+    setSelectedReposToAdd(new Set());
+    setSearchQuery("");
+    setSearchResults([]);
+    setShowAddRepo(false);
+  }, [selectedReposToAdd]);
+
+  const toggleRepoSelection = useCallback((fullName: string) => {
+    setSelectedReposToAdd((prev) => {
+      const next = new Set(prev);
+      if (next.has(fullName)) {
+        next.delete(fullName);
+      } else {
+        next.add(fullName);
+      }
+      return next;
+    });
   }, []);
 
   const handleRemoveRepo = useCallback((repoName: string) => {
@@ -819,6 +854,7 @@ export function Home() {
                     onClick={() => {
                       setShowAddRepo(false);
                       setSearchQuery("");
+                      setSelectedReposToAdd(new Set());
                     }}
                   />
                   <div
@@ -869,32 +905,62 @@ export function Home() {
                         </button>
                       )}
                       {searchResults.length > 0 ? (
-                        searchResults.map((repo) => (
-                          <button
-                            key={repo.id}
-                            onMouseDown={() => {
-                              handleAddRepo(repo.full_name);
-                              setShowAddRepo(false);
-                              setSearchQuery("");
-                            }}
-                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left border-b border-border/50 last:border-b-0"
-                          >
-                            {repo.owner && (
-                              <img
-                                src={repo.owner.avatar_url}
-                                alt={repo.owner.login}
-                                className="w-4 h-4 rounded shrink-0"
-                              />
-                            )}
-                            <span className="font-medium text-xs truncate flex-1">
-                              {repo.full_name}
-                            </span>
-                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                              <Star className="w-3 h-3" />
-                              {(repo.stargazers_count ?? 0).toLocaleString()}
-                            </span>
-                          </button>
-                        ))
+                        searchResults.map((repo) => {
+                          const isSelected = selectedReposToAdd.has(
+                            repo.full_name
+                          );
+                          const isAlreadyAdded = config.repos.some(
+                            (r) => r.name === repo.full_name
+                          );
+                          return (
+                            <button
+                              key={repo.id}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (!isAlreadyAdded) {
+                                  toggleRepoSelection(repo.full_name);
+                                }
+                              }}
+                              disabled={isAlreadyAdded}
+                              className={cn(
+                                "w-full flex items-center gap-2 px-3 py-2 transition-colors text-left border-b border-border/50 last:border-b-0",
+                                isAlreadyAdded
+                                  ? "opacity-50 cursor-not-allowed"
+                                  : "hover:bg-muted/50 cursor-pointer",
+                                isSelected && "bg-primary/10"
+                              )}
+                            >
+                              <div
+                                className={cn(
+                                  "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                                  isSelected
+                                    ? "bg-primary border-primary"
+                                    : isAlreadyAdded
+                                      ? "border-muted-foreground/30"
+                                      : "border-muted-foreground/50"
+                                )}
+                              >
+                                {(isSelected || isAlreadyAdded) && (
+                                  <Check className="w-3 h-3 text-primary-foreground" />
+                                )}
+                              </div>
+                              {repo.owner && (
+                                <img
+                                  src={repo.owner.avatar_url}
+                                  alt={repo.owner.login}
+                                  className="w-4 h-4 rounded shrink-0"
+                                />
+                              )}
+                              <span className="font-medium text-xs truncate flex-1">
+                                {repo.full_name}
+                              </span>
+                              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <Star className="w-3 h-3" />
+                                {(repo.stargazers_count ?? 0).toLocaleString()}
+                              </span>
+                            </button>
+                          );
+                        })
                       ) : searchQuery ? (
                         <div className="px-3 py-4 text-xs text-muted-foreground text-center">
                           {searching ? "Searching..." : "No repositories found"}
@@ -905,6 +971,23 @@ export function Home() {
                         </div>
                       )}
                     </div>
+
+                    {/* Add Selected Button */}
+                    {selectedReposToAdd.size > 0 && (
+                      <div className="p-2 border-t border-border">
+                        <button
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleAddSelectedRepos();
+                          }}
+                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Add {selectedReposToAdd.size} Repo
+                          {selectedReposToAdd.size > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
