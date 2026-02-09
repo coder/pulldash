@@ -122,7 +122,7 @@ export function AppShell() {
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
       {/* Native-style Tab Bar */}
-      <div className="h-9 bg-[#1a1a1a] flex items-center shrink-0 border-b border-border/50 app-drag-region">
+      <div className="h-9 bg-muted flex items-center shrink-0 border-b border-border/50 app-drag-region">
         {/* Logo with tooltip */}
         <div className="h-full flex items-center gap-1.5 px-3 shrink-0 app-no-drag">
           <HoverCard openDelay={200} closeDelay={100}>

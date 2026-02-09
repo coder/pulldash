@@ -15,6 +15,8 @@ import {
   Globe,
   ArrowRight,
   Clock,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { BookmarkletDialog, useShowBookmarklet } from "./bookmarklet";
 import {
@@ -37,6 +39,7 @@ import { useCurrentUser } from "../contexts/github";
 import { useOpenPRReviewTab } from "../contexts/tabs";
 import { cn } from "../cn";
 import { isMac } from "../ui/keycap";
+import { useTheme } from "../contexts/theme";
 
 // ============================================================================
 // Animation Data
@@ -1319,6 +1322,7 @@ export function UserMenuButton({ className }: { className?: string }) {
   const currentUser = useCurrentUser()?.login ?? null;
   const showBookmarklet = useShowBookmarklet();
   const [bookmarkletOpen, setBookmarkletOpen] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   // Anonymous mode - show read-only indicator with sign-in option
   if (isAnonymous && !isAuthenticated) {
@@ -1403,6 +1407,18 @@ export function UserMenuButton({ className }: { className?: string }) {
               <DropdownMenuSeparator />
             </>
           )}
+          <DropdownMenuItem
+            onClick={toggleTheme}
+            className="cursor-pointer"
+          >
+            {theme === "dark" ? (
+              <Sun className="w-4 h-4" />
+            ) : (
+              <Moon className="w-4 h-4" />
+            )}
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
             onClick={logout}

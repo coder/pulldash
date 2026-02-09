@@ -135,10 +135,64 @@
   --scrollbar-thumb: oklch(0.35 0 0);
   --scrollbar-thumb-hover: oklch(0.45 0 0);
 
+  /* Diff line background colors */
+  --diff-insert-bg: #122218;
+  --diff-delete-bg: #261710;
+  --diff-comment-range-bg: #19273e;
+  --diff-comment-bg: #1b1810;
+
+  /* Diff inline segment text colors */
+  --diff-insert-text: oklch(0.792 0.209 151.711);
+  --diff-delete-text: oklch(0.792 0.117 56.856);
+
   --font-sans:
     "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
     Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
   --font-mono: "Geist Mono", "Fira Code", "Fira Mono", ui-monospace, monospace;
+}
+
+.light {
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.922 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.922 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.922 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0 0 0 / 10%);
+  --input: oklch(0 0 0 / 15%);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.965 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.922 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0 0 0 / 10%);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Scrollbar colors */
+  --scrollbar-track: oklch(0.95 0 0);
+  --scrollbar-thumb: oklch(0.75 0 0);
+  --scrollbar-thumb-hover: oklch(0.65 0 0);
+
+  /* Diff line background colors */
+  --diff-insert-bg: #ccf0d4;
+  --diff-delete-bg: #fdd8d3;
+  --diff-comment-range-bg: #dbeafe;
+  --diff-comment-bg: #fef9c3;
+
+  /* Diff inline segment text colors */
+  --diff-insert-text: oklch(0.448 0.119 151.711);
+  --diff-delete-text: oklch(0.495 0.155 27.325);
 }
 
 @layer base {
@@ -294,6 +348,12 @@
     inset -2px 0 0 rgb(59, 130, 246),
     inset 0 2px 0 rgb(59, 130, 246),
     inset 0 -2px 0 rgb(59, 130, 246) !important;
+}
+
+/* Light mode diff selection overrides */
+.light .diff-line-row[data-selected="true"],
+.light .split-diff-side[data-selected="true"] {
+  background: linear-gradient(#dbeafe, #dbeafe) !important;
 }
 
 /* ============================================================================
@@ -593,4 +653,91 @@
 
 .markdown-body .hljs-strong {
   font-weight: bold;
+}
+
+/* ============================================================================
+   Light mode overrides for Markdown Body
+   ============================================================================ */
+
+.light .markdown-body a {
+  color: oklch(0.45 0.2 250);
+}
+
+.light .markdown-body code {
+  background-color: oklch(0.92 0.01 260 / 50%);
+}
+
+.light .markdown-body pre {
+  background-color: oklch(0.95 0.01 260 / 60%);
+  border: 1px solid oklch(0 0 0 / 8%);
+}
+
+.light .markdown-body table th {
+  background-color: oklch(0.95 0 0);
+}
+
+.light .markdown-body table tr:nth-child(2n) {
+  background-color: oklch(0.97 0 0 / 50%);
+}
+
+.light .markdown-body .hljs {
+  color: #24292e;
+}
+
+.light .markdown-body .hljs-comment,
+.light .markdown-body .hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
+
+.light .markdown-body .hljs-keyword,
+.light .markdown-body .hljs-selector-tag,
+.light .markdown-body .hljs-addition {
+  color: #d73a49;
+}
+
+.light .markdown-body .hljs-number,
+.light .markdown-body .hljs-string,
+.light .markdown-body .hljs-meta .hljs-meta-string,
+.light .markdown-body .hljs-literal,
+.light .markdown-body .hljs-doctag,
+.light .markdown-body .hljs-regexp {
+  color: #032f62;
+}
+
+.light .markdown-body .hljs-title,
+.light .markdown-body .hljs-section,
+.light .markdown-body .hljs-name,
+.light .markdown-body .hljs-selector-id,
+.light .markdown-body .hljs-selector-class {
+  color: #6f42c1;
+}
+
+.light .markdown-body .hljs-attribute,
+.light .markdown-body .hljs-attr,
+.light .markdown-body .hljs-variable,
+.light .markdown-body .hljs-template-variable,
+.light .markdown-body .hljs-class .hljs-title,
+.light .markdown-body .hljs-type {
+  color: #005cc5;
+}
+
+.light .markdown-body .hljs-symbol,
+.light .markdown-body .hljs-bullet,
+.light .markdown-body .hljs-subst,
+.light .markdown-body .hljs-meta,
+.light .markdown-body .hljs-meta .hljs-keyword,
+.light .markdown-body .hljs-selector-attr,
+.light .markdown-body .hljs-selector-pseudo,
+.light .markdown-body .hljs-link {
+  color: #e36209;
+}
+
+.light .markdown-body .hljs-built_in,
+.light .markdown-body .hljs-deletion {
+  color: #b31d28;
+}
+
+.light .markdown-body .hljs-formula {
+  background-color: oklch(0.95 0 0);
 }
