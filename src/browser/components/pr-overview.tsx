@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 import { Skeleton } from "../ui/skeleton";
 import { Checkbox } from "../ui/checkbox";
-import { cn } from "../cn";
+import { cn, labelStyles } from "../cn";
 import { Markdown, MarkdownEditor } from "../ui/markdown";
 import { UserHoverCard, UserAvatar } from "../ui/user-hover-card";
 import {
@@ -2182,9 +2182,7 @@ function LabelsSection({
               key={label.name}
               className="px-2 py-0.5 text-xs font-medium rounded-full"
               style={{
-                backgroundColor: `#${label.color}20`,
-                color: `#${label.color}`,
-                border: `1px solid #${label.color}40`,
+                ...labelStyles(label.color),
               }}
             >
               {label.name}
@@ -4468,9 +4466,7 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
               <span
                 className="px-2 py-0.5 text-xs font-medium rounded-full"
                 style={{
-                  backgroundColor: `#${labeled.label?.color}20`,
-                  color: `#${labeled.label?.color}`,
-                  border: `1px solid #${labeled.label?.color}40`,
+                  ...(labeled.label?.color ? labelStyles(labeled.label.color) : {}),
                 }}
               >
                 {labeled.label?.name}

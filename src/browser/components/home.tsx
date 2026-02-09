@@ -25,7 +25,7 @@ import {
   Clock,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { cn } from "../cn";
+import { cn, labelStyles } from "../cn";
 import { Skeleton } from "../ui/skeleton";
 import { UserHoverCard } from "../ui/user-hover-card";
 import {
@@ -1466,11 +1466,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
             <span
               key={label.name}
               className="px-2 py-0.5 text-[11px] font-medium rounded-full hidden sm:inline-block"
-              style={{
-                backgroundColor: `#${label.color}20`,
-                color: `#${label.color}`,
-                border: `1px solid #${label.color}40`,
-              }}
+              style={labelStyles(label.color)}
             >
               {label.name}
             </span>

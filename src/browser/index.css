@@ -152,47 +152,48 @@
 }
 
 .light {
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.922 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.922 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.922 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0 0 0 / 10%);
-  --input: oklch(0 0 0 / 15%);
-  --ring: oklch(0.708 0 0);
-  --sidebar: oklch(0.965 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.922 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0 0 0 / 10%);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* GitHub Primer light theme palette */
+  --background: #ffffff;
+  --foreground: #1f2328;
+  --card: #ffffff;
+  --card-foreground: #1f2328;
+  --popover: #ffffff;
+  --popover-foreground: #1f2328;
+  --primary: #1f2328;
+  --primary-foreground: #ffffff;
+  --secondary: #f6f8fa;
+  --secondary-foreground: #1f2328;
+  --muted: #f6f8fa;
+  --muted-foreground: #656d76;
+  --accent: #f6f8fa;
+  --accent-foreground: #1f2328;
+  --destructive: #d1242f;
+  --border: #d0d7de;
+  --input: #d0d7de;
+  --ring: #0969da;
+  --sidebar: #f6f8fa;
+  --sidebar-foreground: #1f2328;
+  --sidebar-primary: #0969da;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eaeef2;
+  --sidebar-accent-foreground: #1f2328;
+  --sidebar-border: #d0d7de;
+  --sidebar-ring: #0969da;
 
   /* Scrollbar colors */
-  --scrollbar-track: oklch(0.95 0 0);
-  --scrollbar-thumb: oklch(0.75 0 0);
-  --scrollbar-thumb-hover: oklch(0.65 0 0);
+  --scrollbar-track: #f6f8fa;
+  --scrollbar-thumb: #c1c8cd;
+  --scrollbar-thumb-hover: #9ea7b0;
 
-  /* Diff line background colors */
-  --diff-insert-bg: #ccf0d4;
-  --diff-delete-bg: #fdd8d3;
-  --diff-comment-range-bg: #dbeafe;
-  --diff-comment-bg: #fef9c3;
+  /* Diff line background colors (GitHub diff palette) */
+  --diff-insert-bg: #dafbe1;
+  --diff-delete-bg: #ffebe9;
+  --diff-comment-range-bg: #ddf4ff;
+  --diff-comment-bg: #fff8c5;
 
   /* Diff inline segment text colors */
-  --diff-insert-text: oklch(0.448 0.119 151.711);
-  --diff-delete-text: oklch(0.495 0.155 27.325);
+  --diff-insert-text: #1a7f37;
+  --diff-delete-text: #d1242f;
 }
 
 @layer base {
@@ -353,7 +354,7 @@
 /* Light mode diff selection overrides */
 .light .diff-line-row[data-selected="true"],
 .light .split-diff-side[data-selected="true"] {
-  background: linear-gradient(#dbeafe, #dbeafe) !important;
+  background: linear-gradient(#ddf4ff, #ddf4ff) !important;
 }
 
 /* ============================================================================
@@ -660,40 +661,40 @@
    ============================================================================ */
 
 .light .markdown-body a {
-  color: oklch(0.45 0.2 250);
+  color: #0969da;
 }
 
 .light .markdown-body code {
-  background-color: oklch(0.92 0.01 260 / 50%);
+  background-color: #eff1f3;
 }
 
 .light .markdown-body pre {
-  background-color: oklch(0.95 0.01 260 / 60%);
-  border: 1px solid oklch(0 0 0 / 8%);
+  background-color: #f6f8fa;
+  border: 1px solid #d0d7de;
 }
 
 .light .markdown-body table th {
-  background-color: oklch(0.95 0 0);
+  background-color: #f6f8fa;
 }
 
 .light .markdown-body table tr:nth-child(2n) {
-  background-color: oklch(0.97 0 0 / 50%);
+  background-color: #f6f8fa80;
 }
 
 .light .markdown-body .hljs {
-  color: #24292e;
+  color: #1f2328;
 }
 
 .light .markdown-body .hljs-comment,
 .light .markdown-body .hljs-quote {
-  color: #6a737d;
+  color: #6e7781;
   font-style: italic;
 }
 
 .light .markdown-body .hljs-keyword,
 .light .markdown-body .hljs-selector-tag,
 .light .markdown-body .hljs-addition {
-  color: #d73a49;
+  color: #cf222e;
 }
 
 .light .markdown-body .hljs-number,
@@ -702,7 +703,7 @@
 .light .markdown-body .hljs-literal,
 .light .markdown-body .hljs-doctag,
 .light .markdown-body .hljs-regexp {
-  color: #032f62;
+  color: #0a3069;
 }
 
 .light .markdown-body .hljs-title,
@@ -710,7 +711,7 @@
 .light .markdown-body .hljs-name,
 .light .markdown-body .hljs-selector-id,
 .light .markdown-body .hljs-selector-class {
-  color: #6f42c1;
+  color: #8250df;
 }
 
 .light .markdown-body .hljs-attribute,
@@ -719,7 +720,7 @@
 .light .markdown-body .hljs-template-variable,
 .light .markdown-body .hljs-class .hljs-title,
 .light .markdown-body .hljs-type {
-  color: #005cc5;
+  color: #0550ae;
 }
 
 .light .markdown-body .hljs-symbol,
@@ -730,14 +731,14 @@
 .light .markdown-body .hljs-selector-attr,
 .light .markdown-body .hljs-selector-pseudo,
 .light .markdown-body .hljs-link {
-  color: #e36209;
+  color: #953800;
 }
 
 .light .markdown-body .hljs-built_in,
 .light .markdown-body .hljs-deletion {
-  color: #b31d28;
+  color: #82071e;
 }
 
 .light .markdown-body .hljs-formula {
-  background-color: oklch(0.95 0 0);
+  background-color: #f6f8fa;
 }
