@@ -3560,7 +3560,7 @@ function MergeSection({
               onClick={handleToggleDropdown}
               disabled={merging}
               className={cn(
-                "px-2 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-green-700",
+                "px-4 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-green-700 self-stretch flex items-center",
                 canMergePR || bypassRules
                   ? "bg-green-600 text-white hover:bg-green-700"
                   : "bg-muted text-muted-foreground cursor-not-allowed"
