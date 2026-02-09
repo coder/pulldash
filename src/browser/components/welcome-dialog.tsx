@@ -431,7 +431,7 @@ function LivePRListAnimation({ isActive }: { isActive: boolean }) {
               animationDelay: `${i * 50}ms`,
             }}
           >
-            <GitPullRequest className="w-3.5 h-3.5 text-green-500 shrink-0" />
+            <GitPullRequest className="w-3.5 h-3.5 text-success-fg shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-[11px] font-medium text-foreground truncate">
                 {pr.title}
@@ -445,7 +445,7 @@ function LivePRListAnimation({ isActive }: { isActive: boolean }) {
               </div>
             </div>
             <div className="flex items-center gap-1.5 text-[9px] font-mono shrink-0">
-              <span className="text-green-400">+{pr.additions}</span>
+              <span className="text-success-fg">+{pr.additions}</span>
               <span className="text-red-400">−{pr.deletions}</span>
             </div>
           </div>
@@ -612,7 +612,7 @@ function FileNavigationAnimation({ isActive }: { isActive: boolean }) {
           </div>
           <div className="mt-1 h-1 bg-muted rounded-full overflow-hidden">
             <div
-              className="h-full bg-green-500 transition-all duration-300"
+              className="h-full bg-success transition-all duration-300"
               style={{ width: `${(viewedCount / 4) * 100}%` }}
             />
           </div>
@@ -629,12 +629,12 @@ function FileNavigationAnimation({ isActive }: { isActive: boolean }) {
               )}
             >
               {viewedFiles.has(i) ? (
-                <Check className="w-3 h-3 text-green-500 shrink-0" />
+                <Check className="w-3 h-3 text-success-fg shrink-0" />
               ) : (
                 <span
                   className={cn(
                     "w-1.5 h-1.5 rounded-full shrink-0",
-                    f.deletions > f.additions ? "bg-red-400" : "bg-green-400"
+                    f.deletions > f.additions ? "bg-red-400" : "bg-success"
                   )}
                 />
               )}
@@ -668,7 +668,7 @@ function FileNavigationAnimation({ isActive }: { isActive: boolean }) {
               isTransitioning ? "opacity-0" : "opacity-100"
             )}
           >
-            <span className="text-green-400">+{file.additions}</span>
+            <span className="text-success-fg">+{file.additions}</span>
             <span className="text-red-400">−{file.deletions}</span>
           </div>
         </div>
@@ -685,7 +685,7 @@ function FileNavigationAnimation({ isActive }: { isActive: boolean }) {
               className={cn(
                 "flex px-2",
                 line.type === "delete" && "bg-red-500/10",
-                line.type === "add" && "bg-green-500/10"
+                line.type === "add" && "bg-success-muted-bg"
               )}
             >
               <span className="w-7 text-right pr-2 text-muted-foreground/40 select-none shrink-0">
@@ -694,7 +694,7 @@ function FileNavigationAnimation({ isActive }: { isActive: boolean }) {
               <span
                 className={cn(
                   line.type === "delete" && "text-red-400",
-                  line.type === "add" && "text-green-400",
+                  line.type === "add" && "text-success-fg",
                   line.type === "context" && "text-muted-foreground"
                 )}
               >
@@ -787,7 +787,7 @@ function ReviewSubmitAnimation({ isActive }: { isActive: boolean }) {
       {/* Header showing PR context */}
       <div className="px-3 py-2 border-b border-border bg-muted/20">
         <div className="flex items-center gap-2">
-          <GitPullRequest className="w-4 h-4 text-green-500" />
+          <GitPullRequest className="w-4 h-4 text-success-fg" />
           <span className="text-xs font-medium">
             Fix authentication race condition
           </span>
@@ -801,11 +801,11 @@ function ReviewSubmitAnimation({ isActive }: { isActive: boolean }) {
       <div className="flex-1 flex flex-col items-center justify-center p-4">
         {step === "success" ? (
           <div className="flex flex-col items-center gap-3 animate-in fade-in zoom-in-95 duration-300">
-            <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center">
-              <CheckCircle2 className="w-10 h-10 text-green-500 animate-in zoom-in-50 duration-500" />
+            <div className="w-16 h-16 rounded-full bg-success-muted-bg flex items-center justify-center">
+              <CheckCircle2 className="w-10 h-10 text-success-fg animate-in zoom-in-50 duration-500" />
             </div>
             <div className="text-center">
-              <div className="text-sm font-medium text-green-400">
+              <div className="text-sm font-medium text-success-fg">
                 Approved!
               </div>
               <div className="text-[11px] text-muted-foreground mt-0.5">
@@ -818,12 +818,12 @@ function ReviewSubmitAnimation({ isActive }: { isActive: boolean }) {
             {/* File summary */}
             <div className="flex items-center gap-3 mb-4 text-[11px] text-muted-foreground">
               <div className="flex items-center gap-1">
-                <Check className="w-3.5 h-3.5 text-green-500" />
+                <Check className="w-3.5 h-3.5 text-success-fg" />
                 <span>4 files reviewed</span>
               </div>
               <span>•</span>
               <div className="flex items-center gap-1">
-                <span className="text-green-400">+89</span>
+                <span className="text-success-fg">+89</span>
                 <span className="text-red-400">−260</span>
               </div>
             </div>
@@ -834,7 +834,7 @@ function ReviewSubmitAnimation({ isActive }: { isActive: boolean }) {
                 className={cn(
                   "flex items-center gap-2 px-4 py-2 rounded-md text-xs font-medium transition-all duration-200",
                   selectedAction === "approve"
-                    ? "bg-green-500 text-white scale-105 shadow-lg shadow-green-500/25"
+                    ? "bg-success text-white scale-105 shadow-lg shadow-green-500/25"
                     : "bg-muted/50 text-muted-foreground hover:bg-muted"
                 )}
               >
@@ -1175,7 +1175,7 @@ export function WelcomeDialog() {
                     </span>
                     <span className="p-1 rounded bg-muted group-hover:bg-muted/80 transition-colors">
                       {copied ? (
-                        <Check className="w-4 h-4 text-green-500" />
+                        <Check className="w-4 h-4 text-success-fg" />
                       ) : (
                         <Copy className="w-4 h-4 text-muted-foreground" />
                       )}
@@ -1281,7 +1281,7 @@ export function WelcomeDialog() {
                     samplePRsDisabled && "cursor-not-allowed"
                   )}
                 >
-                  <GitPullRequest className="w-4 h-4 mt-0.5 text-green-500 shrink-0" />
+                  <GitPullRequest className="w-4 h-4 mt-0.5 text-success-fg shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="font-mono text-[11px] text-muted-foreground">
                       {pr.owner}/{pr.repo}
@@ -1291,7 +1291,7 @@ export function WelcomeDialog() {
                     </div>
                     <div className="flex items-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
                       <span>{pr.files} files</span>
-                      <span className="text-green-500">+{pr.additions}</span>
+                      <span className="text-success-fg">+{pr.additions}</span>
                       <span className="text-red-500">−{pr.deletions}</span>
                     </div>
                   </div>

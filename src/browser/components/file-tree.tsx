@@ -114,7 +114,7 @@ function buildTree(files: PullRequestFile[]): TreeNode[] {
 function getFileIcon(file: PullRequestFile) {
   switch (file.status) {
     case "added":
-      return <FilePlus className="w-4 h-4 text-green-500" />;
+      return <FilePlus className="w-4 h-4 text-success-fg" />;
     case "removed":
       return <FileMinus className="w-4 h-4 text-red-500" />;
     case "modified":
@@ -349,7 +349,7 @@ export function FileTree({
                       )}
                       <span className="truncate flex-1">{node.name}</span>
                       {allViewed && (
-                        <Check className="w-3 h-3 text-green-500 shrink-0" />
+                        <Check className="w-3 h-3 text-success-fg shrink-0" />
                       )}
                     </button>
                   </ContextMenuTrigger>
@@ -432,7 +432,7 @@ export function FileTree({
                           {commentCount}
                         </span>
                       )}
-                      {isViewed && <Check className="w-3 h-3 text-green-500" />}
+                      {isViewed && <Check className="w-3 h-3 text-success-fg" />}
                     </div>
                   </button>
                 </ContextMenuTrigger>

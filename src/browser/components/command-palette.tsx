@@ -443,7 +443,7 @@ const FileItem = memo(function FileItem({
       </div>
       <div className="flex items-center gap-2 text-xs shrink-0">
         {file.status === "added" && (
-          <span className="text-green-500 group-data-[selected=true]:text-green-300">
+          <span className="text-success-fg group-data-[selected=true]:text-green-300">
             +{file.additions}
           </span>
         )}
@@ -454,7 +454,7 @@ const FileItem = memo(function FileItem({
         )}
         {file.status === "modified" && (
           <>
-            <span className="text-green-500 group-data-[selected=true]:text-green-300">
+            <span className="text-success-fg group-data-[selected=true]:text-green-300">
               +{file.additions}
             </span>
             <span className="text-red-500 group-data-[selected=true]:text-red-300">
@@ -468,7 +468,7 @@ const FileItem = memo(function FileItem({
           </span>
         )}
         {isViewed && (
-          <span className="px-1.5 py-0.5 bg-green-500/20 text-green-400 group-data-[selected=true]:bg-green-400/30 group-data-[selected=true]:text-green-200 rounded text-[10px]">
+          <span className="px-1.5 py-0.5 bg-success-muted-bg text-success-fg group-data-[selected=true]:bg-green-400/30 group-data-[selected=true]:text-green-200 rounded text-[10px]">
             viewed
           </span>
         )}

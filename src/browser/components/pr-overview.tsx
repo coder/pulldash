@@ -1460,7 +1460,7 @@ export const PROverview = memo(function PROverview() {
                           {branchDeleted && !isFromFork && (
                             <div className="shrink-0 flex items-center gap-3">
                               <span className="text-sm text-muted-foreground flex items-center gap-2">
-                                <Check className="w-4 h-4 text-green-400" />
+                                <Check className="w-4 h-4 text-success-fg" />
                                 Deleted{" "}
                                 <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
                                   {pr.head.ref}
@@ -1527,7 +1527,7 @@ export const PROverview = memo(function PROverview() {
                       {branchDeleted && (
                         <div className="shrink-0 flex items-center gap-3">
                           <span className="text-sm text-muted-foreground flex items-center gap-2">
-                            <Check className="w-4 h-4 text-green-400" />
+                            <Check className="w-4 h-4 text-success-fg" />
                             Deleted{" "}
                             <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
                               {pr.head.ref}
@@ -1557,7 +1557,7 @@ export const PROverview = memo(function PROverview() {
                         <button
                           onClick={handleReopenPR}
                           disabled={reopeningPR}
-                          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 transition-colors disabled:opacity-50"
+                          className="flex items-center gap-2 px-4 py-2 bg-success text-white text-sm font-medium rounded-md hover:bg-success-hover transition-colors disabled:opacity-50"
                         >
                           {reopeningPR ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -1608,7 +1608,7 @@ export const PROverview = memo(function PROverview() {
                         <button
                           onClick={handleAddComment}
                           disabled={!commentText.trim() || submittingComment}
-                          className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 text-sm font-medium"
+                          className="flex items-center gap-2 px-3 py-1.5 bg-success text-white rounded-md hover:bg-success-hover transition-colors disabled:opacity-50 text-sm font-medium"
                         >
                           {submittingComment ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -2225,7 +2225,7 @@ function LabelsSection({
                     >
                       <div className="w-4 h-4 flex items-center justify-center">
                         {isApplied && (
-                          <Check className="w-3.5 h-3.5 text-green-500" />
+                          <Check className="w-3.5 h-3.5 text-success-fg" />
                         )}
                       </div>
                       <span
@@ -2389,7 +2389,7 @@ function ReviewBox({ review }: { review: Review }) {
   // Icon color for timeline circle
   const iconColor =
     {
-      APPROVED: "text-green-500",
+      APPROVED: "text-success-fg",
       CHANGES_REQUESTED: "text-red-500",
       COMMENTED: "text-muted-foreground",
       DISMISSED: "text-muted-foreground",
@@ -2399,7 +2399,7 @@ function ReviewBox({ review }: { review: Review }) {
   // Border color for comment box
   const stateBorder =
     {
-      APPROVED: "border-green-500/30",
+      APPROVED: "border-success-muted-border",
       CHANGES_REQUESTED: "border-red-500/30",
       COMMENTED: "",
       DISMISSED: "",
@@ -2409,7 +2409,7 @@ function ReviewBox({ review }: { review: Review }) {
   // Header background for comment box
   const stateHeaderBg =
     {
-      APPROVED: "bg-green-500/10",
+      APPROVED: "bg-success-muted-bg",
       CHANGES_REQUESTED: "bg-red-500/10",
       COMMENTED: "",
       DISMISSED: "",
@@ -2517,7 +2517,7 @@ function ReviewStateIcon({
     switch (state) {
       case "APPROVED":
         return {
-          icon: <CheckCircle2 className="w-4 h-4 text-green-500" />,
+          icon: <CheckCircle2 className="w-4 h-4 text-success-fg" />,
           tooltip: "Approved this pull request",
         };
       case "CHANGES_REQUESTED":
@@ -2756,7 +2756,7 @@ function ReviewThreadBox({
                 <tr
                   key={i}
                   className={cn(
-                    line.type === "insert" && "bg-green-500/15",
+                    line.type === "insert" && "bg-success-muted-bg",
                     line.type === "delete" && "bg-red-500/15"
                   )}
                 >
@@ -2770,7 +2770,7 @@ function ReviewThreadBox({
                     <span
                       className={cn(
                         "select-none mr-1",
-                        line.type === "insert" && "text-green-400",
+                        line.type === "insert" && "text-success-fg",
                         line.type === "delete" && "text-red-400"
                       )}
                     >
@@ -2924,7 +2924,7 @@ function ReviewThreadBox({
                   <button
                     onClick={handleSubmitReply}
                     disabled={!replyText.trim() || submitting}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-success text-white hover:bg-success-hover transition-colors disabled:opacity-50"
                   >
                     {submitting ? "Sending..." : "Reply"}
                   </button>
@@ -3172,7 +3172,7 @@ function MergeSection({
       className={cn(
         "border rounded-md overflow-hidden",
         overallStatus === "success"
-          ? "border-green-600"
+          ? "border-success"
           : overallStatus === "failure"
             ? "border-red-500"
             : "border-yellow-500"
@@ -3185,7 +3185,7 @@ function MergeSection({
           className="w-full flex items-center gap-3 p-4 hover:bg-card/30 transition-colors"
         >
           {reviewStatus === "success" ? (
-            <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+            <CheckCircle2 className="w-5 h-5 text-success-fg shrink-0" />
           ) : reviewStatus === "failure" ? (
             <XCircle className="w-5 h-5 text-red-500 shrink-0" />
           ) : (
@@ -3215,7 +3215,7 @@ function MergeSection({
             {/* Approval count row */}
             {approvalCount > 0 && (
               <div className="flex items-center gap-2 py-2">
-                <CheckCircle2 className="w-4 h-4 text-green-500" />
+                <CheckCircle2 className="w-4 h-4 text-success-fg" />
                 <span className="text-sm">
                   {approvalCount} approval{approvalCount !== 1 ? "s" : ""}
                 </span>
@@ -3306,7 +3306,7 @@ function MergeSection({
           className="w-full flex items-center gap-3 p-4 hover:bg-card/30 transition-colors"
         >
           {checkStatus === "success" ? (
-            <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+            <CheckCircle2 className="w-5 h-5 text-success-fg shrink-0" />
           ) : checkStatus === "failure" ? (
             <XCircle className="w-5 h-5 text-red-500 shrink-0" />
           ) : checkStatus === "action_required" ? (
@@ -3356,7 +3356,7 @@ function MergeSection({
                 ) : check.status === "in_progress" ? (
                   <Loader2 className="w-4 h-4 text-yellow-500 shrink-0 animate-spin" />
                 ) : check.conclusion === "success" ? (
-                  <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-success-fg shrink-0" />
                 ) : check.conclusion === "failure" ? (
                   <XCircle className="w-4 h-4 text-red-500 shrink-0" />
                 ) : check.conclusion === "skipped" ? (
@@ -3391,7 +3391,7 @@ function MergeSection({
             {checks.status.statuses.map((status) => (
               <div key={status.id} className="flex items-center gap-2 py-2">
                 {status.state === "success" ? (
-                  <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-success-fg shrink-0" />
                 ) : status.state === "failure" || status.state === "error" ? (
                   <XCircle className="w-4 h-4 text-red-500 shrink-0" />
                 ) : status.state === "pending" ? (
@@ -3427,7 +3427,7 @@ function MergeSection({
       <div className="border-b border-border">
         <div className="flex items-center gap-3 p-4">
           {conflictStatus === "success" ? (
-            <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+            <CheckCircle2 className="w-5 h-5 text-success-fg shrink-0" />
           ) : conflictStatus === "failure" ? (
             <XCircle className="w-5 h-5 text-red-500 shrink-0" />
           ) : (
@@ -3443,7 +3443,7 @@ function MergeSection({
             </p>
             <p className="text-xs text-muted-foreground">
               {updateBranchSuccess ? (
-                <span className="text-green-500">
+                <span className="text-success-fg">
                   Branch updated successfully!
                 </span>
               ) : updateBranchError ? (
@@ -3541,7 +3541,7 @@ function MergeSection({
               className={cn(
                 "flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
                 canMergePR || bypassRules
-                  ? "bg-green-600 text-white hover:bg-green-700"
+                  ? "bg-success text-white hover:bg-success-hover"
                   : "bg-muted text-muted-foreground cursor-not-allowed"
               )}
             >
@@ -3558,9 +3558,9 @@ function MergeSection({
               onClick={handleToggleDropdown}
               disabled={merging}
               className={cn(
-                "px-4 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-green-700 self-stretch flex items-center",
+                "px-4 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-success-hover self-stretch flex items-center",
                 canMergePR || bypassRules
-                  ? "bg-green-600 text-white hover:bg-green-700"
+                  ? "bg-success text-white hover:bg-success-hover"
                   : "bg-muted text-muted-foreground cursor-not-allowed"
               )}
             >
@@ -3603,7 +3603,7 @@ function MergeSection({
                     >
                       <div className="flex items-center gap-2">
                         {mergeMethod === method ? (
-                          <Check className="w-4 h-4 text-green-500" />
+                          <Check className="w-4 h-4 text-success-fg" />
                         ) : (
                           <div className="w-4 h-4" />
                         )}
@@ -3681,7 +3681,7 @@ function CommitsTab({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Check className="w-4 h-4 text-green-500" />
+            <Check className="w-4 h-4 text-success-fg" />
             <a
               href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
               target="_blank"
@@ -3725,7 +3725,7 @@ function ChecksTab({
   ) {
     return (
       <div className="border border-border rounded-md p-8 text-center">
-        <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
+        <CheckCircle2 className="w-12 h-12 text-success-fg mx-auto mb-3" />
         <p className="text-muted-foreground">
           No checks configured for this repository
         </p>
@@ -3781,7 +3781,7 @@ function CheckRunItem({ check }: { check: CheckRun }) {
     }
     switch (check.conclusion) {
       case "success":
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="w-4 h-4 text-success-fg" />;
       case "failure":
         return <XCircle className="w-4 h-4 text-red-500" />;
       default:
@@ -3820,7 +3820,7 @@ function StatusItem({
   const getIcon = () => {
     switch (status.state) {
       case "success":
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="w-4 h-4 text-success-fg" />;
       case "failure":
       case "error":
         return <XCircle className="w-4 h-4 text-red-500" />;
@@ -3865,7 +3865,7 @@ function CheckStatusIcon({
 
   switch (status) {
     case "success":
-      return <CheckCircle2 className={cn(sizeClass, "text-green-500")} />;
+      return <CheckCircle2 className={cn(sizeClass, "text-success-fg")} />;
     case "failure":
       return <XCircle className={cn(sizeClass, "text-red-500")} />;
     case "action_required":
@@ -4766,7 +4766,7 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
               reopened this pull request
             </span>
           ),
-          color: "text-green-400",
+          color: "text-success-fg",
         };
       }
 
@@ -4785,7 +4785,7 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
               marked this pull request as ready for review
             </span>
           ),
-          color: "text-green-400",
+          color: "text-success-fg",
         };
       }
 

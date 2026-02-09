@@ -39,7 +39,7 @@ export const FileHeader = memo(function FileHeader({
     switch (file.status) {
       case "added":
         return (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-500 font-medium">
+          <span className="px-1.5 py-0.5 text-xs rounded bg-success-muted-bg text-success-fg font-medium">
             Added
           </span>
         );
@@ -71,7 +71,7 @@ export const FileHeader = memo(function FileHeader({
         </span>
         {fileStatusBadge}
         <span className="text-xs text-muted-foreground shrink-0">
-          <span className="text-green-500">+{file.additions}</span>{" "}
+          <span className="text-success-fg">+{file.additions}</span>{" "}
           <span className="text-red-500">−{file.deletions}</span>
         </span>
         {/* Navigation buttons */}
@@ -144,11 +144,11 @@ export const FileHeader = memo(function FileHeader({
           className={cn(
             "flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors shrink-0",
             isViewed
-              ? "bg-green-500/20 text-green-500 hover:bg-green-500/30"
+              ? "bg-success-muted-bg text-success-fg hover:bg-success-muted-bg"
               : "bg-muted hover:bg-muted/80 text-muted-foreground"
           )}
         >
-          <Check className={cn("w-4 h-4", isViewed && "text-green-500")} />
+          <Check className={cn("w-4 h-4", isViewed && "text-success-fg")} />
           {isViewed ? "Viewed" : "Mark as viewed"}
           <Keycap keyName="v" size="xs" className="ml-1" />
         </button>

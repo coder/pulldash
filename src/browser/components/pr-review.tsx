@@ -740,7 +740,7 @@ const KeybindsBar = memo(function KeybindsBar() {
         "shrink-0 border-t border-border px-3 py-2 min-h-[36px]",
         gotoLineMode && "bg-blue-500/10",
         (focusedCommentId || focusedPendingCommentId) && "bg-yellow-500/10",
-        commentingOnLine && "bg-green-500/10",
+        commentingOnLine && "bg-success-muted-bg",
         focusedSkipBlockIndex !== null && "bg-blue-500/10",
         !gotoLineMode &&
           !focusedCommentId &&
@@ -762,7 +762,7 @@ const KeybindsBar = memo(function KeybindsBar() {
                   className={cn(
                     "px-1.5 py-0.5 rounded text-xs font-medium",
                     gotoLineSide === "new"
-                      ? "bg-green-500/20 text-green-400"
+                      ? "bg-success-muted-bg text-success-fg"
                       : "bg-orange-500/20 text-orange-400"
                   )}
                 >
@@ -781,10 +781,10 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : commentingOnLine ? (
             <>
-              <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-success-muted-bg text-success-fg rounded text-xs font-medium">
                 COMMENT
               </span>
-              <span className="font-mono text-green-400">
+              <span className="font-mono text-success-fg">
                 L
                 {commentingOnLine.startLine
                   ? `${commentingOnLine.startLine}-`
@@ -2394,7 +2394,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
           </span>
           <button
             onClick={startDeviceAuth}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-success text-white hover:bg-success-hover transition-colors"
           >
             Sign in with GitHub
           </button>
@@ -2461,7 +2461,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
         <button
           onClick={handleSubmit}
           disabled={!text.trim() || submitting}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-success text-white hover:bg-success-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ fontFamily: "var(--font-sans)" }}
         >
           {submitting ? (
@@ -2580,7 +2580,7 @@ const CommentThread = memo(function CommentThread({
       className={cn(
         "mx-4 my-2 rounded-r-lg border-l-2",
         isResolved
-          ? "border-green-500/50 bg-green-500/5"
+          ? "border-success-muted-border bg-success-muted-bg"
           : "border-blue-500/50 bg-card/80"
       )}
     >
@@ -2588,14 +2588,14 @@ const CommentThread = memo(function CommentThread({
       <div className="flex items-center justify-between px-4 py-2 border-b border-border/30">
         <div className="flex items-center gap-2">
           {isResolved ? (
-            <CheckCircle2 className="w-4 h-4 text-green-500" />
+            <CheckCircle2 className="w-4 h-4 text-success-fg" />
           ) : (
             <Circle className="w-4 h-4 text-muted-foreground" />
           )}
           <span
             className={cn(
               "text-xs font-medium",
-              isResolved ? "text-green-500" : "text-muted-foreground"
+              isResolved ? "text-success-fg" : "text-muted-foreground"
             )}
           >
             {isResolved
@@ -2617,7 +2617,7 @@ const CommentThread = memo(function CommentThread({
                 "flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors",
                 isResolved
                   ? "text-muted-foreground hover:text-foreground hover:bg-muted"
-                  : "text-green-500 hover:bg-green-500/10"
+                  : "text-success-fg hover:bg-success-muted-bg"
               )}
             >
               {resolving ? (
@@ -3468,14 +3468,14 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen} modal={false}>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
+        <button className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-success text-white hover:bg-success-hover transition-colors">
           <span>Submit review</span>
           {pendingCount > 0 && (
-            <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded">
+            <span className="px-1 py-0.5 text-[10px] bg-success/50 rounded">
               {pendingCount}
             </span>
           )}
-          <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded font-mono">
+          <span className="px-1 py-0.5 text-[10px] bg-success/50 rounded font-mono">
             S
           </span>
           <ChevronsUpDown className="w-3.5 h-3.5 opacity-70" />
@@ -3606,7 +3606,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="APPROVE" className="mt-0.5" />
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-medium text-sm text-green-400">
+                    <span className="font-medium text-sm text-success-fg">
                       Approve
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -3681,7 +3681,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             className={cn(
               "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50",
               reviewType === "APPROVE" &&
-                "bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30",
+                "bg-success-muted-bg text-success-fg hover:bg-success-muted-bg border border-success-muted-border",
               reviewType === "REQUEST_CHANGES" &&
                 "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/30",
               reviewType === "COMMENT" &&
@@ -3926,7 +3926,7 @@ function DiffLineSkeleton({
 }) {
   const bgClass =
     type === "add"
-      ? "bg-green-500/5"
+      ? "bg-success-muted-bg"
       : type === "remove"
         ? "bg-orange-500/5"
         : "";

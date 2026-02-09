@@ -348,7 +348,7 @@ function TabStatusIndicator({ status }: { status?: TabStatus }) {
       colorClass = "bg-yellow-500";
       title = "Checks running";
     } else if (status.checks === "success" || status.checks === "none") {
-      colorClass = "bg-green-500";
+      colorClass = "bg-success";
       title = status.mergeable ? "Ready to merge" : "Checks passed";
     }
   }

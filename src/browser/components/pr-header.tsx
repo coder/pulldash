@@ -47,7 +47,7 @@ export const PRHeader = memo(function PRHeader({
     : pr.state === "open"
       ? pr.draft
         ? "bg-gray-600"
-        : "bg-green-600"
+        : "bg-success"
       : "bg-red-600";
 
   return (
@@ -123,7 +123,7 @@ export const PRHeader = memo(function PRHeader({
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Line diff stats */}
         <span className="text-xs hidden sm:inline">
-          <span className="text-green-500">+{pr.additions}</span>{" "}
+          <span className="text-success-fg">+{pr.additions}</span>{" "}
           <span className="text-red-500">−{pr.deletions}</span>
         </span>
 
@@ -158,7 +158,7 @@ function BranchBadge({ branch }: { branch: string }) {
         title="Copy branch name"
       >
         {copied ? (
-          <Check className="w-3 h-3 text-green-500" />
+          <Check className="w-3 h-3 text-success-fg" />
         ) : (
           <Copy className="w-3 h-3" />
         )}
