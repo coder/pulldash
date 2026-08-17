@@ -66,7 +66,6 @@ export function useReviewActions() {
       // Invalidate timeline cache so we get fresh data
       github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
 
-      // Refresh comments, reviews, timeline, and review threads
       const [newComments, reviews, timeline, reviewThreadsResult] =
         await Promise.all([
           github.getPRComments(owner, repo, pr.number),

@@ -2555,8 +2555,6 @@ const CommentThread = memo(function CommentThread({
     setResolving(true);
     try {
       await resolveThread(threadId);
-      // Auto-collapse when resolved
-      setIsCollapsed(true);
     } finally {
       setResolving(false);
     }
@@ -2567,17 +2565,14 @@ const CommentThread = memo(function CommentThread({
     setResolving(true);
     try {
       await unresolveThread(threadId);
-      setIsCollapsed(false);
     } finally {
       setResolving(false);
     }
   }, [threadId, unresolveThread]);
 
-  // Auto-collapse resolved threads
+  // Sync collapse state on resolution changes, including from other views
   useEffect(() => {
-    if (isResolved) {
-      setIsCollapsed(true);
-    }
+    setIsCollapsed(isResolved);
   }, [isResolved]);
 
   return (
@@ -2608,9 +2603,9 @@ const CommentThread = memo(function CommentThread({
               ? "Resolved"
               : `${comments.length} comment${comments.length !== 1 ? "s" : ""}`}
           </span>
-          {isResolved && isCollapsed && (
+          {isResolved && isCollapsed && firstComment.resolved_by?.login && (
             <span className="text-xs text-muted-foreground">
-              by {firstComment.resolved_by?.login ?? firstComment.user.login}
+              by {firstComment.resolved_by.login}
             </span>
           )}
         </div>
