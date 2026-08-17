@@ -55,6 +55,7 @@ import {
 import {
   usePRReviewSelector,
   usePRReviewStore,
+  useThreadActions,
   getTimeAgo,
 } from "../contexts/pr-review";
 import { parseDiffCached, type ParsedDiff } from "../lib/diff";
@@ -794,34 +795,10 @@ export const PROverview = memo(function PROverview() {
     [github, owner, repo, pr.number, store]
   );
 
-  const handleResolveThread = useCallback(
-    async (threadId: string) => {
-      try {
-        await github.resolveThread(threadId);
-        // Update local state
-        store.updateReviewThread(threadId, (t) => ({ ...t, isResolved: true }));
-      } catch (error) {
-        console.error("Failed to resolve thread:", error);
-      }
-    },
-    [github, store]
-  );
-
-  const handleUnresolveThread = useCallback(
-    async (threadId: string) => {
-      try {
-        await github.unresolveThread(threadId);
-        // Update local state
-        store.updateReviewThread(threadId, (t) => ({
-          ...t,
-          isResolved: false,
-        }));
-      } catch (error) {
-        console.error("Failed to unresolve thread:", error);
-      }
-    },
-    [github, store]
-  );
+  const {
+    resolveThread: handleResolveThread,
+    unresolveThread: handleUnresolveThread,
+  } = useThreadActions();
 
   // Calculate check status
   const checkStatus = calculateCheckStatus(
