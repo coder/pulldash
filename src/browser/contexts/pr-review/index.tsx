@@ -2758,6 +2758,7 @@ export { useDiffLoader } from "./useDiffLoader";
 export { useCurrentUserLoader } from "./useCurrentUserLoader";
 export { usePendingReviewLoader } from "./usePendingReviewLoader";
 export { useThreadActions } from "./useThreadActions";
+export { enrichCommentsWithThreads } from "./enrichComments";
 export { useCommentActions } from "./useCommentActions";
 export { useReviewActions } from "./useReviewActions";
 export { useSkipBlockExpansion } from "./useSkipBlockExpansion";

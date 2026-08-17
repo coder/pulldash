@@ -72,6 +72,7 @@ import {
   useFileCopyActions,
   useSkipBlockExpansion,
   useThreadActions,
+  enrichCommentsWithThreads,
   useCurrentFile,
   useCurrentDiff,
   useIsCurrentFileLoading,
@@ -227,7 +228,12 @@ export function PRReviewContent({
 
         setPr(prData);
         setFiles(filesData);
-        setComments(commentsData as ReviewComment[]);
+        setComments(
+          enrichCommentsWithThreads(
+            commentsData as ReviewComment[],
+            reviewThreadsResult.threads
+          )
+        );
         setViewerPermission(reviewThreadsResult.viewerPermission);
         setViewerCanMergeAsAdmin(reviewThreadsResult.viewerCanMergeAsAdmin);
 
@@ -2499,18 +2505,18 @@ const CommentThread = memo(function CommentThread({
   const repo = usePRReviewSelector((s) => s.repo);
   const { replyToComment, updateComment, deleteComment } = useCommentActions();
   const { resolveThread, unresolveThread } = useThreadActions();
-  const [replyText, setReplyText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const [resolving, setResolving] = useState(false);
-
-  const replyingTo =
-    comments.find((c) => c.id === replyingToCommentId)?.id ?? null;
-
   // Get resolution info from first comment (all comments in thread share same resolution status)
   const firstComment = comments[0];
   const isResolved = firstComment?.is_resolved ?? false;
   const threadId = firstComment?.pull_request_review_thread_id;
+
+  const [replyText, setReplyText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(isResolved);
+  const [resolving, setResolving] = useState(false);
+
+  const replyingTo =
+    comments.find((c) => c.id === replyingToCommentId)?.id ?? null;
 
   const handleSubmitReply = useCallback(async () => {
     if (!replyText.trim() || !replyingTo) return;
@@ -2604,7 +2610,7 @@ const CommentThread = memo(function CommentThread({
           </span>
           {isResolved && isCollapsed && (
             <span className="text-xs text-muted-foreground">
-              by {firstComment.user.login}
+              by {firstComment.resolved_by?.login ?? firstComment.user.login}
             </span>
           )}
         </div>

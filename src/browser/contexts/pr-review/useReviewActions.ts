@@ -2,6 +2,7 @@ import type { ReviewComment } from "@/api/types";
 import { useGitHub, type Review } from "@/browser/contexts/github";
 import { useTelemetry } from "@/browser/contexts/telemetry";
 import { usePRReviewStore, usePRReviewSelector } from ".";
+import { enrichCommentsWithThreads } from "./enrichComments";
 
 export function useReviewActions() {
   const store = usePRReviewStore();
@@ -65,13 +66,22 @@ export function useReviewActions() {
       // Invalidate timeline cache so we get fresh data
       github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
 
-      // Refresh comments, reviews, and timeline
-      const [newComments, reviews, timeline] = await Promise.all([
-        github.getPRComments(owner, repo, pr.number),
-        github.getPRReviews(owner, repo, pr.number),
-        github.getPRTimeline(owner, repo, pr.number),
-      ]);
-      store.setComments(newComments as ReviewComment[]);
+      // Refresh comments, reviews, timeline, and review threads
+      const [newComments, reviews, timeline, reviewThreadsResult] =
+        await Promise.all([
+          github.getPRComments(owner, repo, pr.number),
+          github.getPRReviews(owner, repo, pr.number),
+          github.getPRTimeline(owner, repo, pr.number),
+          github.getReviewThreads(owner, repo, pr.number).catch(() => null),
+        ]);
+      const threads =
+        reviewThreadsResult?.threads ?? store.getSnapshot().reviewThreads;
+      store.setComments(
+        enrichCommentsWithThreads(newComments as ReviewComment[], threads)
+      );
+      if (reviewThreadsResult) {
+        store.setReviewThreads(reviewThreadsResult.threads);
+      }
       store.setReviews(reviews);
       store.setTimeline(timeline);
 
