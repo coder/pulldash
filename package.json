@@ -1,6 +1,6 @@
 {
   "name": "pulldash",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Fast, filterable PR review. Entirely client-side.",
   "type": "module",
   "bin": {
