@@ -1022,9 +1022,9 @@ export const PROverview = memo(function PROverview() {
   return (
     <div className="flex-1 overflow-auto themed-scrollbar bg-background">
       {/* Tabs */}
-      <div className="border-b border-border overflow-x-auto">
-        <div className="max-w-[1280px] mx-auto px-2 sm:px-6">
-          <div className="flex items-center gap-1 py-1">
+      <div className="border-b border-border">
+        <div className="max-w-[1280px] mx-auto">
+          <div className="flex items-center gap-1">
             <TabButton
               active={activeTab === "conversation"}
               onClick={() => setActiveTab("conversation")}
@@ -2045,7 +2045,7 @@ function TabButton({
     <button
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+        "flex items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 -mb-px text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
         active
           ? "border-orange-500 text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
