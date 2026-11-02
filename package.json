@@ -64,7 +64,7 @@
     "cmdk": "^1.1.1",
     "concurrently": "^9.2.1",
     "diff": "^8.0.2",
-    "electron": "^39.2.4",
+    "electron": "^45.2.1",
     "electron-builder": "^26.0.12",
     "electron-updater": "^6.6.2",
     "geist": "^1.5.1",
